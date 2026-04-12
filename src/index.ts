@@ -21,7 +21,7 @@ app.get('/health', (c) => {
     version: c.env.MCP_SERVICE_VERSION,
     toolCount: TOOLS.length,
     tools: TOOLS.map((t) => t.name),
-    taylorAi: c.env.TAYLOR_AI_URL,
+    taylorAi: 'service-binding',
   });
 });
 

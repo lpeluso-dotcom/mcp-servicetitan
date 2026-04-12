@@ -20,8 +20,15 @@ database_id = "ba02a8c6-bcff-4119-b797-0b4250a3edcf"
 binding = "TAI_STATE"
 id = "4c18d1ac623145ab86901d5fb44a022a"
 
+# Service binding — prod fetches against taylor-ai (top-level env).
+# Required: workers on the same account can't fetch each other via
+# workers.dev subdomains (Cloudflare error 1042). Service bindings
+# bypass that restriction and are also faster (no network round-trip).
+[[services]]
+binding = "TAYLOR_AI"
+service = "taylor-ai"
+
 [vars]
-TAYLOR_AI_URL = "https://taylor-ai.lpeluso.workers.dev"
 MCP_SERVICE_VERSION = "0.1.0"
 
 # Secrets (via `wrangler secret put`):
@@ -36,7 +43,6 @@ MCP_SERVICE_VERSION = "0.1.0"
 name = "mcp-servicetitan-dev"
 
 [env.dev.vars]
-TAYLOR_AI_URL = "https://taylor-ai-dev.lpeluso.workers.dev"
 MCP_SERVICE_VERSION = "0.1.0-dev"
 
 [[env.dev.d1_databases]]
@@ -47,6 +53,12 @@ database_id = "28848a36-3210-4584-830b-fb1508b7503b"
 [[env.dev.kv_namespaces]]
 binding = "TAI_STATE"
 id = "3eb6a8dc8afb463289962b3de0836508"
+
+# Service binding — dev points directly at the taylor-ai-dev worker
+# (deployed from taylor-ai's `[env.dev]` as a standalone script, not a named env)
+[[env.dev.services]]
+binding = "TAYLOR_AI"
+service = "taylor-ai-dev"
 
 # Dev secrets (same command, add --env dev):
 # wrangler secret put MCP_SYNC_KEY --env dev

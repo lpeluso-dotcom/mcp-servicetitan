@@ -36,8 +36,8 @@ export const st_get_customer: ToolDef<Args> = {
     const cacheKey = String(args.customerId);
 
     return cacheGet(env, NAMESPACE, cacheKey, CACHE_TTL_SEC, async () => {
-      const url = `${env.TAYLOR_AI_URL}/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
-      const resp = await fetch(url, { headers: authHeaders(env, correlation, actor) });
+      const url = `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
+      const resp = await env.TAYLOR_AI.fetch(url, { headers: authHeaders(env, correlation, actor) });
       if (!resp.ok) {
         const body = await resp.text().catch(() => '');
         throw new McpError(mapUpstreamStatus(resp.status), `ST get_customer ${args.customerId} ${resp.status}: ${body.slice(0, 200)}`, { correlation });
