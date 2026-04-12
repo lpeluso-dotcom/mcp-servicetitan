@@ -1,0 +1,20 @@
+{
+  "name": "mcp-servicetitan",
+  "version": "0.1.0",
+  "description": "QSC ServiceTitan MCP server — read-only tools exposing ST data to Claude Code via taylor-ai's /api/st/read proxy",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "deploy:dev": "wrangler deploy --env dev",
+    "dev": "wrangler dev",
+    "types": "wrangler types"
+  },
+  "dependencies": {
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250403.1",
+    "typescript": "^5.5.0",
+    "wrangler": "^4.0.0"
+  }
+}

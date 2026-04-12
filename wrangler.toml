@@ -1,0 +1,52 @@
+name = "mcp-servicetitan"
+main = "src/index.ts"
+compatibility_date = "2026-04-12"
+
+[observability]
+enabled = true
+
+# No crons — MCP is on-demand HTTP only.
+[triggers]
+crons = []
+
+# Shares the taylor-ai D1 database (audit_log + error_log + new mcp_cache table).
+[[d1_databases]]
+binding = "DB"
+database_name = "taylor-ai"
+database_id = "ba02a8c6-bcff-4119-b797-0b4250a3edcf"
+
+# Shares TAI-STATE for heartbeat keys (heartbeat:mcp-servicetitan:*)
+[[kv_namespaces]]
+binding = "TAI_STATE"
+id = "4c18d1ac623145ab86901d5fb44a022a"
+
+[vars]
+TAYLOR_AI_URL = "https://taylor-ai.lpeluso.workers.dev"
+MCP_SERVICE_VERSION = "0.1.0"
+
+# Secrets (via `wrangler secret put`):
+# MCP_SYNC_KEY — shared bearer between mcp-servicetitan and taylor-ai /api/st/read
+#                (must be the same value as taylor-ai's SYNC_KEY, or taylor-ai needs a
+#                middleware update to accept-either — see design decision below)
+
+# ─── DEV ENVIRONMENT ─────────────────────────────────────────
+# Deploy: wrangler deploy --env dev
+# URL: mcp-servicetitan-dev.lpeluso.workers.dev
+[env.dev]
+name = "mcp-servicetitan-dev"
+
+[env.dev.vars]
+TAYLOR_AI_URL = "https://taylor-ai-dev.lpeluso.workers.dev"
+MCP_SERVICE_VERSION = "0.1.0-dev"
+
+[[env.dev.d1_databases]]
+binding = "DB"
+database_name = "taylor-ai-dev"
+database_id = "28848a36-3210-4584-830b-fb1508b7503b"
+
+[[env.dev.kv_namespaces]]
+binding = "TAI_STATE"
+id = "3eb6a8dc8afb463289962b3de0836508"
+
+# Dev secrets (same command, add --env dev):
+# wrangler secret put MCP_SYNC_KEY --env dev
