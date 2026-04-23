@@ -1,0 +1,34 @@
+import { z } from 'zod';
+import { McpError } from '../../errors';
+import { authHeaders } from '../../auth';
+import type { ToolDef } from '../index';
+
+interface Args { invoiceId: number }
+
+// T9 catalog correction: renamed from get_payment_status.
+// /payments/{id} returns a payment object, not a status.
+// Invoice balance lives on the invoice itself (invoice.balance field).
+export const get_invoice_balance: ToolDef<Args> = {
+  name: 'get_invoice_balance',
+  description: 'Get the outstanding balance for an invoice. Returns balance, total, and payment summary from the invoice record. Source: D1 (invoices nightly-synced). Note: renamed from get_payment_status — /payments/{id} returns a payment object; balance lives on the invoice.',
+  zodSchema: {
+    invoiceId: z.number().int().positive().describe('ST invoice ID'),
+  },
+  async handler(env, args, { actor, correlation }) {
+    const resp = await env.TAYLOR_AI.fetch(
+      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/accounting/v2/tenant/431848990/invoices/${args.invoiceId}`)}`,
+      { headers: authHeaders(env, correlation, actor) }
+    );
+    if (!resp.ok) throw new McpError('upstream_error', `get_invoice_balance failed: ${resp.status}`, { correlation });
+    const invoice = await resp.json<Record<string, unknown>>();
+    return {
+      balance: {
+        invoiceId: args.invoiceId,
+        total: invoice.total,
+        balance: invoice.balance,
+        payments: invoice.payments,
+      },
+      _source: 'live',
+    };
+  },
+};

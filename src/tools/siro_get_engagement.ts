@@ -3,6 +3,7 @@
 // Cache TTL: 10 min
 // ============================================================
 
+import { z } from 'zod';
 import type { Env } from '../env';
 import { siroFetch } from '../siro';
 import { cacheGet } from '../cache';
@@ -20,13 +21,8 @@ export const siro_get_engagement: ToolDef<Args> = {
   name: 'siro_get_engagement',
   description:
     'Get a Siro engagement (linked recording data — typically a single visit/interaction with a customer). Read-only. Cached 10 min.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      engagementId: { type: 'string', description: 'Siro engagement ID' },
-    },
-    required: ['engagementId'],
-    additionalProperties: false,
+  zodSchema: {
+    engagementId: z.string().min(1).describe('Siro engagement ID'),
   },
   async handler(env, args, { correlation }) {
     if (!args.engagementId) {

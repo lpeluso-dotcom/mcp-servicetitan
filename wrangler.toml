@@ -1,19 +1,35 @@
 name = "mcp-servicetitan"
 main = "src/index.ts"
 compatibility_date = "2026-04-12"
+compatibility_flags = ["nodejs_compat"]
+
+# Cloudflare Smart Placement — sits this worker near taylor-ai + D1
+placement = { mode = "smart" }
+
+[limits]
+# Per-request CPU cap. 55-tool Zod registration is non-trivial; measure + tune.
+cpu_ms = 50
 
 [observability]
 enabled = true
+
+# Analytics Engine — p50/p95/p99 latency + error-rate timeseries queryable via SQL API.
+# D1 audit_log can't scale to percentiles; this is the observability backbone.
+[[analytics_engine_datasets]]
+binding = "MCP_METRICS"
+dataset = "mcp_servicetitan_metrics"
 
 # No crons — MCP is on-demand HTTP only.
 [triggers]
 crons = []
 
-# Shares the taylor-ai D1 database (audit_log + error_log + new mcp_cache table).
+# D1 own database — mcp-servicetitan's schema (audit_log, error_log, mcp_cache, mcp_roles,
+# confirmation_tokens, endpoint_registry, mv_* composite caches). Migrated from shared
+# taylor-ai DB in F2. Taylor-ai sync tables accessed via TAYLOR_AI service binding queryD1 RPC.
 [[d1_databases]]
 binding = "DB"
-database_name = "taylor-ai"
-database_id = "ba02a8c6-bcff-4119-b797-0b4250a3edcf"
+database_name = "qsc-mcp-st"
+database_id = "5380b37c-132c-4f21-a294-d99b7e05e6cf"
 
 # Shares TAI-STATE for heartbeat keys (heartbeat:mcp-servicetitan:*)
 [[kv_namespaces]]
@@ -29,36 +45,69 @@ binding = "TAYLOR_AI"
 service = "taylor-ai"
 
 [vars]
-MCP_SERVICE_VERSION = "0.1.0"
+MCP_SERVICE_VERSION = "1.0.0"
 
 # Secrets (via `wrangler secret put`):
 # MCP_SYNC_KEY — shared bearer between mcp-servicetitan and taylor-ai /api/st/read
-#                (must be the same value as taylor-ai's SYNC_KEY, or taylor-ai needs a
-#                middleware update to accept-either — see design decision below)
+# SIRO_API_TOKEN — Siro org API token for v1 read endpoints
+
+[[durable_objects.bindings]]
+name = "ST_RATE_LIMITER"
+class_name = "StRateLimiter"
+
+[[durable_objects.bindings]]
+name = "CUSTOMER_SNAPSHOT_FLIGHT"
+class_name = "CustomerSnapshotSingleflight"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["StRateLimiter", "CustomerSnapshotSingleflight"]
 
 # ─── DEV ENVIRONMENT ─────────────────────────────────────────
 # Deploy: wrangler deploy --env dev
 # URL: mcp-servicetitan-dev.lpeluso.workers.dev
 [env.dev]
 name = "mcp-servicetitan-dev"
+placement = { mode = "smart" }
+
+[env.dev.observability]
+enabled = true
+
+[env.dev.limits]
+cpu_ms = 50
 
 [env.dev.vars]
-MCP_SERVICE_VERSION = "0.1.0-dev"
+MCP_SERVICE_VERSION = "1.0.0-f3-dev"
+
+[[env.dev.durable_objects.bindings]]
+name = "ST_RATE_LIMITER"
+class_name = "StRateLimiter"
+
+[[env.dev.durable_objects.bindings]]
+name = "CUSTOMER_SNAPSHOT_FLIGHT"
+class_name = "CustomerSnapshotSingleflight"
+
+[[env.dev.migrations]]
+tag = "v1"
+new_classes = ["StRateLimiter", "CustomerSnapshotSingleflight"]
+
+[[env.dev.analytics_engine_datasets]]
+binding = "MCP_METRICS"
+dataset = "mcp_servicetitan_metrics_dev"
 
 [[env.dev.d1_databases]]
 binding = "DB"
-database_name = "taylor-ai-dev"
-database_id = "28848a36-3210-4584-830b-fb1508b7503b"
+database_name = "qsc-mcp-st-dev"
+database_id = "74007593-70cd-462c-9a4c-75cf0771b4ee"
 
 [[env.dev.kv_namespaces]]
 binding = "TAI_STATE"
 id = "3eb6a8dc8afb463289962b3de0836508"
 
-# Service binding — dev points directly at the taylor-ai-dev worker
-# (deployed from taylor-ai's `[env.dev]` as a standalone script, not a named env)
 [[env.dev.services]]
 binding = "TAYLOR_AI"
 service = "taylor-ai-dev"
 
 # Dev secrets (same command, add --env dev):
 # wrangler secret put MCP_SYNC_KEY --env dev
+# wrangler secret put SIRO_API_TOKEN --env dev

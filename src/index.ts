@@ -1,19 +1,30 @@
 // ============================================================
-// mcp-servicetitan — MCP server entrypoint
-// Exposes a JSON-RPC 2.0 MCP endpoint at POST /mcp
-// Unauthenticated GET /health for liveness
+// mcp-servicetitan — Worker entrypoint
+// F2: D1 role lookup via resolveRole (own-DB mcp_roles).
+//
+// Routing:
+//   POST /mcp          → createMcpHandler (MCP protocol)
+//   GET  /health       → Hono (liveness + tool inventory)
+//   /admin/*           → Hono (operator routes)
+//   /webhooks/*        → Hono (H13 adds /webhooks/st for HMAC-verified ingest)
+//   *                  → 404
 // ============================================================
 
 import { Hono } from 'hono';
+import { createMcpHandler } from 'agents/mcp';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Env } from './env';
-import { TOOLS, findTool, toolSchemas } from './tools/index';
-import { McpError } from './errors';
-import * as obs from './obs';
-import { newCorrelationId } from './auth';
+import { TOOLS, toolsForRole } from './tools/index';
+import { registerTool, type RequestContext } from './tool-registry';
+import { resolveRole } from './auth';
 
+// Durable Object classes must be exported from the worker entry point.
+export { StRateLimiter } from './durable/st-rate-limiter';
+export { CustomerSnapshotSingleflight } from './durable/customer-snapshot-flight';
+
+// ─── Hono app for non-MCP routes ──────────────────────────────
 const app = new Hono<{ Bindings: Env }>();
 
-// ─── Health ──────────────────────────────────────────────────
 app.get('/health', (c) => {
   return c.json({
     ok: true,
@@ -21,171 +32,111 @@ app.get('/health', (c) => {
     version: c.env.MCP_SERVICE_VERSION,
     toolCount: TOOLS.length,
     tools: TOOLS.map((t) => t.name),
+    transport: 'agents-sdk createMcpHandler (Streamable HTTP)',
     taylorAi: 'service-binding',
   });
 });
 
-// ─── MCP JSON-RPC endpoint ───────────────────────────────────
-interface JsonRpcRequest {
-  jsonrpc: '2.0';
-  id?: string | number | null;
-  method: string;
-  params?: unknown;
-}
+// List roles — requires X-Sync-Key matching env secret.
+app.get('/admin/roles', async (c) => {
+  if (c.req.header('x-sync-key') !== c.env.MCP_SYNC_KEY) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
+  const rows = await c.env.DB.prepare('SELECT key_hash, role, owner, note, created_at FROM mcp_roles ORDER BY created_at DESC').all();
+  return c.json({ roles: rows.results });
+});
 
-interface JsonRpcResponse {
-  jsonrpc: '2.0';
-  id: string | number | null;
-  result?: unknown;
-  error?: { code: number; message: string; data?: unknown };
-}
-
-function rpcError(id: string | number | null, code: number, message: string, data?: unknown): JsonRpcResponse {
-  return { jsonrpc: '2.0', id, error: { code, message, data } };
-}
-
-function rpcOk(id: string | number | null, result: unknown): JsonRpcResponse {
-  return { jsonrpc: '2.0', id, result };
-}
-
-app.post('/mcp', async (c) => {
-  const env = c.env;
-  let body: JsonRpcRequest;
+// /admin/metrics — tool call summary from audit_log.
+// p50/p95/p99 are in the CF Analytics Engine dashboard (MCP_METRICS dataset).
+app.get('/admin/metrics', async (c) => {
+  if (c.req.header('x-sync-key') !== c.env.MCP_SYNC_KEY) {
+    return c.json({ error: 'unauthorized' }, 401);
+  }
   try {
-    body = await c.req.json();
-  } catch {
-    return c.json(rpcError(null, -32700, 'Parse error: invalid JSON'), 400);
-  }
-
-  const id = body.id ?? null;
-  const actor = c.req.header('X-Actor') ?? 'claude-code';
-  const correlation = c.req.header('X-Correlation-Id') ?? newCorrelationId();
-
-  if (body.jsonrpc !== '2.0') {
-    return c.json(rpcError(id, -32600, 'Invalid Request: jsonrpc must be "2.0"'), 400);
-  }
-
-  switch (body.method) {
-    case 'initialize': {
-      return c.json(
-        rpcOk(id, {
-          protocolVersion: '2024-11-05',
-          serverInfo: { name: 'mcp-servicetitan', version: env.MCP_SERVICE_VERSION },
-          capabilities: { tools: {} },
-        })
-      );
-    }
-
-    case 'tools/list': {
-      return c.json(rpcOk(id, { tools: toolSchemas() }));
-    }
-
-    case 'tools/call': {
-      const params = (body.params ?? {}) as { name?: string; arguments?: unknown };
-      if (!params.name) {
-        return c.json(rpcError(id, -32602, 'Invalid params: missing "name"'), 400);
-      }
-      const tool = findTool(params.name);
-      if (!tool) {
-        return c.json(rpcError(id, -32601, `Method not found: tool "${params.name}"`), 404);
-      }
-
-      const started = Date.now();
-      const args = (params.arguments ?? {}) as Record<string, unknown>;
-
-      try {
-        const result = await tool.handler(env, args, { actor, correlation });
-        const latency = Date.now() - started;
-
-        c.executionCtx.waitUntil(
-          obs.audit(env, {
-            actor,
-            surface: 'servicetitan',
-            operation: tool.name,
-            status: 'ok',
-            latency_ms: latency,
-            correlation,
-            payload: args,
-          })
-        );
-        c.executionCtx.waitUntil(
-          obs.heartbeat(env, `mcp-servicetitan:${tool.name}`, { ok: true })
-        );
-
-        return c.json(
-          rpcOk(id, {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(result),
-              },
-            ],
-          })
-        );
-      } catch (err) {
-        const latency = Date.now() - started;
-        const mcpErr =
-          err instanceof McpError
-            ? err
-            : new McpError('internal_error', (err as Error).message || 'tool threw', {
-                correlation,
-              });
-
-        c.executionCtx.waitUntil(
-          obs.error(env, {
-            source: `worker:mcp-servicetitan:${tool.name}`,
-            severity: mcpErr.code === 'upstream_error' ? 'error' : 'warn',
-            message: mcpErr.message,
-            stack: (err as Error).stack,
-            context: { actor, args, correlation, code: mcpErr.code },
-            correlation,
-          })
-        );
-        c.executionCtx.waitUntil(
-          obs.audit(env, {
-            actor,
-            surface: 'servicetitan',
-            operation: tool.name,
-            status: 'error',
-            latency_ms: latency,
-            correlation,
-            payload: args,
-            result: { code: mcpErr.code, message: mcpErr.message },
-          })
-        );
-        c.executionCtx.waitUntil(
-          obs.heartbeat(env, `mcp-servicetitan:${tool.name}`, { ok: false })
-        );
-
-        return c.json(
-          rpcOk(id, {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(mcpErr.toResponse()),
-              },
-            ],
-            isError: true,
-          })
-        );
-      }
-    }
-
-    case 'notifications/initialized':
-    case 'notifications/cancelled': {
-      // Notifications have no response per JSON-RPC spec
-      return new Response(null, { status: 204 });
-    }
-
-    default:
-      return c.json(rpcError(id, -32601, `Method not found: ${body.method}`), 404);
+    const [hourly, topTools, errors] = await Promise.all([
+      c.env.DB.prepare(
+        `SELECT COUNT(*) as calls, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) as errors,
+                AVG(latency_ms) as avg_latency_ms
+         FROM audit_log WHERE ts > ?`
+      ).bind(Date.now() - 3600_000).first<{ calls: number; errors: number; avg_latency_ms: number }>(),
+      c.env.DB.prepare(
+        `SELECT operation as tool, COUNT(*) as calls, AVG(latency_ms) as avg_ms
+         FROM audit_log WHERE ts > ?
+         GROUP BY operation ORDER BY calls DESC LIMIT 10`
+      ).bind(Date.now() - 86400_000).all(),
+      c.env.DB.prepare(
+        `SELECT source, message, COUNT(*) as count
+         FROM error_log WHERE ts > ?
+         GROUP BY source, message ORDER BY count DESC LIMIT 10`
+      ).bind(Date.now() - 3600_000).all(),
+    ]);
+    return c.json({
+      period_1h: hourly,
+      top_tools_24h: topTools.results,
+      errors_1h: errors.results,
+      _note: 'p50/p95/p99 latency percentiles available in CF Analytics Engine dashboard (MCP_METRICS dataset)',
+    });
+  } catch (e) {
+    return c.json({ error: 'metrics query failed', detail: (e as Error).message }, 500);
   }
 });
 
-// ─── 404 ─────────────────────────────────────────────────────
+// /webhooks/st — HMAC-verified ST webhook ingest (H13 stub).
+app.post('/webhooks/st', (c) => c.json({ error: 'H13: webhook ingest not yet implemented' }, 501));
+
 app.notFound((c) => c.json({ error: 'not found' }, 404));
 
-// ─── Export ──────────────────────────────────────────────────
+// ─── CORS for MCP Inspector + remote MCP clients ──────────────
+// Inspector at localhost:5173 requires mcp-session-id in both allowed
+// request headers AND exposeHeaders for session resumption.
+const CORS_OPTIONS = {
+  origin: '*', // F1 dev-friendly; tighten for prod in H13
+  methods: 'GET, POST, OPTIONS, DELETE',
+  headers: 'content-type, mcp-session-id, authorization, x-sync-key, x-mcp-role, x-actor, x-correlation-id',
+  exposeHeaders: 'mcp-session-id',
+  maxAge: 86400,
+};
+
+// ─── Per-request McpServer build ──────────────────────────────
+// Required per CF docs: post-SDK-1.26.0 a shared global McpServer is a
+// known security vuln (cross-request state bleed). Build one per request.
+function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: RequestContext): McpServer {
+  const server = new McpServer({
+    name: 'qsc-mcp-servicetitan',
+    version: env.MCP_SERVICE_VERSION,
+  });
+  const visible = toolsForRole(reqCtx.role);
+  for (const tool of visible) {
+    registerTool(server, tool, env, execCtx, reqCtx);
+  }
+  return server;
+}
+
+// ─── Export ───────────────────────────────────────────────────
 export default {
-  fetch: app.fetch,
+  async fetch(request: Request, env: Env, execCtx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+
+    // Dispatch non-MCP routes to Hono.
+    if (
+      url.pathname.startsWith('/health') ||
+      url.pathname.startsWith('/admin') ||
+      url.pathname.startsWith('/webhooks') ||
+      (url.pathname === '/' && request.method === 'GET')
+    ) {
+      return app.fetch(request, env, execCtx);
+    }
+
+    // MCP dispatch: resolve role via D1 mcp_roles (F2), build per-request server.
+    const actor = request.headers.get('x-actor') ?? 'claude-code';
+    const role = await resolveRole(request, env);
+    const reqCtx: RequestContext = { actor, role };
+
+    const server = buildServer(env, execCtx, reqCtx);
+    const handler = createMcpHandler(server, {
+      route: '/mcp',
+      corsOptions: CORS_OPTIONS,
+    });
+    return handler(request, env, execCtx);
+  },
 };

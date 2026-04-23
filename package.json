@@ -1,20 +1,28 @@
 {
   "name": "mcp-servicetitan",
-  "version": "0.1.0",
-  "description": "QSC ServiceTitan MCP server — read-only tools exposing ST data to Claude Code via taylor-ai's /api/st/read proxy",
+  "version": "1.0.0-f1",
+  "description": "QSC ServiceTitan MCP server — Agents SDK createMcpHandler transport, Zod-validated tools, 41 L4 + 10 L5 composites + st_call in v1.0 (F1: 12 existing tools re-homed on new transport).",
   "private": true,
   "scripts": {
     "deploy": "wrangler deploy",
     "deploy:dev": "wrangler deploy --env dev",
     "dev": "wrangler dev",
-    "types": "wrangler types"
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "preflight": "bash scripts/preflight.sh",
+    "preflight:dev": "bash scripts/preflight.sh --env dev"
   },
   "dependencies": {
-    "hono": "^4.6.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "agents": "^0.11.4",
+    "hono": "^4.6.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250403.1",
     "typescript": "^5.5.0",
+    "vitest": "^4.1.4",
     "wrangler": "^4.0.0"
   }
 }

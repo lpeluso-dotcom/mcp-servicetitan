@@ -1,0 +1,222 @@
+// ============================================================
+// Tests for st_patch_service, st_create_service,
+//         st_patch_material, st_create_material
+//
+// F3 structure — two phases:
+//   dryRun=true (default): WriteGate.dryRun → token + echo.
+//   dryRun=false: WriteGate.verifyToken → durableWrite.
+//
+// Unit tests:
+//   - dryRun path: mock DB.prepare (for INSERT) + TAYLOR_AI (for echo).
+//   - Real-write path: use durableWrite directly (still exported).
+//   - Validation errors: no DB/fetch calls needed.
+// ============================================================
+
+import { describe, it, expect, vi } from 'vitest';
+import { st_patch_service, durableWrite } from '../st_patch_service';
+import { st_create_service } from '../st_create_service';
+import { st_patch_material } from '../st_patch_material';
+import { st_create_material } from '../st_create_material';
+
+const CORRELATION = 'test-correlation-id';
+const CTX = { actor: 'vitest', correlation: CORRELATION };
+
+// ── Env builder ──────────────────────────────────────────────
+
+function makeDB(firstResult: unknown = null) {
+  const stmt = {
+    bind: vi.fn().mockReturnThis(),
+    run: vi.fn().mockResolvedValue({ success: true }),
+    first: vi.fn().mockResolvedValue(firstResult),
+  };
+  return { prepare: vi.fn().mockReturnValue(stmt) };
+}
+
+function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>, db = makeDB()): any {
+  return {
+    TAYLOR_AI: { fetch: vi.fn(fetchImpl) },
+    MCP_SYNC_KEY: 'test-sync-key',
+    MCP_SERVICE_VERSION: '0.0.0-test',
+    DB: db,
+    TAI_STATE: {},
+    SIRO_API_TOKEN: '',
+  };
+}
+
+// Simulates the dryRun echo endpoint (/api/st/write?dryRun=1).
+function dryRunFetch() {
+  return async (url: string) => {
+    if (url.includes('dryRun=1')) {
+      return new Response(JSON.stringify({ echo: true }), { status: 200 });
+    }
+    throw new Error(`unexpected URL in dryRun test: ${url}`);
+  };
+}
+
+// Simulates submit + completion for the real durable write workflow.
+function happyFetch(output: unknown) {
+  let call = 0;
+  return async (url: string) => {
+    call++;
+    if (call === 1) {
+      return new Response(JSON.stringify({ instance_id: 'inst-abc123' }), { status: 202 });
+    }
+    return new Response(JSON.stringify({ status: 'complete', output }), { status: 200 });
+  };
+}
+
+// ── st_patch_service ─────────────────────────────────────────
+
+describe('st_patch_service', () => {
+  it('dryRun=true returns DryRunResult with tool + token', async () => {
+    const env = makeEnv(dryRunFetch());
+    const result: any = await st_patch_service.handler(env, { id: 12345, cost: 75 }, CTX);
+    expect(result.dryRun).toBe(true);
+    expect(result.tool).toBe('st_patch_service');
+    expect(result.confirmation_token).toBeTypeOf('string');
+    expect(result.expires_in_seconds).toBe(900);
+    // DB must have recorded the token.
+    expect(env.DB.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT OR IGNORE INTO confirmation_tokens'));
+  });
+
+  it('throws validation_error when no fields besides id are provided', async () => {
+    const env = makeEnv(async () => new Response('', { status: 200 }));
+    await expect(st_patch_service.handler(env, { id: 12345 }, CTX))
+      .rejects.toMatchObject({ code: 'validation_error' });
+    expect(env.TAYLOR_AI.fetch).not.toHaveBeenCalled();
+  });
+
+  it('throws validation_error when dryRun=false with no token', async () => {
+    const env = makeEnv(async () => new Response('', { status: 200 }));
+    await expect(st_patch_service.handler(env, { id: 12345, cost: 50, dryRun: false }, CTX))
+      .rejects.toMatchObject({ code: 'validation_error' });
+  });
+
+  // Test the underlying durable write path directly — operation + payload shape.
+  it('durableWrite submits correct operation and payload for service patch', async () => {
+    const output = { status: 'ok' };
+    const env = makeEnv(happyFetch(output));
+    const result = await durableWrite(env, {
+      actor: CTX.actor, operation: 'service.patch',
+      target: { id: '12345', type: 'service' }, payload: { cost: 75 }, correlation: CORRELATION,
+    });
+    expect(result).toEqual(output);
+    const [url, init] = env.TAYLOR_AI.fetch.mock.calls[0];
+    expect(url).toBe('https://taylor-ai/api/st/durable-write');
+    const body = JSON.parse(init.body);
+    expect(body.operation).toBe('service.patch');
+    expect(body.target).toEqual({ id: '12345', type: 'service' });
+    expect(body.payload).toEqual({ cost: 75 });
+    expect(body.dry_run).toBe(false);
+  });
+
+  it('throws the correct McpError code on upstream 4xx during durable write', async () => {
+    const env = makeEnv(async () => new Response('Unauthorized', { status: 401 }));
+    await expect(durableWrite(env, {
+      actor: CTX.actor, operation: 'service.patch',
+      target: { id: '1', type: 'service' }, payload: { name: 'x' }, correlation: CORRELATION,
+    })).rejects.toMatchObject({ code: 'auth_failed' });
+  });
+
+  it('throws upstream_error when durable workflow reports errored', async () => {
+    let call = 0;
+    const env = makeEnv(async () => {
+      call++;
+      if (call === 1) return new Response(JSON.stringify({ instance_id: 'inst-err' }), { status: 202 });
+      return new Response(JSON.stringify({ status: 'errored', error: 'pb_registry lock' }), { status: 200 });
+    });
+    await expect(durableWrite(env, {
+      actor: CTX.actor, operation: 'service.patch',
+      target: { id: '99', type: 'service' }, payload: { name: 'X' }, correlation: CORRELATION,
+    })).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('pb_registry lock') });
+  });
+
+  it('throws timeout when workflow never completes', async () => {
+    let call = 0;
+    const env = makeEnv(async () => {
+      call++;
+      if (call === 1) return new Response(JSON.stringify({ instance_id: 'inst-spin' }), { status: 202 });
+      return new Response(JSON.stringify({ status: 'running' }), { status: 200 });
+    });
+    await expect(durableWrite(env, {
+      actor: CTX.actor, operation: 'service.patch',
+      target: { id: '1', type: 'service' }, payload: { name: 'Y' }, correlation: CORRELATION,
+      _pollMaxAttempts: 2, _pollIntervalMs: 0,
+    })).rejects.toMatchObject({ code: 'timeout' });
+  });
+});
+
+// ── st_create_service ────────────────────────────────────────
+
+describe('st_create_service', () => {
+  it('dryRun=true returns DryRunResult for service create', async () => {
+    const env = makeEnv(dryRunFetch());
+    const result: any = await st_create_service.handler(env, { name: 'New Service', categoryId: 5 }, CTX);
+    expect(result.dryRun).toBe(true);
+    expect(result.tool).toBe('st_create_service');
+    expect(result.confirmation_token).toBeTypeOf('string');
+  });
+
+  it('durableWrite uses service.create operation and sends full args as payload', async () => {
+    const env = makeEnv(happyFetch({ status: 'ok' }));
+    await durableWrite(env, {
+      actor: CTX.actor, operation: 'service.create',
+      target: { id: '0', type: 'service' }, payload: { name: 'New Service', categoryId: 5 }, correlation: CORRELATION,
+    });
+    const body = JSON.parse(env.TAYLOR_AI.fetch.mock.calls[0][1].body);
+    expect(body.operation).toBe('service.create');
+    expect(body.payload).toMatchObject({ name: 'New Service', categoryId: 5 });
+    expect(body.target.id).toBe('0');
+  });
+});
+
+// ── st_patch_material ────────────────────────────────────────
+
+describe('st_patch_material', () => {
+  it('dryRun=true returns DryRunResult for material patch', async () => {
+    const env = makeEnv(dryRunFetch());
+    const result: any = await st_patch_material.handler(env, { id: 777, cost: 12.5 }, CTX);
+    expect(result.dryRun).toBe(true);
+    expect(result.tool).toBe('st_patch_material');
+  });
+
+  it('throws validation_error when no fields besides id are provided', async () => {
+    const env = makeEnv(async () => new Response('', { status: 200 }));
+    await expect(st_patch_material.handler(env, { id: 777 }, CTX))
+      .rejects.toMatchObject({ code: 'validation_error' });
+  });
+
+  it('durableWrite submits with material.patch operation', async () => {
+    const env = makeEnv(happyFetch({ status: 'ok' }));
+    await durableWrite(env, {
+      actor: CTX.actor, operation: 'material.patch',
+      target: { id: '777', type: 'material' }, payload: { cost: 12.5 }, correlation: CORRELATION,
+    });
+    const body = JSON.parse(env.TAYLOR_AI.fetch.mock.calls[0][1].body);
+    expect(body.operation).toBe('material.patch');
+    expect(body.target).toEqual({ id: '777', type: 'material' });
+    expect(body.payload).toEqual({ cost: 12.5 });
+  });
+});
+
+// ── st_create_material ───────────────────────────────────────
+
+describe('st_create_material', () => {
+  it('dryRun=true returns DryRunResult for material create', async () => {
+    const env = makeEnv(dryRunFetch());
+    const result: any = await st_create_material.handler(env, { name: 'R-22', categoryId: 10 }, CTX);
+    expect(result.dryRun).toBe(true);
+    expect(result.tool).toBe('st_create_material');
+  });
+
+  it('durableWrite uses material.create operation', async () => {
+    const env = makeEnv(happyFetch({}));
+    await durableWrite(env, {
+      actor: CTX.actor, operation: 'material.create',
+      target: { id: '0', type: 'material' }, payload: { name: 'R-22', categoryId: 10 }, correlation: CORRELATION,
+    });
+    const body = JSON.parse(env.TAYLOR_AI.fetch.mock.calls[0][1].body);
+    expect(body.operation).toBe('material.create');
+    expect(body.payload).toMatchObject({ name: 'R-22', categoryId: 10 });
+  });
+});

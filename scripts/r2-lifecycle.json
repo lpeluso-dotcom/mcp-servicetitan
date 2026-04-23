@@ -1,0 +1,18 @@
+{
+  "rules": [
+    {
+      "id": "transition-to-infrequent-access",
+      "status": "Enabled",
+      "filter": { "prefix": "" },
+      "transitions": [
+        { "days": 30, "storageClass": "InfrequentAccess" }
+      ]
+    },
+    {
+      "id": "delete-old-webhooks",
+      "status": "Enabled",
+      "filter": { "prefix": "" },
+      "expiration": { "days": 180 }
+    }
+  ]
+}

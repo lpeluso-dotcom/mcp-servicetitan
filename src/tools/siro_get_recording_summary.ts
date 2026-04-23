@@ -3,6 +3,7 @@
 // Cache TTL: 1 hour (summaries are stable once generated)
 // ============================================================
 
+import { z } from 'zod';
 import type { Env } from '../env';
 import { siroFetch } from '../siro';
 import { cacheGet } from '../cache';
@@ -20,13 +21,8 @@ export const siro_get_recording_summary: ToolDef<Args> = {
   name: 'siro_get_recording_summary',
   description:
     'Get the AI-generated summary for a Siro recording (sales conversation analysis, key moments, coaching points). Read-only. Cached 1 hour.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      recordingId: { type: 'string', description: 'Siro recording ID' },
-    },
-    required: ['recordingId'],
-    additionalProperties: false,
+  zodSchema: {
+    recordingId: z.string().min(1).describe('Siro recording ID'),
   },
   async handler(env, args, { correlation }) {
     if (!args.recordingId) {

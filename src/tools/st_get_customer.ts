@@ -3,6 +3,7 @@
 // Cache TTL: 5 min
 // ============================================================
 
+import { z } from 'zod';
 import type { Env } from '../env';
 import { authHeaders } from '../auth';
 import { cacheGet } from '../cache';
@@ -20,13 +21,8 @@ interface Args {
 export const st_get_customer: ToolDef<Args> = {
   name: 'st_get_customer',
   description: 'Get a single ServiceTitan customer by ID. Read-only. Cached 5 min.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      customerId: { type: 'number', description: 'ServiceTitan customer ID' },
-    },
-    required: ['customerId'],
-    additionalProperties: false,
+  zodSchema: {
+    customerId: z.number().int().positive().describe('ServiceTitan customer ID'),
   },
   async handler(env, args, { actor, correlation }) {
     if (!args.customerId || typeof args.customerId !== 'number') {

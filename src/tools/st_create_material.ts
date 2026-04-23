@@ -1,0 +1,57 @@
+// ============================================================
+// st_create_material — POST a new pricebook material
+// F3: dryRun=true (default) → confirmation_token → dryRun=false → durable write.
+// ============================================================
+
+import { z } from 'zod';
+import { McpError } from '../errors';
+import { WriteGate } from '../write-gate';
+import type { ToolDef } from './index';
+import { durableWrite } from './st_patch_service';
+
+interface Args {
+  name: string;
+  categoryId: number;
+  code?: string;
+  description?: string;
+  cost?: number;
+  price?: number;
+  active?: boolean;
+  unitOfMeasure?: string;
+  dryRun?: boolean;
+  confirmation_token?: string;
+}
+
+export const st_create_material: ToolDef<Args> = {
+  name: 'st_create_material',
+  description:
+    'Create a new ServiceTitan pricebook material. ' +
+    'dryRun=true (default) validates and returns a confirmation_token — call again with dryRun=false + token to write. ' +
+    'Requires name and categoryId at minimum.',
+  isWrite: true,
+  zodSchema: {
+    name: z.string().min(1).describe('Display name for the material'),
+    categoryId: z.number().int().positive().describe('Pricebook category ID (required by ST)'),
+    code: z.string().optional().describe('Material code'),
+    description: z.string().optional().describe('Material description'),
+    cost: z.number().optional().describe('Internal cost per unit'),
+    price: z.number().optional().describe('Price per unit charged to the customer'),
+    active: z.boolean().optional().describe('Whether active in pricebook (default true)'),
+    unitOfMeasure: z.string().optional().describe('Unit of measure (e.g. "Each", "Box")'),
+    dryRun: z.boolean().default(true).describe('true (default) = preview + token; false = execute write'),
+    confirmation_token: z.string().optional().describe('Token from prior dryRun=true call, required when dryRun=false'),
+  },
+  async handler(env, args, { actor, correlation }) {
+    const { dryRun = true, confirmation_token, ...payload } = args;
+    const gate = new WriteGate(env);
+
+    if (dryRun) {
+      return gate.dryRun('st_create_material', payload, actor, correlation, payload, '/pricebook/v2/tenant/431848990/materials', 'POST');
+    }
+    if (!confirmation_token) {
+      throw new McpError('validation_error', 'confirmation_token required when dryRun=false', { correlation });
+    }
+    await gate.verifyToken('st_create_material', payload, actor, confirmation_token);
+    return durableWrite(env, { actor, operation: 'material.create', target: { id: '0', type: 'material' }, payload, correlation });
+  },
+};

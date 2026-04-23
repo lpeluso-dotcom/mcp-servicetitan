@@ -3,6 +3,7 @@
 // Cache TTL: 5 min
 // ============================================================
 
+import { z } from 'zod';
 import type { Env } from '../env';
 import { authHeaders } from '../auth';
 import { cacheGet } from '../cache';
@@ -23,17 +24,13 @@ export const st_list_customers: ToolDef<Args> = {
   name: 'st_list_customers',
   description:
     'List ServiceTitan customers with optional pagination and modified-after filter. Read-only. Cached 5 min. Calls taylor-ai /api/st/read which handles ST OAuth.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      page: { type: 'number', description: 'Page number, default 1' },
-      pageSize: { type: 'number', description: 'Page size, default 50, max 200' },
-      modifiedOnOrAfter: {
-        type: 'string',
-        description: 'ISO 8601 timestamp, returns customers modified on or after this time',
-      },
-    },
-    additionalProperties: false,
+  zodSchema: {
+    page: z.number().int().positive().optional().describe('Page number, default 1'),
+    pageSize: z.number().int().positive().max(200).optional().describe('Page size, default 50, max 200'),
+    modifiedOnOrAfter: z
+      .string()
+      .optional()
+      .describe('ISO 8601 timestamp, returns customers modified on or after this time'),
   },
   async handler(env, args, { actor, correlation }) {
     const page = args.page ?? 1;

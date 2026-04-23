@@ -3,6 +3,7 @@
 // Cache TTL: 10 min (pricebook changes slowly)
 // ============================================================
 
+import { z } from 'zod';
 import type { Env } from '../env';
 import { authHeaders } from '../auth';
 import { cacheGet } from '../cache';
@@ -27,21 +28,14 @@ export const st_get_pricebook: ToolDef<Args> = {
   name: 'st_get_pricebook',
   description:
     'List ServiceTitan pricebook items by asset type (services, materials, or equipment). Read-only. Cached 10 min. The primary source for pricebook data is the pb_services / pb_materials / pb_equipment D1 tables synced nightly — use this tool for live-state verification.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      assetType: {
-        type: 'string',
-        enum: ['services', 'materials', 'equipment'],
-        description: 'Pricebook asset category',
-      },
-      page: { type: 'number', description: 'Page number, default 1' },
-      pageSize: { type: 'number', description: 'Page size, default 50, max 200' },
-      active: { type: 'boolean', description: 'Filter to only active items' },
-      search: { type: 'string', description: 'Free-text search' },
-    },
-    required: ['assetType'],
-    additionalProperties: false,
+  zodSchema: {
+    assetType: z
+      .enum(['services', 'materials', 'equipment'])
+      .describe('Pricebook asset category'),
+    page: z.number().int().positive().optional().describe('Page number, default 1'),
+    pageSize: z.number().int().positive().max(200).optional().describe('Page size, default 50, max 200'),
+    active: z.boolean().optional().describe('Filter to only active items'),
+    search: z.string().optional().describe('Free-text search'),
   },
   async handler(env, args, { actor, correlation }) {
     if (!args.assetType || !VALID_ASSET_TYPES.has(args.assetType)) {

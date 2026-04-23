@@ -1,50 +1,151 @@
 // ============================================================
 // tools/index.ts — Tool registry
+// T5: CRM (6) + Jobs (8) tools added.
 // ============================================================
 
+import type { z } from 'zod';
 import type { Env } from '../env';
+// F1 legacy tools
 import { st_list_customers } from './st_list_customers';
 import { st_get_customer } from './st_get_customer';
 import { st_list_jobs } from './st_list_jobs';
 import { st_list_appointments } from './st_list_appointments';
 import { st_get_pricebook } from './st_get_pricebook';
+import { st_patch_service } from './st_patch_service';
+import { st_create_service } from './st_create_service';
+import { st_patch_material } from './st_patch_material';
+import { st_create_material } from './st_create_material';
 import { siro_list_mobile_events } from './siro_list_mobile_events';
 import { siro_get_recording_summary } from './siro_get_recording_summary';
 import { siro_get_engagement } from './siro_get_engagement';
+// T5 — CRM
+import { find_customer } from './crm/find_customer';
+import { get_customer } from './crm/get_customer';
+import { get_customer_locations } from './crm/get_customer_locations';
+import { list_customer_jobs } from './crm/list_customer_jobs';
+import { get_customer_membership } from './crm/get_customer_membership';
+import { add_customer_note } from './crm/add_customer_note';
+// T6 — Pricebook
+import { search_pricebook_services } from './pricebook/search_pricebook_services';
+import { get_service_details } from './pricebook/get_service_details';
+import { search_materials } from './pricebook/search_materials';
+import { get_configurable_equipment_children } from './pricebook/get_configurable_equipment_children';
+import { list_service_categories } from './pricebook/list_service_categories';
+// C10-C12 — L5 Composites
+import { customer_snapshot } from './composites/customer_snapshot';
+import { pricebook_health_check_services } from './composites/pricebook_health_check_services';
+import { job_closeout_report } from './composites/job_closeout_report';
+import { margin_audit } from './composites/margin_audit';
+import { membership_outreach_list } from './composites/membership_outreach_list';
+import { dispatch_override_audit } from './composites/dispatch_override_audit';
+import { call_quality_review } from './composites/call_quality_review';
+import { commercial_plumbing_opportunities } from './composites/commercial_plumbing_opportunities';
+import { membership_jackpot_leaderboard } from './composites/membership_jackpot_leaderboard';
+import { marketing_roas } from './composites/marketing_roas';
+// T9 — Admin raw gateway
+import { st_call } from './st_call';
+// T8 — Memberships
+import { list_memberships_active } from './memberships/list_memberships_active';
+import { list_memberships_expiring } from './memberships/list_memberships_expiring';
+import { create_recurring_service } from './memberships/create_recurring_service';
+// T8 — Calls & Forms
+import { get_call } from './calls_forms/get_call';
+import { get_form_submission } from './calls_forms/get_form_submission';
+// T8 — Tasks
+import { create_task } from './tasks/create_task';
+import { list_open_tasks } from './tasks/list_open_tasks';
+// T7 — Estimates
+import { list_estimates_job } from './estimates/list_estimates_job';
+import { get_estimate } from './estimates/get_estimate';
+import { update_estimate_status } from './estimates/update_estimate_status';
+// T7 — Dispatch
+import { get_capacity } from './dispatch/get_capacity';
+import { list_technicians_available } from './dispatch/list_technicians_available';
+import { get_technician_shifts } from './dispatch/get_technician_shifts';
+import { list_non_job_events } from './dispatch/list_non_job_events';
+// T7 — Marketing
+import { list_campaigns } from './marketing/list_campaigns';
+import { get_campaign_performance } from './marketing/get_campaign_performance';
+import { create_call_with_campaign } from './marketing/create_call_with_campaign';
+// T6 — Invoicing
+import { get_invoice } from './invoicing/get_invoice';
+import { list_invoices_job } from './invoicing/list_invoices_job';
+import { get_invoice_balance } from './invoicing/get_invoice_balance';
+import { list_unpaid_invoices } from './invoicing/list_unpaid_invoices';
+// T5 — Jobs & Appointments
+import { get_job } from './jobs/get_job';
+import { list_jobs_today } from './jobs/list_jobs_today';
+import { get_job_appointments } from './jobs/get_job_appointments';
+import { add_job_note } from './jobs/add_job_note';
+import { book_job } from './jobs/book_job';
+import { reschedule_appointment } from './jobs/reschedule_appointment';
+import { hold_appointment } from './jobs/hold_appointment';
+import { assign_technicians } from './jobs/assign_technicians';
 
 export interface ToolContext {
   actor: string;
   correlation: string;
 }
 
-export interface ToolDef<Args = unknown> {
+export interface ToolDef<Args = Record<string, unknown>> {
   name: string;
   description: string;
-  inputSchema: Record<string, unknown>;
+  /** Zod raw shape — record of field name to ZodType. SDK derives JSON schema. */
+  zodSchema: z.ZodRawShape;
+  /** True for tools that modify state (writes). Informs registry + future role checks. */
+  isWrite?: boolean;
+  /** True for tools only registered when caller role === 'admin' (F1 placeholder; full gate in F2). */
+  adminOnly?: boolean;
   handler: (env: Env, args: Args, ctx: ToolContext) => Promise<unknown>;
 }
 
-// Register all tools here. Order controls tools/list output order.
-// ServiceTitan tools first, then Siro (ST acquired Siro).
 export const TOOLS: readonly ToolDef<any>[] = [
-  st_list_customers,
-  st_get_customer,
-  st_list_jobs,
-  st_list_appointments,
-  st_get_pricebook,
-  siro_list_mobile_events,
-  siro_get_recording_summary,
-  siro_get_engagement,
+  // F1 legacy
+  st_list_customers, st_get_customer, st_list_jobs, st_list_appointments, st_get_pricebook,
+  st_patch_service, st_create_service, st_patch_material, st_create_material,
+  // T5 CRM
+  find_customer, get_customer, get_customer_locations, list_customer_jobs,
+  get_customer_membership, add_customer_note,
+  // T5 Jobs
+  get_job, list_jobs_today, get_job_appointments, add_job_note,
+  book_job, reschedule_appointment, hold_appointment, assign_technicians,
+  // T6 Pricebook
+  search_pricebook_services, get_service_details, search_materials,
+  get_configurable_equipment_children, list_service_categories,
+  // T6 Invoicing
+  get_invoice, list_invoices_job, get_invoice_balance, list_unpaid_invoices,
+  // T7 Estimates
+  list_estimates_job, get_estimate, update_estimate_status,
+  // T7 Dispatch
+  get_capacity, list_technicians_available, get_technician_shifts, list_non_job_events,
+  // T7 Marketing
+  list_campaigns, get_campaign_performance, create_call_with_campaign,
+  // T8 Memberships
+  list_memberships_active, list_memberships_expiring, create_recurring_service,
+  // T8 Calls & Forms
+  get_call, get_form_submission,
+  // T8 Tasks
+  create_task, list_open_tasks,
+  // T9 Admin gateway (adminOnly — omitted for default role)
+  st_call,
+  // C10-C12 Composites
+  customer_snapshot, pricebook_health_check_services, job_closeout_report,
+  margin_audit, membership_outreach_list, dispatch_override_audit,
+  call_quality_review, commercial_plumbing_opportunities, membership_jackpot_leaderboard,
+  marketing_roas,
+  // Siro
+  siro_list_mobile_events, siro_get_recording_summary, siro_get_engagement,
 ] as const;
 
 export function findTool(name: string): ToolDef<any> | undefined {
   return TOOLS.find((t) => t.name === name);
 }
 
-export function toolSchemas() {
-  return TOOLS.map((t) => ({
-    name: t.name,
-    description: t.description,
-    inputSchema: t.inputSchema,
-  }));
+/**
+ * Filter tools by caller role. F1: only adminOnly tools are gated (none yet).
+ * F2 will expand this to read mcp_roles D1.
+ */
+export function toolsForRole(role: 'default' | 'admin'): readonly ToolDef<any>[] {
+  if (role === 'admin') return TOOLS;
+  return TOOLS.filter((t) => !t.adminOnly);
 }

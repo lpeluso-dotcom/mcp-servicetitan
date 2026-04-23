@@ -89,6 +89,27 @@ export async function error(env: Env, row: ErrorRow): Promise<void> {
   }
 }
 
+export interface MetricPoint {
+  tool: string;
+  latency_ms: number;
+  status: 'ok' | 'error';
+  source?: string;
+}
+
+export function metric(env: Env, point: MetricPoint): void {
+  try {
+    if (!env.MCP_METRICS) return;
+    env.MCP_METRICS.writeDataPoint({
+      indexes: [point.tool],
+      blobs: [point.status, point.source ?? 'unknown'],
+      doubles: [point.latency_ms],
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(`[obs.metric] write failed: ${(e as Error).message}`);
+  }
+}
+
 export async function heartbeat(
   env: Env,
   source: string,

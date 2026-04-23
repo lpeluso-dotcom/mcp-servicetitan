@@ -1,0 +1,123 @@
+// ============================================================
+// read-router.ts — D1-first read dispatcher for mcp-servicetitan.
+//
+// The 25 nightly-synced tables live in taylor-ai's D1. This router
+// calls taylor-ai's queryD1 RPC (read-only, parameterized SELECT only)
+// for those tables, and falls back to live ST via /api/st/read when:
+//   (a) the table is not in the nightly-synced set, OR
+//   (b) the table's updated_at is stale by more than 48h.
+//
+// Each tool result includes _source ('d1' | 'live') and, when stale,
+// _stale_days for operator transparency.
+// ============================================================
+
+import type { Env } from './env';
+import { authHeaders, newCorrelationId } from './auth';
+
+// Tables nightly-synced into taylor-ai D1 (verified 2026-04-22).
+// pb_services is FRESH. pb_materials (23d stale) + pb_equipment (37d stale)
+// are excluded until §13#1 sync fix ships — callers for those go live.
+export const D1_TABLES = new Set([
+  'customers', 'jobs', 'invoices', 'appointments', 'estimates', 'locations',
+  'payments', 'technicians', 'campaigns', 'business_units', 'job_types',
+  'tag_types', 'dispatch_zones', 'cancel_reasons', 'customer_contacts',
+  'calls', 'appointment_assignments', 'invoice_items', 'estimate_items',
+  'call_transcripts', 'pb_services', 'contacts', 'customer_notes', 'tags',
+  'installed_equipment',
+]);
+
+const STALE_THRESHOLD_MS = 48 * 60 * 60 * 1000;
+
+export interface ReadResult {
+  rows: unknown[];
+  _source: 'd1' | 'live';
+  _stale_days?: number;
+  _fallback_reason?: string;
+}
+
+export class ReadRouter {
+  constructor(private env: Env) {}
+
+  // Query taylor-ai's queryD1 RPC for a nightly-synced table.
+  // taylor-ai exposes a read-only parameterized SELECT proxy; it rejects
+  // INSERT/UPDATE/DELETE/DROP/ALTER on the provider side.
+  async queryD1(sql: string, params: unknown[] = []): Promise<{ rows: unknown[]; updatedAt: number | null }> {
+    const resp = await this.env.TAYLOR_AI.fetch('https://taylor-ai/internal/query-d1', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...authHeaders(this.env, newCorrelationId(), 'mcp-servicetitan-read-router'),
+      },
+      body: JSON.stringify({ sql, params }),
+    });
+
+    if (!resp.ok) {
+      throw new Error(`queryD1 RPC failed: ${resp.status}`);
+    }
+
+    return resp.json<{ rows: unknown[]; updatedAt: number | null }>();
+  }
+
+  // Query live ST via taylor-ai's /api/st/read proxy.
+  async queryLive(endpoint: string, query: Record<string, unknown> = {}): Promise<{ rows: unknown[] }> {
+    const qs = new URLSearchParams(
+      Object.fromEntries(Object.entries(query).map(([k, v]) => [k, String(v)]))
+    ).toString();
+    const url = `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(endpoint)}${qs ? '&' + qs : ''}`;
+
+    const resp = await this.env.TAYLOR_AI.fetch(url, {
+      headers: authHeaders(this.env, newCorrelationId(), 'mcp-servicetitan-read-router'),
+    });
+
+    if (!resp.ok) {
+      throw new Error(`live ST read failed: ${resp.status}`);
+    }
+
+    const data = await resp.json<{ data?: unknown[]; items?: unknown[] }>();
+    return { rows: data.data ?? data.items ?? [] };
+  }
+
+  // Route a read to D1 or live ST based on table membership and staleness.
+  async read(
+    table: string,
+    sql: string,
+    params: unknown[],
+    liveEndpoint: string,
+    liveQuery: Record<string, unknown> = {}
+  ): Promise<ReadResult> {
+    if (!D1_TABLES.has(table)) {
+      const live = await this.queryLive(liveEndpoint, liveQuery);
+      return { rows: live.rows, _source: 'live' };
+    }
+
+    try {
+      const d1 = await this.queryD1(sql, params);
+
+      // Check staleness. If updatedAt is null (RPC didn't populate sync_metadata),
+      // treat as unknown freshness and fall back to live rather than serving
+      // potentially stale D1 rows without a signal.
+      if (d1.updatedAt === null) {
+        const live = await this.queryLive(liveEndpoint, liveQuery);
+        return { rows: live.rows, _source: 'live', _fallback_reason: 'd1_freshness_unknown' };
+      }
+
+      const staleness = Date.now() - d1.updatedAt;
+      if (staleness > STALE_THRESHOLD_MS) {
+        const staleDays = Math.floor(staleness / (24 * 60 * 60 * 1000));
+        const live = await this.queryLive(liveEndpoint, liveQuery);
+        return {
+          rows: live.rows,
+          _source: 'live',
+          _stale_days: staleDays,
+          _fallback_reason: `d1_stale_${staleDays}d`,
+        };
+      }
+
+      return { rows: d1.rows, _source: 'd1' };
+    } catch {
+      // D1 unavailable — fall back to live ST rather than surfacing an error.
+      const live = await this.queryLive(liveEndpoint, liveQuery);
+      return { rows: live.rows, _source: 'live', _fallback_reason: 'd1_unavailable' };
+    }
+  }
+}

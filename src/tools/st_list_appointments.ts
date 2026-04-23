@@ -3,6 +3,7 @@
 // Cache TTL: none (live data)
 // ============================================================
 
+import { z } from 'zod';
 import type { Env } from '../env';
 import { authHeaders } from '../auth';
 import { cacheGet } from '../cache';
@@ -26,17 +27,13 @@ export const st_list_appointments: ToolDef<Args> = {
   name: 'st_list_appointments',
   description:
     'List ServiceTitan appointments. Read-only. NOT cached. Use this for scheduled-date queries — the ST Jobs API does NOT have a scheduled date field, Appointments does (start).',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      page: { type: 'number', description: 'Page number, default 1' },
-      pageSize: { type: 'number', description: 'Page size, default 50, max 200' },
-      startsOnOrAfter: { type: 'string', description: 'ISO 8601 — filter start >= this' },
-      startsBefore: { type: 'string', description: 'ISO 8601 — filter start < this' },
-      technicianId: { type: 'number', description: 'Filter by assigned technician' },
-      jobId: { type: 'number', description: 'Filter by job ID' },
-    },
-    additionalProperties: false,
+  zodSchema: {
+    page: z.number().int().positive().optional().describe('Page number, default 1'),
+    pageSize: z.number().int().positive().max(200).optional().describe('Page size, default 50, max 200'),
+    startsOnOrAfter: z.string().optional().describe('ISO 8601 — filter start >= this'),
+    startsBefore: z.string().optional().describe('ISO 8601 — filter start < this'),
+    technicianId: z.number().int().positive().optional().describe('Filter by assigned technician'),
+    jobId: z.number().int().positive().optional().describe('Filter by job ID'),
   },
   async handler(env, args, { actor, correlation }) {
     const page = args.page ?? 1;
