@@ -12,7 +12,6 @@
 // ============================================================
 
 import type { Env } from './env';
-import { authHeaders } from './auth';
 
 export const TOKEN_TTL_MS = 15 * 60 * 1000;
 
@@ -47,6 +46,8 @@ export interface DryRunResult {
   dryRun: true;
   tool: string;
   payload: unknown;
+  st_endpoint: string;
+  st_method: string;
   confirmation_token: string;
   expires_in_seconds: number;
 }
@@ -55,7 +56,9 @@ export class WriteGate {
   constructor(private env: Env) {}
 
   // Phase 1: issue a dryRun response with confirmation token.
-  // Calls taylor-ai /api/st/write?dryRun=1 to echo the would-be payload.
+  // taylor-ai /api/st/write does not support ?dryRun=1 (would call ST for real),
+  // so we echo the payload locally. Zod already validated inputs; no further
+  // pre-flight needed.
   async dryRun(
     tool: string,
     args: Record<string, unknown>,
@@ -65,16 +68,6 @@ export class WriteGate {
     stEndpoint: string,
     stMethod: string
   ): Promise<DryRunResult> {
-    // Echo via taylor-ai dry-run (no ST side-effect).
-    const resp = await this.env.TAYLOR_AI.fetch('https://taylor-ai/api/st/write?dryRun=1', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...authHeaders(this.env, correlation, actor) },
-      body: JSON.stringify({ endpoint: stEndpoint, method: stMethod, payload }),
-    });
-    if (!resp.ok) {
-      throw new Error(`dryRun echo failed: ${resp.status}`);
-    }
-
     const argsHash = await hashArgs(args);
     const issuedAt = Date.now();
     // Percent-encode '|' in actor to prevent pipe-injection when splitting the token envelope.
@@ -89,7 +82,7 @@ export class WriteGate {
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).bind(tokenHash, tool, argsHash, actor, issuedAt, issuedAt + TOKEN_TTL_MS, correlation).run();
 
-    return { dryRun: true, tool, payload, confirmation_token: token, expires_in_seconds: TOKEN_TTL_MS / 1000 };
+    return { dryRun: true, tool, payload, st_endpoint: stEndpoint, st_method: stMethod, confirmation_token: token, expires_in_seconds: TOKEN_TTL_MS / 1000 };
   }
 
   // Phase 2: verify + consume token. Throws if invalid/expired/consumed/args-changed.

@@ -253,9 +253,7 @@ describe('create_call_with_campaign', () => {
 
   it('posts to telecom calls endpoint (not lead attribution)', async () => {
     const env = makeEnv(dryRunFetch());
-    await create_call_with_campaign.handler(env, { customerId: 1, campaignId: 5 }, CTX);
-    const [, init] = env.TAYLOR_AI.fetch.mock.calls[0];
-    const body = JSON.parse(init.body);
-    expect(body.endpoint).toContain('telecom');
+    const result: any = await create_call_with_campaign.handler(env, { customerId: 1, campaignId: 5 }, CTX);
+    expect(result.st_endpoint).toContain('telecom');
   });
 });

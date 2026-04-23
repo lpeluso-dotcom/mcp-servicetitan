@@ -67,7 +67,8 @@ export class StRateLimiter {
     if (url.pathname === '/check') {
       result = this.check(family);
     } else if (url.pathname === '/backoff') {
-      this.applyBackoff(family, body.retryAfter ?? 1);
+      const retryAfterSeconds = Number(body.retryAfter);
+      this.applyBackoff(family, isNaN(retryAfterSeconds) ? 60 : retryAfterSeconds);
       result = { ok: true };
     } else {
       return Response.json({ error: 'unknown path' }, { status: 404 });

@@ -1,45 +1,8 @@
 import { z } from 'zod';
 import { McpError } from '../errors';
 import { WriteGate } from '../write-gate';
+import { normalizePath, normalizeBody } from '../st-path-builder';
 import type { ToolDef } from './index';
-
-const TENANT = '431848990';
-
-// ── Path middleware ──────────────────────────────────────────
-
-function normalizePath(path: string, method: string): string {
-  // Correction 1: /task-management/ → /taskmanagement/
-  path = path.replace(/\/task-management\//g, '/taskmanagement/');
-
-  // Correction 2: auto-inject /tenant/431848990/ after the versioned API segment if missing
-  // Pattern: /{api}/{version}/... but NOT /{api}/{version}/tenant/...
-  if (!path.includes(`/tenant/${TENANT}`)) {
-    // Find the version segment (e.g. /v2/, /v3/) and inject tenant after it
-    path = path.replace(/^(\/[^/]+\/v\d+)(\/|$)/, `$1/tenant/${TENANT}/`);
-  }
-
-  // Strip trailing slash on non-ODATA GET paths
-  if (method === 'GET' && !path.includes('/$') && path.endsWith('/')) {
-    path = path.slice(0, -1);
-  }
-
-  return path;
-}
-
-function normalizeBody(body: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...body };
-  // Correction 3: isConfigurable → isConfigurableEquipment
-  if ('isConfigurable' in out) {
-    out.isConfigurableEquipment = out.isConfigurable;
-    delete out.isConfigurable;
-  }
-  // Correction 4: useStaticPrice → useStaticPrices (plural)
-  if ('useStaticPrice' in out) {
-    out.useStaticPrices = out.useStaticPrice;
-    delete out.useStaticPrice;
-  }
-  return out;
-}
 
 // ── Tool ─────────────────────────────────────────────────────
 
@@ -71,7 +34,7 @@ export const st_call: ToolDef<Args> = {
       throw new McpError('validation_error', 'st_call: path must start with /', { correlation });
     }
 
-    const path = normalizePath(args.path, method);
+    const path = normalizePath(args.path);
 
     // ── GET: route to read proxy ─────────────────────────────
     if (method === 'GET') {
@@ -97,7 +60,7 @@ export const st_call: ToolDef<Args> = {
 
     // ── Non-GET: route through WriteGate ────────────────────
     const rawBody = args.body ?? {};
-    const payload = normalizeBody(rawBody);
+    const payload = normalizeBody(rawBody) ?? {};
     const businessArgs = { method, path, payload };
     const gate = new WriteGate(env);
 

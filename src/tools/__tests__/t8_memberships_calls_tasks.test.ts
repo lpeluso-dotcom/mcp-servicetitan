@@ -126,10 +126,8 @@ describe('create_recurring_service', () => {
 
   it('posts to memberships recurring-services endpoint', async () => {
     const env = makeEnv(dryRunFetch());
-    await create_recurring_service.handler(env, { membershipId: 10, serviceTypeId: 5, locationId: 3 }, CTX);
-    const [, init] = env.TAYLOR_AI.fetch.mock.calls[0];
-    const body = JSON.parse(init.body);
-    expect(body.endpoint).toContain('recurring-service');
+    const result: any = await create_recurring_service.handler(env, { membershipId: 10, serviceTypeId: 5, locationId: 3 }, CTX);
+    expect(result.st_endpoint).toContain('recurring-service');
   });
 });
 
@@ -195,11 +193,9 @@ describe('create_task', () => {
 
   it('uses /taskmanagement/ path (no hyphen — T8 correction)', async () => {
     const env = makeEnv(dryRunFetch());
-    await create_task.handler(env, { name: 'Follow up', jobId: 100 }, CTX);
-    const [, init] = env.TAYLOR_AI.fetch.mock.calls[0];
-    const body = JSON.parse(init.body);
-    expect(body.endpoint).toContain('taskmanagement');
-    expect(body.endpoint).not.toContain('task-management');
+    const result: any = await create_task.handler(env, { name: 'Follow up', jobId: 100 }, CTX);
+    expect(result.st_endpoint).toContain('taskmanagement');
+    expect(result.st_endpoint).not.toContain('task-management');
   });
 });
 

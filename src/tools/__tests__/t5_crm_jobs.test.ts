@@ -202,16 +202,13 @@ describe('reschedule_appointment', () => {
 
   it('posts to PATCH appointments endpoint (T3 correction)', async () => {
     const env = makeEnv(dryRunFetch());
-    await reschedule_appointment.handler(env, {
+    const result: any = await reschedule_appointment.handler(env, {
       appointmentId: 10,
       start: '2026-05-02T08:00', end: '2026-05-02T10:00',
       arrivalWindowStart: '2026-05-02T08:00', arrivalWindowEnd: '2026-05-02T09:00',
     }, CTX);
-    const [url, init] = env.TAYLOR_AI.fetch.mock.calls[0];
-    expect(url).toContain('dryRun=1');
-    const body = JSON.parse(init.body);
-    expect(body.endpoint).toContain('appointments');
-    expect(body.method).toBe('PATCH');
+    expect(result.st_endpoint).toContain('appointments');
+    expect(result.st_method).toBe('PATCH');
   });
 });
 
@@ -228,11 +225,9 @@ describe('hold_appointment', () => {
 
   it('targets the /hold sub-route (T4 catalog correction — not a PATCH)', async () => {
     const env = makeEnv(dryRunFetch());
-    await hold_appointment.handler(env, { appointmentId: 10, reasonId: 5 }, CTX);
-    const [, init] = env.TAYLOR_AI.fetch.mock.calls[0];
-    const body = JSON.parse(init.body);
-    expect(body.endpoint).toContain('/hold');
-    expect(body.method).toBe('POST');
+    const result: any = await hold_appointment.handler(env, { appointmentId: 10, reasonId: 5 }, CTX);
+    expect(result.st_endpoint).toContain('/hold');
+    expect(result.st_method).toBe('POST');
   });
 });
 
@@ -249,14 +244,10 @@ describe('assign_technicians', () => {
 
   it('makes two calls: unassign then assign (T5 compound correction)', async () => {
     const env = makeEnv(dryRunFetch());
-    await assign_technicians.handler(env, {
+    const result: any = await assign_technicians.handler(env, {
       appointmentId: 10, technicianIds: [101],
     }, CTX);
-    // dryRun=true goes through WriteGate.dryRun which calls taylor-ai once for the echo.
-    // The two-call compound is documented in the tool description; we verify via the
-    // endpoint payload containing both operations in the dryRun preview.
-    const [, init] = env.TAYLOR_AI.fetch.mock.calls[0];
-    const body = JSON.parse(init.body);
-    expect(body.endpoint).toContain('appointment-assignments');
+    // dryRun echoes the would-be ST endpoint in result.st_endpoint.
+    expect(result.st_endpoint).toContain('appointment-assignments');
   });
 });

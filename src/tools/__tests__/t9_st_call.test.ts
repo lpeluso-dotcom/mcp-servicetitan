@@ -125,28 +125,24 @@ describe('st_call path middleware', () => {
 describe('st_call body middleware', () => {
   it('correction 3: isConfigurable → isConfigurableEquipment on PATCH', async () => {
     const env = makeEnv(dryRunFetch());
-    await st_call.handler(env, {
+    const result: any = await st_call.handler(env, {
       method: 'PATCH',
       path: '/pricebook/v2/tenant/431848990/equipment/1',
       body: { isConfigurable: true, name: 'Test' },
     }, CTX);
-    const [, init] = env.TAYLOR_AI.fetch.mock.calls[0];
-    const body = JSON.parse(init.body);
-    expect(body.payload.isConfigurableEquipment).toBe(true);
-    expect(body.payload.isConfigurable).toBeUndefined();
+    expect(result.payload.isConfigurableEquipment).toBe(true);
+    expect(result.payload.isConfigurable).toBeUndefined();
   });
 
   it('correction 4: useStaticPrice → useStaticPrices on write bodies', async () => {
     const env = makeEnv(dryRunFetch());
-    await st_call.handler(env, {
+    const result: any = await st_call.handler(env, {
       method: 'PATCH',
       path: '/pricebook/v2/tenant/431848990/services/1',
       body: { useStaticPrice: true, price: 100 },
     }, CTX);
-    const [, init] = env.TAYLOR_AI.fetch.mock.calls[0];
-    const body = JSON.parse(init.body);
-    expect(body.payload.useStaticPrices).toBe(true);
-    expect(body.payload.useStaticPrice).toBeUndefined();
+    expect(result.payload.useStaticPrices).toBe(true);
+    expect(result.payload.useStaticPrice).toBeUndefined();
   });
 });
 
