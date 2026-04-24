@@ -5,23 +5,36 @@ import type { ToolDef } from '../index';
 
 interface Args { windowDays: number; customerId?: number; page?: number; pageSize?: number }
 
+// ST response fields kept. See list_memberships_active for rationale.
+const ESSENTIAL_FIELDS = [
+  'id', 'status', 'customerId', 'locationId', 'membershipTypeId',
+  'businessUnitId', 'from', 'to', 'duration', 'billingFrequency',
+  'followUpStatus', 'cancellationDate', 'nextScheduledBillDate',
+] as const;
+
+function trim(m: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of ESSENTIAL_FIELDS) out[k] = m[k];
+  return out;
+}
+
 // Semantics pinned: 'to' BETWEEN now AND now+windowDays AND status='Active'.
 // Do NOT use renewedById — unreliable per QSC ops memory.
 export const list_memberships_expiring: ToolDef<Args> = {
   name: 'list_memberships_expiring',
-  description: 'List active memberships expiring within the next N days. Uses expirationDate range filter (NOT renewedById — unreliable). Source: live ST (no D1 memberships table).',
+  description: 'List active memberships expiring within the next N days. Uses expirationDate range filter (NOT renewedById — unreliable). Response is trimmed to essential fields; client-side filtered to status=Active. Source: live ST (no D1 memberships table).',
   zodSchema: {
     windowDays: z.number().int().positive().describe('Number of days ahead to look for expiring memberships (e.g. 30 = expiring within 30 days)'),
     customerId: z.number().int().positive().optional().describe('Filter by customer ID'),
     page: z.number().int().positive().default(1).describe('Page number'),
-    pageSize: z.number().int().positive().max(200).default(50).describe('Page size, max 200'),
+    pageSize: z.number().int().positive().max(100).default(50).describe('Page size, max 100 (capped to keep response under MCP token limit)'),
   },
   async handler(env, args, { actor, correlation }) {
     const now = new Date();
     const windowEnd = new Date(now.getTime() + args.windowDays * 24 * 60 * 60 * 1000);
 
     const qs = new URLSearchParams();
-    qs.set('statuses', 'Active');
+    qs.set('status', 'Active');
     qs.set('activeThroughOnOrAfter', now.toISOString());
     qs.set('activeThroughBefore', windowEnd.toISOString());
     if (args.customerId) qs.set('customerId', String(args.customerId));
@@ -33,7 +46,14 @@ export const list_memberships_expiring: ToolDef<Args> = {
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `list_memberships_expiring failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: unknown[] }>();
-    return { memberships: data.data ?? [], windowDays: args.windowDays, _source: 'live' };
+    const data = await resp.json<{ data?: Record<string, unknown>[] }>();
+    const raw = data.data ?? [];
+    const activeOnly = raw.filter((m) => m.status === 'Active');
+    return {
+      memberships: activeOnly.map(trim),
+      windowDays: args.windowDays,
+      _source: 'live',
+      _filtered: raw.length !== activeOnly.length ? { received: raw.length, kept: activeOnly.length } : undefined,
+    };
   },
 };

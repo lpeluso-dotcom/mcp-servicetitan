@@ -5,18 +5,32 @@ import type { ToolDef } from '../index';
 
 interface Args { customerId?: number; locationId?: number; page?: number; pageSize?: number }
 
+// Fields returned per membership. ST responses include ~35 fields per record,
+// most of which are null/unused and blow the MCP result token limit at pageSize > 50.
+const ESSENTIAL_FIELDS = [
+  'id', 'status', 'customerId', 'locationId', 'membershipTypeId',
+  'businessUnitId', 'from', 'to', 'duration', 'billingFrequency',
+  'followUpStatus', 'cancellationDate', 'nextScheduledBillDate',
+] as const;
+
+function trim(m: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of ESSENTIAL_FIELDS) out[k] = m[k];
+  return out;
+}
+
 export const list_memberships_active: ToolDef<Args> = {
   name: 'list_memberships_active',
-  description: 'List active memberships. Source: live ST (no D1 table for memberships — all membership tools hit live ST).',
+  description: 'List active memberships. Source: live ST (no D1 table for memberships — all membership tools hit live ST). Response is trimmed to essential fields; client-side filtered to status=Active since ST statuses param filters on the meaningless active-bool, not the status enum.',
   zodSchema: {
     customerId: z.number().int().positive().optional().describe('Filter by customer ID'),
     locationId: z.number().int().positive().optional().describe('Filter by location ID'),
     page: z.number().int().positive().default(1).describe('Page number'),
-    pageSize: z.number().int().positive().max(200).default(50).describe('Page size, max 200'),
+    pageSize: z.number().int().positive().max(100).default(50).describe('Page size, max 100 (capped to keep response under MCP token limit)'),
   },
   async handler(env, args, { actor, correlation }) {
     const qs = new URLSearchParams();
-    qs.set('statuses', 'Active');
+    qs.set('status', 'Active');
     if (args.customerId) qs.set('customerId', String(args.customerId));
     if (args.locationId) qs.set('locationId', String(args.locationId));
     qs.set('page', String(args.page ?? 1));
@@ -27,7 +41,13 @@ export const list_memberships_active: ToolDef<Args> = {
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `list_memberships_active failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: unknown[] }>();
-    return { memberships: data.data ?? [], _source: 'live' };
+    const data = await resp.json<{ data?: Record<string, unknown>[] }>();
+    const raw = data.data ?? [];
+    const activeOnly = raw.filter((m) => m.status === 'Active');
+    return {
+      memberships: activeOnly.map(trim),
+      _source: 'live',
+      _filtered: raw.length !== activeOnly.length ? { received: raw.length, kept: activeOnly.length } : undefined,
+    };
   },
 };

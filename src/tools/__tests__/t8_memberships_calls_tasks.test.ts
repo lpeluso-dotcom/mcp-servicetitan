@@ -59,23 +59,65 @@ function dryRunFetch() {
 
 describe('list_memberships_active', () => {
   it('accepts empty args', async () => {
-    const env = makeEnv(liveOk([{ id: 1, type: 'Gold' }]));
+    const env = makeEnv(liveOk([{ id: 1, status: 'Active' }]));
     const result: any = await list_memberships_active.handler(env, {}, CTX);
     expect(result.memberships).toBeDefined();
     expect(Array.isArray(result.memberships)).toBe(true);
   });
 
-  it('calls memberships endpoint with active filter (live ST — no D1 table)', async () => {
+  it('calls memberships endpoint with status=Active (singular, not statuses)', async () => {
     const env = makeEnv(liveOk([]));
     await list_memberships_active.handler(env, {}, CTX);
     const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
     expect(url).toContain('membership');
+    expect(url).toContain('status%3DActive');
   });
 
   it('result includes _source: live', async () => {
     const env = makeEnv(liveOk([]));
     const result: any = await list_memberships_active.handler(env, {}, CTX);
     expect(result._source).toBe('live');
+  });
+
+  it('filters out non-Active records client-side (ST filter is unreliable)', async () => {
+    const env = makeEnv(liveOk([
+      { id: 1, status: 'Active' },
+      { id: 2, status: 'Expired' },
+      { id: 3, status: 'Canceled' },
+      { id: 4, status: 'Active' },
+    ]));
+    const result: any = await list_memberships_active.handler(env, {}, CTX);
+    expect(result.memberships).toHaveLength(2);
+    expect(result.memberships.every((m: any) => m.status === 'Active')).toBe(true);
+    expect(result._filtered).toEqual({ received: 4, kept: 2 });
+  });
+
+  it('omits _filtered when all records match', async () => {
+    const env = makeEnv(liveOk([{ id: 1, status: 'Active' }]));
+    const result: any = await list_memberships_active.handler(env, {}, CTX);
+    expect(result._filtered).toBeUndefined();
+  });
+
+  it('trims verbose fields from records', async () => {
+    const env = makeEnv(liveOk([{
+      id: 1, status: 'Active', customerId: 100, locationId: 200,
+      importId: 'uuid-junk', customFields: [], activatedById: null,
+      createdOn: '0001-01-01T00:00:00Z', modifiedOn: '2026-01-01T00:00:00Z',
+      memo: '', renewedById: null, soldById: null,
+    }]));
+    const result: any = await list_memberships_active.handler(env, {}, CTX);
+    const m = result.memberships[0];
+    expect(m.id).toBe(1);
+    expect(m.customerId).toBe(100);
+    expect(m.importId).toBeUndefined();
+    expect(m.customFields).toBeUndefined();
+    expect(m.modifiedOn).toBeUndefined();
+  });
+
+  it('rejects pageSize > 100', async () => {
+    const schema = z.object(list_memberships_active.zodSchema);
+    expect(schema.safeParse({ pageSize: 200 }).success).toBe(false);
+    expect(schema.safeParse({ pageSize: 100 }).success).toBe(true);
   });
 });
 

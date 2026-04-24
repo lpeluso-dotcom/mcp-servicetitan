@@ -41,7 +41,7 @@ export const customer_snapshot: ToolDef<Args> = {
         env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/crm/v2/tenant/${tenant}/customers/${customerId}`)}`, { headers: h, signal }),
         env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/crm/v2/tenant/${tenant}/locations?customerId=${customerId}`)}`, { headers: h, signal }),
         env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/jpm/v2/tenant/${tenant}/jobs?customerId=${customerId}`)}`, { headers: h, signal }),
-        env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/memberships/v2/tenant/${tenant}/memberships?customerId=${customerId}&statuses=Active`)}`, { headers: h, signal }),
+        env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/memberships/v2/tenant/${tenant}/memberships?customerId=${customerId}&status=Active`)}`, { headers: h, signal }),
         env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/sales/v2/tenant/${tenant}/estimates?customerId=${customerId}`)}`, { headers: h, signal }),
         env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/accounting/v2/tenant/${tenant}/invoices?customerId=${customerId}`)}`, { headers: h, signal }),
       ]);
@@ -64,12 +64,17 @@ export const customer_snapshot: ToolDef<Args> = {
       return (json as { data?: unknown }).data ?? json;
     }
 
+    const membershipsRaw = await extract(memberships, 'memberships');
+    const membershipsFiltered = Array.isArray(membershipsRaw)
+      ? (membershipsRaw as Record<string, unknown>[]).filter((m) => m.status === 'Active')
+      : membershipsRaw;
+
     return {
       customerId,
       customer: await extract(customer, 'customer'),
       locations: await extract(locations, 'locations'),
       jobs: await extract(jobs, 'jobs'),
-      memberships: await extract(memberships, 'memberships'),
+      memberships: membershipsFiltered,
       estimates: await extract(estimates, 'estimates'),
       invoices: await extract(invoices, 'invoices'),
       _composite: 'customer_snapshot',
