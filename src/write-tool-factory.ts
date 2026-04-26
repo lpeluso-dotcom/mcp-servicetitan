@@ -35,7 +35,8 @@ export interface WriteToolSpec<TArgs> {
   zodSchema: Record<string, ZodTypeAny>;
   /** Optional pre-handler validation hook for cross-field rules that the raw
    * zodSchema cannot express (e.g., "soldBy required when status=Sold").
-   * Throw McpError to reject. Runs on BOTH dryRun and live paths so the
+   * Throw any Error to reject — the factory wraps non-McpError throws into
+   * McpError(validation_error). Runs on BOTH dryRun and live paths so the
    * confirmation_token can never be issued for invalid input. */
   validate?: (args: TArgs) => void;
   /** Build the ST endpoint path from the parsed args. */
