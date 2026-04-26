@@ -114,7 +114,22 @@ else
   fail "Vitest run failed"
 fi
 
-# ── 7. Summary ─────────────────────────────────────────────
+# ── 7. Inspector smoke (optional, gated REMOTE=1) ─────────
+# Skipped by default so offline preflights don't hit the network.
+# Pre-deploy: REMOTE=1 bash scripts/preflight.sh --env $ENV
+echo ""
+echo "[7] Inspector smoke"
+if [[ "${REMOTE:-0}" == "1" ]]; then
+  if bash scripts/inspector-smoke.sh "$ENV" >/tmp/mcp-st-smoke.log 2>&1; then
+    pass "Inspector smoke 3/3 (see /tmp/mcp-st-smoke.log)"
+  else
+    fail "Inspector smoke failed (see /tmp/mcp-st-smoke.log)"
+  fi
+else
+  echo "  ℹ  Skipped (set REMOTE=1 to run live smoke against $ENV)"
+fi
+
+# ── 8. Summary ─────────────────────────────────────────────
 echo ""
 echo "============================================================"
 echo "  $PASS passed, $FAIL failed"
