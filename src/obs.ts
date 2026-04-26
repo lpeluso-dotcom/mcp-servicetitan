@@ -1,7 +1,8 @@
 // ============================================================
 // obs.ts — Observability helpers for mcp-servicetitan
-// Ports taylor-ai/src/obs.js to TypeScript, writes to the same
-// audit_log / error_log D1 tables (shared DB) and heartbeat KV.
+// Writes audit_log / error_log rows to env.DB (own-D1 qsc-mcp-st,
+// migrated off taylor-ai's shared DB in v1.0 F2). Heartbeat keys
+// land in TAI_STATE KV. Patterns ported from taylor-ai/src/obs.js.
 //
 // Safety:
 //  - Never throws. Logger failures are swallowed and console.error'd
