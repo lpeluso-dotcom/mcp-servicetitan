@@ -175,6 +175,43 @@ describe('defineWriteTool', () => {
     ).rejects.toThrow(/args changed/);
   });
 
+  it('validate hook rejects cross-field invariants before issuing a token', async () => {
+    const calls: string[] = [];
+    const env = makeEnv(async () => {
+      calls.push('fetch');
+      return new Response('{}', { status: 200 });
+    });
+    const tool = defineWriteTool<{
+      status: 'Open' | 'Sold';
+      soldBy?: number;
+      dryRun?: boolean;
+      confirmation_token?: string;
+    }>({
+      name: 'sample_validate_tool',
+      description: 'Test tool with cross-field rule',
+      zodSchema: {
+        status: z.enum(['Open', 'Sold']),
+        soldBy: z.number().int().positive().optional(),
+      },
+      validate: (args) => {
+        if (args.status === 'Sold' && args.soldBy === undefined) {
+          throw new Error('soldBy required when status=Sold');
+        }
+      },
+      endpoint: () => `/x/y`,
+      method: 'PATCH',
+      payload: (args) => ({ status: args.status, soldBy: args.soldBy }),
+    });
+    await expect(tool.handler(env, { status: 'Sold' }, CTX)).rejects.toMatchObject({
+      code: 'validation_error',
+      message: expect.stringContaining('soldBy'),
+    });
+    expect(calls).toHaveLength(0);
+    // Sold + soldBy passes
+    const ok: any = await tool.handler(env, { status: 'Sold', soldBy: 42 }, CTX);
+    expect(ok.dryRun).toBe(true);
+  });
+
   it('tampering tool name in token rejects', async () => {
     const env = makeEnv(async () => new Response('{}', { status: 200 }));
     const dry: any = await sampleTool.handler(env, { customerId: 1, note: 'x' }, CTX);

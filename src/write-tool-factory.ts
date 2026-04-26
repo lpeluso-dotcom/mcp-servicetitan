@@ -33,6 +33,11 @@ export interface WriteToolSpec<TArgs> {
   description: string;
   /** Business-field schema only. The factory adds dryRun + confirmation_token. */
   zodSchema: Record<string, ZodTypeAny>;
+  /** Optional pre-handler validation hook for cross-field rules that the raw
+   * zodSchema cannot express (e.g., "soldBy required when status=Sold").
+   * Throw McpError to reject. Runs on BOTH dryRun and live paths so the
+   * confirmation_token can never be issued for invalid input. */
+  validate?: (args: TArgs) => void;
   /** Build the ST endpoint path from the parsed args. */
   endpoint: (args: TArgs) => string;
   /** HTTP method on the ST endpoint (passed through to taylor-ai write proxy). */
@@ -79,6 +84,14 @@ export function defineWriteTool<TArgs extends BaseWriteArgs>(
       confirmation_token: TOKEN_ZOD,
     },
     async handler(env: Env, args: TArgs, { actor, correlation }) {
+      if (spec.validate) {
+        try {
+          spec.validate(args);
+        } catch (e) {
+          if (e instanceof McpError) throw e;
+          throw new McpError('validation_error', e instanceof Error ? e.message : String(e), { correlation });
+        }
+      }
       const dryRun = args.dryRun ?? true;
       const confirmation_token = args.confirmation_token;
       const businessArgs = spec.businessArgs ? spec.businessArgs(args) : defaultBusinessArgs(args);
