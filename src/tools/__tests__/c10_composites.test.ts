@@ -4,8 +4,9 @@
 // Key invariants:
 // - customer_snapshot fires 7 sub-calls, uses single-flight DO
 // - pricebook_health_check_services is D1-only (services fresh)
-// - marketing_roas is a stub (returns pending dependency status)
 // - membership_jackpot_leaderboard anonymizes until 2026-07-04
+// - marketing_roas was deleted v1.1 (D4) — three external MCPs (scorpion,
+//   lsa, lace) don't exist yet; cleaner-stub > stub-that-lies-to-Claude
 // ============================================================
 
 import { describe, it, expect, vi } from 'vitest';
@@ -19,7 +20,6 @@ import { dispatch_override_audit } from '../composites/dispatch_override_audit';
 import { call_quality_review } from '../composites/call_quality_review';
 import { commercial_plumbing_opportunities } from '../composites/commercial_plumbing_opportunities';
 import { membership_jackpot_leaderboard } from '../composites/membership_jackpot_leaderboard';
-import { marketing_roas } from '../composites/marketing_roas';
 
 const CORRELATION = 'test-corr';
 const CTX = { actor: 'vitest', correlation: CORRELATION };
@@ -257,16 +257,3 @@ describe('membership_jackpot_leaderboard', () => {
   });
 });
 
-describe('marketing_roas', () => {
-  it('accepts empty args (stub — pending external MCPs)', async () => {
-    const schema = z.object(marketing_roas.zodSchema);
-    expect(schema.safeParse({}).success).toBe(true);
-  });
-
-  it('returns pending dependency stub', async () => {
-    const env = makeEnv(liveOk([]));
-    const result: any = await marketing_roas.handler(env, {}, CTX);
-    expect(result.status).toBe('pending_dependency');
-    expect(result.blocking_on).toBeDefined();
-  });
-});

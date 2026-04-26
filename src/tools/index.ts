@@ -41,7 +41,6 @@ import { dispatch_override_audit } from './composites/dispatch_override_audit';
 import { call_quality_review } from './composites/call_quality_review';
 import { commercial_plumbing_opportunities } from './composites/commercial_plumbing_opportunities';
 import { membership_jackpot_leaderboard } from './composites/membership_jackpot_leaderboard';
-import { marketing_roas } from './composites/marketing_roas';
 // T9 — Admin raw gateway
 import { st_call } from './st_call';
 // T8 — Memberships
@@ -132,7 +131,6 @@ export const TOOLS: readonly ToolDef<any>[] = [
   customer_snapshot, pricebook_health_check_services, job_closeout_report,
   margin_audit, membership_outreach_list, dispatch_override_audit,
   call_quality_review, commercial_plumbing_opportunities, membership_jackpot_leaderboard,
-  marketing_roas,
   // Siro
   siro_list_mobile_events, siro_get_recording_summary, siro_get_engagement,
 ] as const;
