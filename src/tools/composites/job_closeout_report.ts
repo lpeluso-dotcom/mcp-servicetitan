@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
 import { authHeaders } from '../../auth';
+import { gatherFetches } from '../../composite-helpers';
 import type { ToolDef } from '../index';
 
 interface Args { jobId: number }
@@ -19,29 +19,24 @@ export const job_closeout_report: ToolDef<Args> = {
     const h = authHeaders(env, correlation, actor);
     const tenant = '431848990';
 
-    const [job, appointments, invoices] = await Promise.allSettled([
-      env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/jpm/v2/tenant/${tenant}/jobs/${jobId}`)}`, { headers: h }),
-      env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/jpm/v2/tenant/${tenant}/appointments?jobId=${jobId}`)}`, { headers: h }),
-      env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/accounting/v2/tenant/${tenant}/invoices?jobId=${jobId}`)}`, { headers: h }),
+    const fanout = await gatherFetches([
+      { name: 'job',          promise: env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/jpm/v2/tenant/${tenant}/jobs/${jobId}`)}`, { headers: h }) },
+      { name: 'appointments', promise: env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/jpm/v2/tenant/${tenant}/appointments?jobId=${jobId}`)}`, { headers: h }) },
+      { name: 'invoices',     promise: env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/accounting/v2/tenant/${tenant}/invoices?jobId=${jobId}`)}`, { headers: h }) },
     ]);
 
-    async function extract(settled: PromiseSettledResult<Response>, key: string) {
-      if (settled.status === 'rejected') return { error: `${key} fetch failed` };
-      if (!settled.value.ok) return { error: `${key} ${settled.value.status}` };
-      const json = await settled.value.json<{ data?: unknown } | unknown>();
-      return (json as { data?: unknown }).data ?? json;
-    }
-
-    const invoiceData = await extract(invoices, 'invoices');
+    const invoiceData = fanout.results.invoices;
     const firstInvoice = Array.isArray(invoiceData) ? invoiceData[0] : invoiceData;
 
     return {
       jobId,
-      job: await extract(job, 'job'),
-      appointments: await extract(appointments, 'appointments'),
+      job: fanout.results.job,
+      appointments: fanout.results.appointments,
       invoice: firstInvoice ?? null,
       _composite: 'job_closeout_report',
       _source: 'mixed',
+      _partial: fanout.partial,
+      _failures: fanout.failures,
       _note: 'form submissions and equipment join available via get_form_submission + forms_equipment D1 table',
       correlation,
     };

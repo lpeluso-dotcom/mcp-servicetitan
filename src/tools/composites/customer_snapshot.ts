@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
 import { authHeaders } from '../../auth';
+import { gatherFetches } from '../../composite-helpers';
 import type { ToolDef } from '../index';
 
 interface Args { customerId: number }
@@ -35,15 +35,15 @@ export const customer_snapshot: ToolDef<Args> = {
     const tenant = '431848990';
     const signal = AbortSignal.timeout(15_000);
 
-    let results: PromiseSettledResult<Response>[];
+    let fanout: Awaited<ReturnType<typeof gatherFetches>>;
     try {
-      results = await Promise.allSettled([
-        env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/crm/v2/tenant/${tenant}/customers/${customerId}`)}`, { headers: h, signal }),
-        env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/crm/v2/tenant/${tenant}/locations?customerId=${customerId}`)}`, { headers: h, signal }),
-        env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/jpm/v2/tenant/${tenant}/jobs?customerId=${customerId}`)}`, { headers: h, signal }),
-        env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/memberships/v2/tenant/${tenant}/memberships?customerId=${customerId}&status=Active`)}`, { headers: h, signal }),
-        env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/sales/v2/tenant/${tenant}/estimates?customerId=${customerId}`)}`, { headers: h, signal }),
-        env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/accounting/v2/tenant/${tenant}/invoices?customerId=${customerId}`)}`, { headers: h, signal }),
+      fanout = await gatherFetches([
+        { name: 'customer',    promise: env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/crm/v2/tenant/${tenant}/customers/${customerId}`)}`, { headers: h, signal }) },
+        { name: 'locations',   promise: env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/crm/v2/tenant/${tenant}/locations?customerId=${customerId}`)}`, { headers: h, signal }) },
+        { name: 'jobs',        promise: env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/jpm/v2/tenant/${tenant}/jobs?customerId=${customerId}`)}`, { headers: h, signal }) },
+        { name: 'memberships', promise: env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/memberships/v2/tenant/${tenant}/memberships?customerId=${customerId}&status=Active`)}`, { headers: h, signal }) },
+        { name: 'estimates',   promise: env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/sales/v2/tenant/${tenant}/estimates?customerId=${customerId}`)}`, { headers: h, signal }) },
+        { name: 'invoices',    promise: env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/accounting/v2/tenant/${tenant}/invoices?customerId=${customerId}`)}`, { headers: h, signal }) },
       ]);
     } finally {
       if (acquired) {
@@ -55,30 +55,24 @@ export const customer_snapshot: ToolDef<Args> = {
       }
     }
 
-    const [customer, locations, jobs, memberships, estimates, invoices] = results;
-
-    async function extract(settled: PromiseSettledResult<Response>, key: string) {
-      if (settled.status === 'rejected') return { error: `${key} fetch failed` };
-      if (!settled.value.ok) return { error: `${key} ${settled.value.status}` };
-      const json = await settled.value.json<{ data?: unknown } | unknown>();
-      return (json as { data?: unknown }).data ?? json;
-    }
-
-    const membershipsRaw = await extract(memberships, 'memberships');
-    const membershipsFiltered = Array.isArray(membershipsRaw)
+    // Memberships needs client-side re-filter — ST status filter is unreliable (verified 2026-04-23).
+    const membershipsRaw = fanout.results.memberships;
+    const memberships = Array.isArray(membershipsRaw)
       ? (membershipsRaw as Record<string, unknown>[]).filter((m) => m.status === 'Active')
       : membershipsRaw;
 
     return {
       customerId,
-      customer: await extract(customer, 'customer'),
-      locations: await extract(locations, 'locations'),
-      jobs: await extract(jobs, 'jobs'),
-      memberships: membershipsFiltered,
-      estimates: await extract(estimates, 'estimates'),
-      invoices: await extract(invoices, 'invoices'),
+      customer: fanout.results.customer,
+      locations: fanout.results.locations,
+      jobs: fanout.results.jobs,
+      memberships,
+      estimates: fanout.results.estimates,
+      invoices: fanout.results.invoices,
       _composite: 'customer_snapshot',
       _source: 'mixed',
+      _partial: fanout.partial,
+      _failures: fanout.failures,
       correlation,
     };
   },

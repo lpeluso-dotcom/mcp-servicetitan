@@ -88,6 +88,30 @@ describe('customer_snapshot', () => {
     await customer_snapshot.handler(env, { customerId: 100 }, CTX);
     expect(env.CUSTOMER_SNAPSHOT_FLIGHT.idFromName).toHaveBeenCalledWith('100');
   });
+
+  it('reports _partial=false when all 6 sub-calls succeed', async () => {
+    const env = makeEnv(liveOk([]));
+    const result: any = await customer_snapshot.handler(env, { customerId: 100 }, CTX);
+    expect(result._partial).toBe(false);
+    expect(result._failures).toEqual([]);
+  });
+
+  it('reports _partial=true with named failures when a sub-call returns 5xx', async () => {
+    let n = 0;
+    const env = makeEnv(async () => {
+      n++;
+      // memberships is the 4th sub-call — fail it
+      if (n === 4) return new Response('fail', { status: 503, statusText: 'Bad Gateway' });
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    });
+    const result: any = await customer_snapshot.handler(env, { customerId: 100 }, CTX);
+    expect(result._partial).toBe(true);
+    expect(result._failures).toHaveLength(1);
+    expect(result._failures[0]).toMatchObject({ call: 'memberships', error_class: 'HTTPError' });
+    expect(result.memberships).toBeNull();
+    // Other fields populated normally
+    expect(result.customer).toEqual([]);
+  });
 });
 
 describe('pricebook_health_check_services', () => {
@@ -116,6 +140,22 @@ describe('job_closeout_report', () => {
     expect(result).toHaveProperty('job');
     expect(result).toHaveProperty('appointments');
     expect(result).toHaveProperty('invoice');
+  });
+
+  it('reports _partial=true when an inner fetch rejects', async () => {
+    let n = 0;
+    const env = makeEnv(async () => {
+      n++;
+      // Reject the 2nd call (appointments)
+      if (n === 2) throw new TypeError('socket reset');
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    });
+    const result: any = await job_closeout_report.handler(env, { jobId: 500 }, CTX);
+    expect(result._partial).toBe(true);
+    expect(result._failures).toEqual([
+      { call: 'appointments', error_class: 'TypeError', message: 'socket reset' },
+    ]);
+    expect(result.appointments).toBeNull();
   });
 });
 
