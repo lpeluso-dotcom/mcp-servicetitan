@@ -1,4 +1,5 @@
 node_modules/
+.worktrees/
 .wrangler/
 .dev.vars
 .env
