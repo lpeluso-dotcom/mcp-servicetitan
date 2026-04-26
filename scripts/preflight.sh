@@ -28,6 +28,22 @@ echo "============================================================"
 echo "  mcp-servicetitan preflight — env=$ENV"
 echo "============================================================"
 
+# ── 0. Git alignment (sourced from qsc-infra) ────────────────
+echo ""
+echo "[0] Git alignment"
+
+# Shim: shared script uses `ok`, this script uses `pass`
+ok() { pass "$1"; }
+
+GIT_PREFLIGHT="$HOME/qsc-infra/scripts/preflight-git.sh"
+if [[ -f "$GIT_PREFLIGHT" ]]; then
+  # shellcheck source=/dev/null
+  source "$GIT_PREFLIGHT"
+  check_git_aligned "$ROOT"
+else
+  fail "git-alignment check missing: $GIT_PREFLIGHT — clone qsc-infra to ~/qsc-infra"
+fi
+
 # ── 1. Deps + lockfile ──────────────────────────────────────
 echo ""
 echo "[1] Dependencies"

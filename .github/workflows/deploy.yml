@@ -1,0 +1,57 @@
+name: Deploy to Cloudflare
+
+# Eliminates the deploy-from-workstation drift class:
+# - Pushes to main trigger an automated wrangler deploy from CI
+# - CI is by definition synced with origin/main
+#
+# Setup (one-time, on lpeluso-dotcom/mcp-servicetitan):
+#   gh secret set CLOUDFLARE_API_TOKEN --body "<token>"
+#
+# Manual trigger:
+#   gh workflow run deploy.yml
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Deploy environment"
+        required: false
+        default: "prod"
+        type: choice
+        options:
+          - dev
+          - prod
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_ENV: ${{ github.event.inputs.env || 'prod' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Preflight runs the full pre-deploy gate (file presence, bindings,
+      # secrets). The git-alignment subcheck self-skips on GITHUB_ACTIONS=true
+      # — see qsc-infra/scripts/preflight-git.sh.
+      - name: Preflight
+        run: bash scripts/preflight.sh --env $DEPLOY_ENV
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Deploy to Cloudflare
+        run: npx wrangler deploy --env $DEPLOY_ENV
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
