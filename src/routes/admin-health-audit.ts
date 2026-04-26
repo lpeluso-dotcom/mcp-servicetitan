@@ -12,15 +12,15 @@
 
 import type { Context } from 'hono';
 import type { Env } from '../env';
+import { requireAdminKey } from './admin-guard';
 
 const SILENCE_THRESHOLD_MS = 60 * 60 * 1000; // 1h
 
 interface MaxRow { last_ts: number | null }
 
 export async function auditHealthHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
-  if (c.req.header('x-sync-key') !== c.env.MCP_SYNC_KEY) {
-    return c.json({ error: 'unauthorized' }, 401);
-  }
+  const denied = requireAdminKey(c);
+  if (denied) return denied;
   try {
     const [auditRow, errorRow] = await Promise.all([
       c.env.DB.prepare('SELECT MAX(ts) AS last_ts FROM audit_log').first<MaxRow>(),

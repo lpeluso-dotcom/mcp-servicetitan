@@ -20,7 +20,7 @@ export interface AuditRow {
   dry_run?: boolean;
   payload?: unknown;
   result?: unknown;
-  status: 'ok' | 'error' | 'verified';
+  status: 'ok' | 'error' | 'verified' | 'partial';
   latency_ms?: number;
   correlation?: string;
 }

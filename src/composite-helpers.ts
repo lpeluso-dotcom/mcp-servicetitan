@@ -12,6 +12,35 @@
 // with no top-level partial-failure signal.
 // ============================================================
 
+import type { Env } from './env';
+
+/**
+ * Extract the `data` payload from a taylor-ai/ST response shape, falling back
+ * to the root object only when there is no `data` key (vs taking the wrapper
+ * literally when `data` is undefined or null — the latter is a shape leak).
+ */
+export function extractStData<T = unknown>(json: unknown): T {
+  if (json !== null && typeof json === 'object' && 'data' in json) {
+    return (json as { data: T }).data;
+  }
+  return json as T;
+}
+
+/**
+ * Build a fetch promise to taylor-ai's `/api/st/read` proxy with a
+ * URL-encoded ST endpoint. Used by composite fanouts; single-fetch tools
+ * still inline the URL (migrating them is a v1.2 mechanical pass).
+ */
+export function stRead(
+  env: Env,
+  headers: Record<string, string>,
+  endpoint: string,
+  signal?: AbortSignal
+): Promise<Response> {
+  const url = `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
+  return env.TAYLOR_AI.fetch(url, signal ? { headers, signal } : { headers });
+}
+
 export interface FanoutFailure {
   call: string;
   error_class: string;
@@ -29,52 +58,50 @@ export interface NamedCall {
   promise: Promise<Response>;
 }
 
+function tagged(name: string, message: string): Error {
+  const err = new Error(message);
+  err.name = name;
+  return err;
+}
+
 /**
  * Fan out a set of fetches in parallel and collect results, attributing
- * any failure to the responsible call by name. JSON extraction follows
- * the existing taylor-ai shape: prefer `data` wrapper, fall back to root.
+ * any failure to the responsible call by name. JSON parsing happens
+ * inside the promise chain so the parses interleave instead of
+ * serializing in a post-allSettled loop, and parse errors land in the
+ * same rejection path as network/HTTP failures (collapses three branches
+ * to one). JSON extraction follows the taylor-ai shape via extractStData.
  */
 export async function gatherFetches(calls: NamedCall[]): Promise<FanoutResult> {
-  const settled = await Promise.allSettled(calls.map((c) => c.promise));
+  const settled = await Promise.allSettled(
+    calls.map(async (c) => {
+      const resp = await c.promise;
+      if (!resp.ok) {
+        throw tagged('HTTPError', `${resp.status} ${resp.statusText || ''}`.trim());
+      }
+      try {
+        const json = await resp.json<unknown>();
+        return extractStData(json);
+      } catch (e) {
+        throw tagged('JSONParseError', e instanceof Error ? e.message : String(e));
+      }
+    })
+  );
+
   const results: Record<string, unknown> = {};
   const failures: FanoutFailure[] = [];
-
   for (let i = 0; i < settled.length; i++) {
     const name = calls[i].name;
     const res = settled[i];
-
-    if (res.status === 'rejected') {
+    if (res.status === 'fulfilled') {
+      results[name] = res.value;
+    } else {
       results[name] = null;
       const err = res.reason instanceof Error ? res.reason : new Error(String(res.reason));
       failures.push({
         call: name,
         error_class: err.name || 'Error',
         message: err.message || String(res.reason),
-      });
-      continue;
-    }
-
-    const resp = res.value;
-    if (!resp.ok) {
-      results[name] = null;
-      failures.push({
-        call: name,
-        error_class: 'HTTPError',
-        message: `${resp.status} ${resp.statusText || ''}`.trim(),
-      });
-      continue;
-    }
-
-    try {
-      const json = await resp.json<{ data?: unknown }>();
-      results[name] = (json as { data?: unknown }).data ?? json;
-    } catch (e) {
-      results[name] = null;
-      const err = e instanceof Error ? e : new Error(String(e));
-      failures.push({
-        call: name,
-        error_class: 'JSONParseError',
-        message: err.message,
       });
     }
   }

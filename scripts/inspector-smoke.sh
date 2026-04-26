@@ -49,13 +49,17 @@ PASS=0; FAIL=0
 fail() { echo "  ❌ $1"; FAIL=$((FAIL+1)); }
 pass() { echo "  ✅ $1"; PASS=$((PASS+1)); }
 
+STDERR_LOG="$(mktemp -t mcp-st-inspector.XXXXXX.log)"
+trap 'rm -f "$STDERR_LOG"' EXIT
+
 inspect() {
-  # Inspector CLI silently emits stderr noise when ~/.env has a bad line;
-  # we capture stdout only. --cli + positional URL is the working invocation.
+  # --cli + positional URL is the working invocation.
+  # stderr is captured to $STDERR_LOG so a smoke failure leaves a diagnostic;
+  # see /tmp on failure.
   npx @modelcontextprotocol/inspector --cli "$URL" \
     --transport http \
     --header "X-Sync-Key: $MCP_SYNC_KEY" \
-    --method "$@" 2>/dev/null
+    --method "$@" 2>>"$STDERR_LOG"
 }
 
 echo "============================================================"
@@ -68,12 +72,14 @@ echo ""
 echo "[1] tools/list"
 TOOLS_JSON="$(inspect tools/list)"
 COUNT="$(echo "$TOOLS_JSON" | jq '.tools | length' 2>/dev/null || echo 0)"
+[[ "$COUNT" =~ ^[0-9]+$ ]] || COUNT=0
 EXPECTED_FLOOR=60
 if [[ "$COUNT" -ge "$EXPECTED_FLOOR" ]]; then
   pass "tools/list returned $COUNT tools (>= $EXPECTED_FLOOR floor)"
 else
   fail "tools/list returned $COUNT, expected >= $EXPECTED_FLOOR"
   echo "    payload: $(echo "$TOOLS_JSON" | head -c 300)"
+  echo "    inspector stderr: $STDERR_LOG"
 fi
 
 # ── 2. Read round-trip — st_list_customers pageSize=1 ──────

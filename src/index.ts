@@ -17,6 +17,7 @@ import type { Env } from './env';
 import { TOOLS, toolsForRole } from './tools/index';
 import { registerTool, type RequestContext } from './tool-registry';
 import { resolveRole } from './auth';
+import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
 
 // Durable Object classes must be exported from the worker entry point.
@@ -40,9 +41,8 @@ app.get('/health', (c) => {
 
 // List roles — requires X-Sync-Key matching env secret.
 app.get('/admin/roles', async (c) => {
-  if (c.req.header('x-sync-key') !== c.env.MCP_SYNC_KEY) {
-    return c.json({ error: 'unauthorized' }, 401);
-  }
+  const denied = requireAdminKey(c);
+  if (denied) return denied;
   const rows = await c.env.DB.prepare('SELECT key_hash, role, owner, note, created_at FROM mcp_roles ORDER BY created_at DESC').all();
   return c.json({ roles: rows.results });
 });
@@ -50,9 +50,8 @@ app.get('/admin/roles', async (c) => {
 // /admin/metrics — tool call summary from audit_log.
 // p50/p95/p99 are in the CF Analytics Engine dashboard (MCP_METRICS dataset).
 app.get('/admin/metrics', async (c) => {
-  if (c.req.header('x-sync-key') !== c.env.MCP_SYNC_KEY) {
-    return c.json({ error: 'unauthorized' }, 401);
-  }
+  const denied = requireAdminKey(c);
+  if (denied) return denied;
   try {
     const [hourly, topTools, errors] = await Promise.all([
       c.env.DB.prepare(

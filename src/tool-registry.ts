@@ -52,17 +52,41 @@ export function registerTool(
         });
         const latency = Date.now() - started;
 
+        // Composite handlers signal partial-failure via _partial=true on the
+        // result envelope. We surface that as audit_log status='partial' so
+        // SELECT status, COUNT(*) FROM audit_log GROUP BY status is queryable,
+        // and emit a parallel error_log row at 'warn' carrying the per-call
+        // failure detail so the response truncation in audit can't lose it.
+        const isPartial =
+          result !== null &&
+          typeof result === 'object' &&
+          (result as { _partial?: unknown })._partial === true;
+        const failures = isPartial
+          ? (result as { _failures?: unknown })._failures
+          : undefined;
+
         execCtx.waitUntil(
           obs.audit(env, {
             actor: reqCtx.actor,
             surface: 'servicetitan',
             operation: tool.name,
-            status: 'ok',
+            status: isPartial ? 'partial' : 'ok',
             latency_ms: latency,
             correlation,
             payload: args,
           })
         );
+        if (isPartial) {
+          execCtx.waitUntil(
+            obs.error(env, {
+              source: `worker:mcp-servicetitan:${tool.name}`,
+              severity: 'warn',
+              message: `composite ${tool.name} returned partial result`,
+              context: { actor: reqCtx.actor, correlation, failures },
+              correlation,
+            })
+          );
+        }
         execCtx.waitUntil(
           obs.heartbeat(env, `mcp-servicetitan:${tool.name}`, { ok: true })
         );

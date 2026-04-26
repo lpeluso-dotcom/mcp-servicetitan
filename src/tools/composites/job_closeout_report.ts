@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { authHeaders } from '../../auth';
-import { gatherFetches } from '../../composite-helpers';
+import { gatherFetches, stRead } from '../../composite-helpers';
 import type { ToolDef } from '../index';
 
 interface Args { jobId: number }
@@ -15,14 +15,13 @@ export const job_closeout_report: ToolDef<Args> = {
   },
   async handler(env, args, { actor, correlation }) {
     const { jobId } = args;
-    const base = `https://taylor-ai/api/st/read`;
     const h = authHeaders(env, correlation, actor);
     const tenant = '431848990';
 
     const fanout = await gatherFetches([
-      { name: 'job',          promise: env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/jpm/v2/tenant/${tenant}/jobs/${jobId}`)}`, { headers: h }) },
-      { name: 'appointments', promise: env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/jpm/v2/tenant/${tenant}/appointments?jobId=${jobId}`)}`, { headers: h }) },
-      { name: 'invoices',     promise: env.TAYLOR_AI.fetch(`${base}?endpoint=${encodeURIComponent(`/accounting/v2/tenant/${tenant}/invoices?jobId=${jobId}`)}`, { headers: h }) },
+      { name: 'job',          promise: stRead(env, h, `/jpm/v2/tenant/${tenant}/jobs/${jobId}`) },
+      { name: 'appointments', promise: stRead(env, h, `/jpm/v2/tenant/${tenant}/appointments?jobId=${jobId}`) },
+      { name: 'invoices',     promise: stRead(env, h, `/accounting/v2/tenant/${tenant}/invoices?jobId=${jobId}`) },
     ]);
 
     const invoiceData = fanout.results.invoices;
@@ -30,13 +29,13 @@ export const job_closeout_report: ToolDef<Args> = {
 
     return {
       jobId,
+      _partial: fanout.partial,
+      _failures: fanout.failures,
       job: fanout.results.job,
       appointments: fanout.results.appointments,
       invoice: firstInvoice ?? null,
       _composite: 'job_closeout_report',
       _source: 'mixed',
-      _partial: fanout.partial,
-      _failures: fanout.failures,
       _note: 'form submissions and equipment join available via get_form_submission + forms_equipment D1 table',
       correlation,
     };
