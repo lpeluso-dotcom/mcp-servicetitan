@@ -51,7 +51,14 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
+      # wrangler.toml's top-level config IS prod (no [env.prod] section);
+      # only [env.dev] is a named override. So pass --env only for dev.
       - name: Deploy to Cloudflare
-        run: npx wrangler deploy --env $DEPLOY_ENV
+        run: |
+          if [ "$DEPLOY_ENV" = "dev" ]; then
+            npx wrangler deploy --env dev
+          else
+            npx wrangler deploy
+          fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
