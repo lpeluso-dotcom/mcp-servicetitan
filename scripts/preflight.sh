@@ -36,7 +36,9 @@ echo "[0] Git alignment"
 ok() { pass "$1"; }
 
 GIT_PREFLIGHT="$HOME/qsc-infra/scripts/preflight-git.sh"
-if [[ -f "$GIT_PREFLIGHT" ]]; then
+if [[ "${GITHUB_ACTIONS:-}" == "true" || "${CI:-}" == "true" ]]; then
+  pass "git-alignment skipped (CI: post-merge commit is aligned with origin by definition)"
+elif [[ -f "$GIT_PREFLIGHT" ]]; then
   # shellcheck source=/dev/null
   source "$GIT_PREFLIGHT"
   check_git_aligned "$ROOT"
