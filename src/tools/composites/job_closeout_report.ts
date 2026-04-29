@@ -9,7 +9,7 @@ interface Args { jobId: number }
 // forms_equipment D1 table done here at the composite layer.
 export const job_closeout_report: ToolDef<Args> = {
   name: 'job_closeout_report',
-  description: 'L5 composite: full job closeout report — job details, appointments, technicians, invoice, and form submissions. Note: form submissions use unit IDs (not equipment IDs); equipment join done via forms_equipment D1 table. Source: mixed (D1 + live ST).',
+  description: 'L5 composite: full job closeout report — job details, appointments, technicians, invoice, and form submissions. Note: form submissions use unit IDs (not equipment IDs); equipment join done via forms_equipment D1 table. Source: mixed (D1 + live ST). NOTE: portions of this rollup duplicate logic available via `st_run_report` (mode=run, ServiceTitan native reports). v1.3 candidate to migrate to native reporting where the saved-report ID exists.',
   zodSchema: {
     jobId: z.number().int().positive().describe('ST job ID'),
   },

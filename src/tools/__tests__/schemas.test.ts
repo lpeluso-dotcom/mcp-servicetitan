@@ -17,8 +17,8 @@ function schemaOf(name: string) {
 // ── Registry sanity ──────────────────────────────────────────
 
 describe('tool registry', () => {
-  it('exports 62 tools (v1.1 D4 deleted marketing_roas stub — see ST-MCP-DESIGN.md)', () => {
-    expect(TOOLS.length).toBe(62);
+  it('exports 65 tools (v1.2 added st_get_capacity_slots, st_run_report, st_post_marketing_attribution)', () => {
+    expect(TOOLS.length).toBe(65);
   });
 
   it('every tool has name + description + zodSchema', () => {
@@ -48,6 +48,7 @@ describe('tool registry', () => {
       'st_create_service',
       'st_patch_material',
       'st_patch_service',
+      'st_post_marketing_attribution',
       'update_estimate_status',
     ]);
   });
@@ -58,8 +59,8 @@ describe('tool registry', () => {
   });
 
   it('toolsForRole("default") excludes st_call; admin includes it', () => {
-    expect(toolsForRole('default').length).toBe(61);
-    expect(toolsForRole('admin').length).toBe(62);
+    expect(toolsForRole('default').length).toBe(64);
+    expect(toolsForRole('admin').length).toBe(65);
     expect(toolsForRole('default').find((t) => t.name === 'st_call')).toBeUndefined();
     expect(toolsForRole('admin').find((t) => t.name === 'st_call')).toBeDefined();
   });

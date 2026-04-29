@@ -23,4 +23,5 @@ export const create_recurring_service = defineWriteTool<Args>({
   method: 'POST',
   payload: ({ membershipId, serviceTypeId, locationId }) => ({ membershipId, serviceTypeId, locationId }),
   businessArgs: ({ membershipId, serviceTypeId, locationId }) => ({ membershipId, serviceTypeId, locationId }),
+  stEndpointTemplate: '/memberships/v2/tenant/{tid}/recurring-service-types/{serviceTypeId}/recurring-services',
 });

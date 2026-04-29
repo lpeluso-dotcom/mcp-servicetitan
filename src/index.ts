@@ -19,6 +19,7 @@ import { registerTool, type RequestContext } from './tool-registry';
 import { resolveRole } from './auth';
 import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
+import { endpointsHandler } from './routes/admin-endpoints';
 
 // Durable Object classes must be exported from the worker entry point.
 export { StRateLimiter } from './durable/st-rate-limiter';
@@ -83,6 +84,9 @@ app.get('/admin/metrics', async (c) => {
 
 // /admin/health/audit — last-activity probe so future telemetry-silence is detectable in one curl.
 app.get('/admin/health/audit', auditHealthHandler);
+
+// /admin/endpoints — ST endpoint inventory: per-tool stEndpoint descriptors + undeclared list.
+app.get('/admin/endpoints', endpointsHandler);
 
 // /webhooks/st — HMAC-verified ST webhook ingest (H13 stub).
 app.post('/webhooks/st', (c) => c.json({ error: 'H13: webhook ingest not yet implemented' }, 501));

@@ -22,7 +22,7 @@ function trim(m: Record<string, unknown>): Record<string, unknown> {
 // Do NOT use renewedById — unreliable per QSC ops memory.
 export const list_memberships_expiring: ToolDef<Args> = {
   name: 'list_memberships_expiring',
-  description: 'List active memberships expiring within the next N days. Uses expirationDate range filter (NOT renewedById — unreliable). Response is trimmed to essential fields; client-side filtered to status=Active. Source: live ST (no D1 memberships table).',
+  description: 'List active memberships expiring within the next N days. Uses expirationDate range filter (NOT renewedById — unreliable). Response is trimmed to essential fields; client-side filtered to status=Active. Reads live from ST. D1-first migration tracked as v1.3 follow-up — Phase 1 D1 sync expansion landed 2026-04-28; `memberships` table is populated but tools haven\'t been flipped to D1-first reads yet.',
   zodSchema: {
     windowDays: z.number().int().positive().describe('Number of days ahead to look for expiring memberships (e.g. 30 = expiring within 30 days)'),
     customerId: z.number().int().positive().optional().describe('Filter by customer ID'),

@@ -21,7 +21,7 @@ function trim(m: Record<string, unknown>): Record<string, unknown> {
 
 export const list_memberships_active: ToolDef<Args> = {
   name: 'list_memberships_active',
-  description: 'List active memberships. Source: live ST (no D1 table for memberships — all membership tools hit live ST). Response is trimmed to essential fields; client-side filtered to status=Active since ST statuses param filters on the meaningless active-bool, not the status enum.',
+  description: 'List active memberships. Reads live from ST. D1-first migration tracked as v1.3 follow-up — Phase 1 D1 sync expansion landed 2026-04-28; `memberships` table is populated but tools haven\'t been flipped to D1-first reads yet. Response is trimmed to essential fields; client-side filtered to status=Active since ST statuses param filters on the meaningless active-bool, not the status enum.',
   zodSchema: {
     customerId: z.number().int().positive().optional().describe('Filter by customer ID'),
     locationId: z.number().int().positive().optional().describe('Filter by location ID'),

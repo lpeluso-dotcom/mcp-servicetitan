@@ -24,4 +24,5 @@ export const hold_appointment = defineWriteTool<Args>({
   method: 'POST',
   payload: ({ reasonId, memo }) => ({ reasonId, memo }),
   businessArgs: ({ appointmentId, reasonId, memo }) => ({ appointmentId, reasonId, memo }),
+  stEndpointTemplate: '/jpm/v2/tenant/{tid}/appointments/{appointmentId}/hold',
 });

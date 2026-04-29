@@ -30,4 +30,5 @@ export const create_task = defineWriteTool<Args>({
     return body;
   },
   businessArgs: ({ name, jobId, dueDate, assignedToId }) => ({ name, jobId, dueDate, assignedToId }),
+  stEndpointTemplate: '/taskmanagement/v2/tenant/{tid}/tasks',
 });

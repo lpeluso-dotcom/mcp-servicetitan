@@ -49,6 +49,11 @@ export interface WriteToolSpec<TArgs> {
    * args minus dryRun + confirmation_token). Useful when the dryRun-side hash
    * should differ from the live payload (e.g., omitting computed fields). */
   businessArgs?: (args: TArgs) => Record<string, unknown>;
+  /** Optional: templated ST endpoint path (e.g. '/jpm/v2/tenant/{tid}/jobs').
+   * When provided, the factory sets `stEndpoint` on the resulting ToolDef so
+   * /admin/endpoints can inventory ST coverage. Source is always 'live' for
+   * defineWriteTool (writes never short-circuit through D1). */
+  stEndpointTemplate?: string;
 }
 
 const DRY_RUN_ZOD = z
@@ -79,6 +84,15 @@ export function defineWriteTool<TArgs extends BaseWriteArgs>(
     name: spec.name,
     description: spec.description,
     isWrite: true,
+    ...(spec.stEndpointTemplate
+      ? {
+          stEndpoint: {
+            method: spec.method,
+            path: spec.stEndpointTemplate,
+            source: 'live' as const,
+          },
+        }
+      : {}),
     zodSchema: {
       ...spec.zodSchema,
       dryRun: DRY_RUN_ZOD,

@@ -20,7 +20,7 @@ interface Args {
 
 export const book_job = defineWriteTool<Args>({
   name: 'book_job',
-  description: 'Book a new ST job. campaignId is required — ST rejects jobs without it. dryRun=true (default) → token → dryRun=false to write.',
+  description: 'Book a new ST job. campaignId is required — ST rejects jobs without it. dryRun=true (default) → token → dryRun=false to write. For projects-grouped multi-day bookings (installs/returns), see future `st_list_projects` + `attach_job_to_project` (deferred until JPM Projects D1 sync lands).',
   zodSchema: {
     customerId: z.number().int().positive().describe('ST customer ID'),
     locationId: z.number().int().positive().describe('ST location ID'),
@@ -39,4 +39,5 @@ export const book_job = defineWriteTool<Args>({
     const { dryRun: _dr, confirmation_token: _ct, ...rest } = args;
     return rest;
   },
+  stEndpointTemplate: '/jpm/v2/tenant/{tid}/jobs',
 });
