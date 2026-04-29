@@ -20,4 +20,5 @@ export const add_job_note = defineWriteTool<Args>({
   method: 'POST',
   payload: ({ note }) => ({ note }),
   businessArgs: ({ jobId, note }) => ({ jobId, note }),
+  stEndpointTemplate: '/jpm/v2/tenant/{tid}/jobs/{jobId}/notes',
 });

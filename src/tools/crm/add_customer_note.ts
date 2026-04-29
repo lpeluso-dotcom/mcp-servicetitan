@@ -21,4 +21,5 @@ export const add_customer_note = defineWriteTool<Args>({
   method: 'POST',
   payload: ({ note }) => ({ note }),
   businessArgs: ({ customerId, note }) => ({ customerId, note }),
+  stEndpointTemplate: '/crm/v2/tenant/{tid}/customers/{customerId}/notes',
 });

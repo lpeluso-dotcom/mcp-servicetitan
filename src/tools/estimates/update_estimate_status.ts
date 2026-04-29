@@ -34,4 +34,5 @@ export const update_estimate_status = defineWriteTool<Args>({
     return body;
   },
   businessArgs: ({ estimateId, status, soldBy }) => ({ estimateId, status, soldBy }),
+  stEndpointTemplate: '/sales/v2/tenant/{tid}/estimates/{estimateId}',
 });

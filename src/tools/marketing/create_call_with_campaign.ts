@@ -15,7 +15,7 @@ interface Args {
 
 export const create_call_with_campaign = defineWriteTool<Args>({
   name: 'create_call_with_campaign',
-  description: 'Create a telecom call record attributed to a marketing campaign. Note: ST has no "lead attribution" object — this POSTs to /telecom/v3/tenant/.../calls with campaignId stitched in. dryRun=true (default) → token → dryRun=false to write.',
+  description: 'Create a telecom call record attributed to a marketing campaign. Note: ST has no "lead attribution" object — this POSTs to /telecom/v3/tenant/.../calls with campaignId stitched in. dryRun=true (default) → token → dryRun=false to write. For full attribution payloads (UTM source/medium/campaign, gclid/fbclid, landing page), use `st_post_marketing_attribution` with `kind=external_call`.',
   zodSchema: {
     customerId: z.number().int().positive().describe('ST customer ID'),
     campaignId: z.number().int().positive().describe('ST campaign ID to attribute the call to'),
@@ -29,4 +29,5 @@ export const create_call_with_campaign = defineWriteTool<Args>({
     return body;
   },
   businessArgs: ({ customerId, campaignId, leadCallId }) => ({ customerId, campaignId, leadCallId }),
+  stEndpointTemplate: '/telecom/v3/tenant/{tid}/calls',
 });

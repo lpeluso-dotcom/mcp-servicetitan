@@ -33,4 +33,5 @@ export const reschedule_appointment = defineWriteTool<Args>({
     arrivalWindowStart,
     arrivalWindowEnd,
   }),
+  stEndpointTemplate: '/jpm/v2/tenant/{tid}/appointments/{appointmentId}',
 });

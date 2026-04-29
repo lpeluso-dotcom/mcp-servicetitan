@@ -62,10 +62,16 @@ import { get_capacity } from './dispatch/get_capacity';
 import { list_technicians_available } from './dispatch/list_technicians_available';
 import { get_technician_shifts } from './dispatch/get_technician_shifts';
 import { list_non_job_events } from './dispatch/list_non_job_events';
+// v1.2 F.1.a — Dispatch (slot finder)
+import { st_get_capacity_slots } from './dispatch/st_get_capacity_slots';
 // T7 — Marketing
 import { list_campaigns } from './marketing/list_campaigns';
 import { get_campaign_performance } from './marketing/get_campaign_performance';
 import { create_call_with_campaign } from './marketing/create_call_with_campaign';
+// v1.2 F.1.c — Marketing-attribution (kind discriminator)
+import { st_post_marketing_attribution } from './marketing/st_post_marketing_attribution';
+// v1.2 F.1.b — Reporting (mode discriminator)
+import { st_run_report } from './reporting/st_run_report';
 // T6 — Invoicing
 import { get_invoice } from './invoicing/get_invoice';
 import { list_invoices_job } from './invoicing/list_invoices_job';
@@ -86,6 +92,23 @@ export interface ToolContext {
   correlation: string;
 }
 
+/**
+ * Optional descriptor declaring which ServiceTitan endpoint a tool maps to.
+ * Used by /admin/endpoints to inventory ST coverage and detect gaps.
+ *
+ * source semantics:
+ *   - 'live'     — every call hits live ST via taylor-ai /api/st/read|write
+ *   - 'd1'       — D1-first read via read-router (live ST only on miss)
+ *   - 'mixed'    — composite/fanout that touches both D1 and live ST
+ *   - 'computed' — synthetic/derived (no single canonical ST endpoint)
+ */
+export interface StEndpointDescriptor {
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+  /** Templated path with {placeholders}. Tenant segment optional — st-path-builder injects. */
+  path: string;
+  source: 'live' | 'd1' | 'mixed' | 'computed';
+}
+
 export interface ToolDef<Args = Record<string, unknown>> {
   name: string;
   description: string;
@@ -95,6 +118,8 @@ export interface ToolDef<Args = Record<string, unknown>> {
   isWrite?: boolean;
   /** True for tools only registered when caller role === 'admin' (F1 placeholder; full gate in F2). */
   adminOnly?: boolean;
+  /** Optional ST endpoint descriptor — populated for tools that map to a single ST API call. */
+  stEndpoint?: StEndpointDescriptor;
   handler: (env: Env, args: Args, ctx: ToolContext) => Promise<unknown>;
 }
 
@@ -117,8 +142,13 @@ export const TOOLS: readonly ToolDef<any>[] = [
   list_estimates_job, get_estimate, update_estimate_status,
   // T7 Dispatch
   get_capacity, list_technicians_available, get_technician_shifts, list_non_job_events,
+  st_get_capacity_slots,
   // T7 Marketing
   list_campaigns, get_campaign_performance, create_call_with_campaign,
+  // T12 Marketing-attribution (v1.2)
+  st_post_marketing_attribution,
+  // T11 Reporting (v1.2)
+  st_run_report,
   // T8 Memberships
   list_memberships_active, list_memberships_expiring, create_recurring_service,
   // T8 Calls & Forms

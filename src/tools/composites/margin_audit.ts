@@ -7,7 +7,7 @@ interface Args { businessUnitId: number; from: string; to: string }
 
 export const margin_audit: ToolDef<Args> = {
   name: 'margin_audit',
-  description: 'L5 composite: margin audit for a business unit over a date range. Joins jobs + invoice items + cost fields. 60 min memo (mv_margin_audit). Source: D1 (jobs/invoices nightly-synced).',
+  description: 'L5 composite: margin audit for a business unit over a date range. Joins jobs + invoice items + cost fields. 60 min memo (mv_margin_audit). Source: D1 (jobs/invoices nightly-synced). NOTE: portions of this rollup duplicate logic available via `st_run_report` (mode=run, ServiceTitan native reports). v1.3 candidate to migrate to native reporting where the saved-report ID exists.',
   zodSchema: {
     businessUnitId: z.number().int().positive().describe('ST business unit ID'),
     from: z.string().describe('Start date (YYYY-MM-DD)'),

@@ -1,8 +1,8 @@
 # mcp-servicetitan
 
-QSC ServiceTitan MCP server — a Cloudflare Worker that exposes 62 ST tools (reads + write-gated mutations + L5 composites + 1 admin gateway) to Claude Code via the Model Context Protocol.
+QSC ServiceTitan MCP server — a Cloudflare Worker that exposes 65 ST tools (reads + write-gated mutations + L5 composites + 1 admin gateway) to Claude Code via the Model Context Protocol.
 
-**Status:** v1.1 (cumulative: F1 telemetry probe, F1.5 Inspector smoke, F3 partial-failure helper, H1 write-tool factory, H3 DO hibernation tests, D4 marketing_roas removed). v1.0.0 was the super-MCP build that shipped 2026-04-23.
+**Status:** v1.2 (cumulative: F1 telemetry probe, F1.5 Inspector smoke, F3 partial-failure helper, H1 write-tool factory, H3 DO hibernation tests, D4 marketing_roas removed, v1.2 ST API expansion — `stEndpoint` descriptor + `/admin/endpoints` route + 3 new tools `st_get_capacity_slots`, `st_run_report`, `st_post_marketing_attribution`). v1.0.0 was the super-MCP build that shipped 2026-04-23.
 
 ## Architecture
 
@@ -30,9 +30,9 @@ Claude Code  ──Streamable HTTP/MCP──▶  mcp-servicetitan (Cloudflare Wo
 - **Write path:** two-phase `WriteGate` — `dryRun: true` returns a 15-min HMAC `confirmation_token`; `dryRun: false` + valid token executes via `/api/st/write` proxy. `confirmation_token` reuse, expiry, HMAC tampering, and tool-name forging are all enforced.
 - **Composites:** L5 fanout tools (`customer_snapshot`, `job_closeout_report`) use `gatherFetches` for explicit per-call partial-failure attribution. No silent empty arrays.
 
-## Tool catalog (v1.1)
+## Tool catalog (v1.2)
 
-61 default-role + 1 admin-role (`st_call`) = 62 total. Full breakdown:
+64 default-role + 1 admin-role (`st_call`) = 65 total. Full breakdown:
 
 | Tranche | Count | Tools |
 |---|---|---|
@@ -42,12 +42,14 @@ Claude Code  ──Streamable HTTP/MCP──▶  mcp-servicetitan (Cloudflare Wo
 | T6 Pricebook | 5 | `search_pricebook_services`, `get_service_details`, `search_materials`, `get_configurable_equipment_children`, `list_service_categories` |
 | T6 Invoicing | 4 | `get_invoice`, `list_invoices_job`, `get_invoice_balance`, `list_unpaid_invoices` |
 | T7 Estimates | 3 | `list_estimates_job`, `get_estimate`, `update_estimate_status` |
-| T7 Dispatch | 4 | `get_capacity`, `list_technicians_available`, `get_technician_shifts`, `list_non_job_events` |
+| T7 Dispatch | 5 | `get_capacity`, `list_technicians_available`, `get_technician_shifts`, `list_non_job_events`, `st_get_capacity_slots` *(v1.2 — `/capacity` slot-finder)* |
 | T7 Marketing | 3 | `list_campaigns`, `get_campaign_performance`, `create_call_with_campaign` |
 | T8 Memberships | 3 | `list_memberships_active`, `list_memberships_expiring`, `create_recurring_service` |
 | T8 Calls & Forms | 2 | `get_call`, `get_form_submission` |
 | T8 Tasks | 2 | `create_task`, `list_open_tasks` |
 | T9 Admin gateway | 1 | `st_call` *(role=admin only)* |
+| T11 Reporting (v1.2) | 1 | `st_run_report` *(mode discriminator: list_categories \| list_reports \| describe_report \| run)* |
+| T12 Marketing-attribution (v1.2) | 1 | `st_post_marketing_attribution` *(kind discriminator: job \| web_booking \| web_lead_form \| external_call)* |
 | C10–C12 Composites | 9 | `customer_snapshot`, `pricebook_health_check_services`, `job_closeout_report`, `margin_audit`, `membership_outreach_list`, `dispatch_override_audit`, `call_quality_review`, `commercial_plumbing_opportunities`, `membership_jackpot_leaderboard` |
 | Siro | 3 | `siro_list_mobile_events`, `siro_get_recording_summary`, `siro_get_engagement` |
 
@@ -55,8 +57,9 @@ Removed in v1.1 D4: `marketing_roas` (stub blocked on three external MCPs that d
 
 Deferred:
 - `pricebook_health_check_materials_equipment` — needs taylor-ai nightly sync of `pb_materials` + `pb_equipment` (cross-repo).
-- `/webhooks/st` HMAC ingest — v1.2 (no producer yet).
-- D1-first read routing for the 25 single-fetch tools — v1.2 mechanical pass.
+- `/webhooks/st` HMAC ingest — no producer yet.
+- D1-first read routing for the 25 single-fetch tools — v1.3 mechanical pass.
+- 3 D1-first ST endpoints from the 2026-04-28 gap audit — deferred to Phase 2 until corresponding D1 tables land.
 
 ## Endpoints
 
@@ -67,7 +70,8 @@ Deferred:
 | `GET /admin/roles` | `X-Sync-Key` | List role assignments from `mcp_roles` |
 | `GET /admin/metrics` | `X-Sync-Key` | 1h call summary + 24h top tools + 1h error tops |
 | `GET /admin/health/audit` | `X-Sync-Key` | Last-activity probe — returns `last_audit_ts`, `is_silent`, `_hint` for diagnosis |
-| `POST /webhooks/st` | (501) | Reserved for v1.2 |
+| `GET /admin/endpoints` | `X-Sync-Key` | ST endpoint inventory — per-tool `stEndpoint` descriptors + undeclared list (v1.2) |
+| `POST /webhooks/st` | (501) | Reserved for v1.3 |
 
 ## Deploy
 
