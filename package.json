@@ -1,7 +1,7 @@
 {
   "name": "mcp-servicetitan",
-  "version": "1.0.0-f1",
-  "description": "QSC ServiceTitan MCP server — Agents SDK createMcpHandler transport, Zod-validated tools, 41 L4 + 10 L5 composites + st_call in v1.0 (F1: 12 existing tools re-homed on new transport).",
+  "version": "1.2.0",
+  "description": "QSC ServiceTitan MCP server — v1.2 (65 tools: 41 L4 purposeful + 10 L5 composites + 1 admin gateway + 3 Siro + 3 v1.2: capacity-slots, run-report, marketing-attribution). Streamable HTTP via Agents SDK; HMAC write-gate; D1 audit; Analytics Engine telemetry.",
   "private": true,
   "scripts": {
     "deploy": "wrangler deploy",
