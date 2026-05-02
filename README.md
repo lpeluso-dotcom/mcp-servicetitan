@@ -1,8 +1,8 @@
 # mcp-servicetitan
 
-QSC ServiceTitan MCP server — a Cloudflare Worker that exposes 65 ST tools (reads + write-gated mutations + L5 composites + 1 admin gateway) to Claude Code via the Model Context Protocol.
+QSC ServiceTitan MCP server — a Cloudflare Worker that exposes 66 ST tools (65 default-role + 1 admin-only gateway) to Claude Code via the Model Context Protocol. Tools span reads, write-gated mutations, L5 composites, and raw API access.
 
-**Status:** v1.2 (cumulative: F1 telemetry probe, F1.5 Inspector smoke, F3 partial-failure helper, H1 write-tool factory, H3 DO hibernation tests, D4 marketing_roas removed, v1.2 ST API expansion — `stEndpoint` descriptor + `/admin/endpoints` route + 3 new tools `st_get_capacity_slots`, `st_run_report`, `st_post_marketing_attribution`). v1.0.0 was the super-MCP build that shipped 2026-04-23.
+**Status:** v1.2.0 — see [CHANGELOG.md](CHANGELOG.md) for full history. 66 tools (65 default + 1 admin), 244 tests, CI auto-deploy on push to main. Partner brief at [qsc-infra/docs/mcp/ST-PARTNER-BRIEF.md](https://github.com/lpeluso-dotcom/qsc-infra/blob/main/docs/mcp/ST-PARTNER-BRIEF.md). Integration guide at [docs/INTEGRATION.md](docs/INTEGRATION.md).
 
 ## Architecture
 
@@ -32,7 +32,7 @@ Claude Code  ──Streamable HTTP/MCP──▶  mcp-servicetitan (Cloudflare Wo
 
 ## Tool catalog (v1.2)
 
-64 default-role + 1 admin-role (`st_call`) = 65 total. Full breakdown:
+65 default-role + 1 admin-role (`st_call`) = 66 total. Full breakdown:
 
 | Tranche | Count | Tools |
 |---|---|---|
