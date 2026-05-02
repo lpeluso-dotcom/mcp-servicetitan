@@ -19,7 +19,7 @@ const SILENCE_THRESHOLD_MS = 60 * 60 * 1000; // 1h
 interface MaxRow { last_ts: number | null }
 
 export async function auditHealthHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
-  const denied = requireAdminKey(c);
+  const denied = await requireAdminKey(c);
   if (denied) return denied;
   try {
     const [auditRow, errorRow] = await Promise.all([

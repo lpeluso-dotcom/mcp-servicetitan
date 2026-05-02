@@ -7,7 +7,7 @@ import type { Env } from './env';
 // Constant-time string comparison via HMAC. Generates a per-call ephemeral key
 // so equal inputs always produce equal MACs; the 32-byte XOR loop runs in full
 // regardless of where strings diverge — timing-safe for the sync key check.
-async function timingSafeEqual(a: string, b: string): Promise<boolean> {
+export async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   const enc = new TextEncoder();
   const key = (await crypto.subtle.generateKey({ name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])) as CryptoKey;
   const [ma, mb] = await Promise.all([

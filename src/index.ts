@@ -42,7 +42,7 @@ app.get('/health', (c) => {
 
 // List roles — requires X-Sync-Key matching env secret.
 app.get('/admin/roles', async (c) => {
-  const denied = requireAdminKey(c);
+  const denied = await requireAdminKey(c);
   if (denied) return denied;
   const rows = await c.env.DB.prepare('SELECT key_hash, role, owner, note, created_at FROM mcp_roles ORDER BY created_at DESC').all();
   return c.json({ roles: rows.results });
@@ -51,7 +51,7 @@ app.get('/admin/roles', async (c) => {
 // /admin/metrics — tool call summary from audit_log.
 // p50/p95/p99 are in the CF Analytics Engine dashboard (MCP_METRICS dataset).
 app.get('/admin/metrics', async (c) => {
-  const denied = requireAdminKey(c);
+  const denied = await requireAdminKey(c);
   if (denied) return denied;
   try {
     const [hourly, topTools, errors] = await Promise.all([

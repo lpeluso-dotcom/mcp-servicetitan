@@ -15,7 +15,7 @@ import { TOOLS } from '../tools/index';
 import { requireAdminKey } from './admin-guard';
 
 export async function endpointsHandler(c: Context<{ Bindings: Env }>) {
-  const denied = requireAdminKey(c);
+  const denied = await requireAdminKey(c);
   if (denied) return denied;
   const rows = TOOLS.map((t) => ({
     toolName: t.name,
