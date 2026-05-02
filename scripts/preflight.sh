@@ -122,8 +122,8 @@ fi
 # ── 6. Tests ───────────────────────────────────────────────
 echo ""
 echo "[6] Vitest"
-if npx vitest run 2>&1 | tee /tmp/mcp-st-vitest.log | tail -5; then
-  if grep -q "failed" /tmp/mcp-st-vitest.log; then
+if npx vitest run --reporter=verbose 2>&1 | tee /tmp/mcp-st-vitest.log | tail -5; then
+  if grep -q " failed" /tmp/mcp-st-vitest.log; then
     fail "Vitest failures"
   else
     pass "Vitest green"
@@ -132,11 +132,24 @@ else
   fail "Vitest run failed"
 fi
 
-# ── 7. Inspector smoke (optional, gated REMOTE=1) ─────────
+# ── 7. Secret scan (gitleaks) ─────────────────────────────
+echo ""
+echo "[7] Secret scan (gitleaks)"
+if ! command -v gitleaks >/dev/null 2>&1; then
+  fail "gitleaks not installed — install from https://github.com/gitleaks/gitleaks/releases and re-run. Secret scanning is mandatory before deploy."
+else
+  if gitleaks detect --no-git --source . -v 2>&1 | grep -q "no leaks found"; then
+    pass "gitleaks: no secrets detected"
+  else
+    fail "gitleaks: potential secret leak detected — run 'gitleaks detect --no-git --source . -v' to review findings and update .gitleaksignore if they are test vectors"
+  fi
+fi
+
+# ── 9. Inspector smoke (optional, gated REMOTE=1) ─────────
 # Skipped by default so offline preflights don't hit the network.
 # Pre-deploy: REMOTE=1 bash scripts/preflight.sh --env $ENV
 echo ""
-echo "[7] Inspector smoke"
+echo "[8] Inspector smoke"
 if [[ "${REMOTE:-0}" == "1" ]]; then
   if bash scripts/inspector-smoke.sh "$ENV" >/tmp/mcp-st-smoke.log 2>&1; then
     pass "Inspector smoke 3/3 (see /tmp/mcp-st-smoke.log)"
@@ -147,7 +160,7 @@ else
   echo "  ℹ  Skipped (set REMOTE=1 to run live smoke against $ENV)"
 fi
 
-# ── 8. Summary ─────────────────────────────────────────────
+# ── 10. Summary ────────────────────────────────────────────
 echo ""
 echo "============================================================"
 echo "  $PASS passed, $FAIL failed"

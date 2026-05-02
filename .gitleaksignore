@@ -1,0 +1,12 @@
+# .gitleaksignore — gitleaks allowlist for mcp-servicetitan
+#
+# Format: one SHA256 fingerprint per line.
+# Generate a fingerprint for a false-positive finding with:
+#   gitleaks detect --no-git --source . -v --report-format json \
+#     | jq -r '.[].Fingerprint'
+#
+# Each entry should have a comment explaining why it is allowlisted.
+# DO NOT allowlist real secrets — rotate them immediately instead.
+#
+# Last scan: 2026-05-02 — no leaks found, no entries required.
+# Re-run before every deploy: bash scripts/preflight.sh (step [7]).
