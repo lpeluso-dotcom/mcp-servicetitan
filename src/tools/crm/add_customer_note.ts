@@ -22,4 +22,5 @@ export const add_customer_note = defineWriteTool<Args>({
   payload: ({ note }) => ({ note }),
   businessArgs: ({ customerId, note }) => ({ customerId, note }),
   stEndpointTemplate: '/crm/v2/tenant/{tid}/customers/{customerId}/notes',
+  invalidatesCache: () => ['servicetitan:get_customer', 'servicetitan:find_customer'],
 });

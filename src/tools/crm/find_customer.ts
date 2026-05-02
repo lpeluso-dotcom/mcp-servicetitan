@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
 import { authHeaders } from '../../auth';
+import { cacheGet } from '../../cache';
 import type { ToolDef } from '../index';
 
 interface Args { name?: string; phone?: string; email?: string; page?: number; pageSize?: number }
@@ -59,20 +60,26 @@ export const find_customer: ToolDef<Args> = {
     if (!args.name && !args.phone && !args.email) {
       throw new McpError('validation_error', 'find_customer requires at least one of: name, phone, email', { correlation });
     }
-    const qs = new URLSearchParams();
-    if (args.name) qs.set('name', args.name);
-    if (args.phone) qs.set('phoneNumber', args.phone);
-    if (args.email) qs.set('email', args.email);
-    qs.set('page', String(args.page ?? 1));
-    qs.set('pageSize', String(Math.min(args.pageSize ?? VOICE_DEFAULT_PAGESIZE, VOICE_MAX_PAGESIZE)));
+    const page = args.page ?? 1;
+    const pageSize = Math.min(args.pageSize ?? VOICE_DEFAULT_PAGESIZE, VOICE_MAX_PAGESIZE);
+    const cacheKey = JSON.stringify({ name: args.name ?? '', phone: args.phone ?? '', email: args.email ?? '', page, pageSize });
 
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/crm/v2/tenant/431848990/customers?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
-    );
-    if (!resp.ok) throw new McpError('upstream_error', `find_customer failed: ${resp.status}`, { correlation });
-    const data = (await resp.json()) as { data?: RawCustomer[] };
-    const rows = (data.data ?? []).map(slim);
-    return { count: rows.length, customers: rows, _source: 'live' };
+    return cacheGet(env, 'servicetitan:find_customer', cacheKey, 30, async () => {
+      const qs = new URLSearchParams();
+      if (args.name) qs.set('name', args.name);
+      if (args.phone) qs.set('phoneNumber', args.phone);
+      if (args.email) qs.set('email', args.email);
+      qs.set('page', String(page));
+      qs.set('pageSize', String(pageSize));
+
+      const resp = await env.TAYLOR_AI.fetch(
+        `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/crm/v2/tenant/431848990/customers?${qs}`)}`,
+        { headers: authHeaders(env, correlation, actor) }
+      );
+      if (!resp.ok) throw new McpError('upstream_error', `find_customer failed: ${resp.status}`, { correlation });
+      const data = (await resp.json()) as { data?: RawCustomer[] };
+      const rows = (data.data ?? []).map(slim);
+      return { count: rows.length, customers: rows, _source: 'live' };
+    });
   },
 };

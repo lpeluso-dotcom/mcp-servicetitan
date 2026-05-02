@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
 import { authHeaders } from '../../auth';
+import { cacheGet } from '../../cache';
 import type { ToolDef } from '../index';
 
 interface Args { status?: string; businessUnitId?: number; technicianId?: number; page?: number; pageSize?: number }
@@ -17,19 +18,23 @@ export const list_jobs_today: ToolDef<Args> = {
   },
   async handler(env, args, { actor, correlation }) {
     const today = new Date().toISOString().slice(0, 10);
-    const qs = new URLSearchParams({ scheduledOnOrAfter: `${today}T00:00:00`, scheduledOnOrBefore: `${today}T23:59:59` });
-    if (args.status) qs.set('jobStatus', args.status);
-    if (args.businessUnitId) qs.set('businessUnitId', String(args.businessUnitId));
-    if (args.technicianId) qs.set('technicianId', String(args.technicianId));
-    if (args.page) qs.set('page', String(args.page));
-    if (args.pageSize) qs.set('pageSize', String(args.pageSize));
+    const cacheKey = JSON.stringify({ today, status: args.status ?? '', bu: args.businessUnitId ?? 0, tech: args.technicianId ?? 0, page: args.page ?? 0, pageSize: args.pageSize ?? 0 });
 
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/431848990/jobs?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
-    );
-    if (!resp.ok) throw new McpError('upstream_error', `list_jobs_today failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: unknown[] }>();
-    return { jobs: data.data ?? [], date: today, _source: 'live' };
+    return cacheGet(env, 'servicetitan:list_jobs_today', cacheKey, 60, async () => {
+      const qs = new URLSearchParams({ scheduledOnOrAfter: `${today}T00:00:00`, scheduledOnOrBefore: `${today}T23:59:59` });
+      if (args.status) qs.set('jobStatus', args.status);
+      if (args.businessUnitId) qs.set('businessUnitId', String(args.businessUnitId));
+      if (args.technicianId) qs.set('technicianId', String(args.technicianId));
+      if (args.page) qs.set('page', String(args.page));
+      if (args.pageSize) qs.set('pageSize', String(args.pageSize));
+
+      const resp = await env.TAYLOR_AI.fetch(
+        `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/431848990/jobs?${qs}`)}`,
+        { headers: authHeaders(env, correlation, actor) }
+      );
+      if (!resp.ok) throw new McpError('upstream_error', `list_jobs_today failed: ${resp.status}`, { correlation });
+      const data = await resp.json<{ data?: unknown[] }>();
+      return { jobs: data.data ?? [], date: today, _source: 'live' };
+    });
   },
 };

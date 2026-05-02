@@ -23,6 +23,7 @@ import type { ZodTypeAny } from 'zod';
 import { z } from 'zod';
 import { McpError } from './errors';
 import { WriteGate } from './write-gate';
+import { cachePurgeNamespace } from './cache';
 import type { ToolDef } from './tools/index';
 import type { Env } from './env';
 
@@ -54,6 +55,11 @@ export interface WriteToolSpec<TArgs> {
    * /admin/endpoints can inventory ST coverage. Source is always 'live' for
    * defineWriteTool (writes never short-circuit through D1). */
   stEndpointTemplate?: string;
+  /** Optional: cache namespaces to purge after a confirmed write. Runs after
+   * the ST write succeeds, before the response returns. Each purge is a single
+   * D1 DELETE (~5ms); they fire in parallel via Promise.all. Failures are
+   * swallowed inside cachePurgeNamespace so a purge error never fails the write. */
+  invalidatesCache?: (args: TArgs) => string[];
 }
 
 const DRY_RUN_ZOD = z
@@ -135,7 +141,12 @@ export function defineWriteTool<TArgs extends BaseWriteArgs>(
       if (!resp.ok) {
         throw new McpError('upstream_error', `${spec.name} failed: ${resp.status}`, { correlation });
       }
-      return { dryRun: false, tool: spec.name, result: await resp.json(), correlation };
+      const result = await resp.json();
+      if (spec.invalidatesCache) {
+        const namespaces = spec.invalidatesCache(args);
+        await Promise.all(namespaces.map((ns) => cachePurgeNamespace(env, ns)));
+      }
+      return { dryRun: false, tool: spec.name, result, correlation };
     },
   };
 }

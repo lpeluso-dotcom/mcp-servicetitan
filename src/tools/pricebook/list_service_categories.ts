@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
 import { authHeaders } from '../../auth';
+import { cacheGet } from '../../cache';
 import type { ToolDef } from '../index';
 
 interface Args { active?: boolean; page?: number; pageSize?: number }
@@ -15,17 +16,23 @@ export const list_service_categories: ToolDef<Args> = {
     pageSize: z.number().int().positive().max(200).default(200).describe('Page size, max 200'),
   },
   async handler(env, args, { actor, correlation }) {
-    const qs = new URLSearchParams();
-    if (args.active !== undefined) qs.set('active', String(args.active));
-    qs.set('page', String(args.page ?? 1));
-    qs.set('pageSize', String(args.pageSize ?? 200));
+    const page = args.page ?? 1;
+    const pageSize = args.pageSize ?? 200;
+    const cacheKey = JSON.stringify({ active: args.active ?? null, page, pageSize });
 
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/431848990/servicecategories?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
-    );
-    if (!resp.ok) throw new McpError('upstream_error', `list_service_categories failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: unknown[] }>();
-    return { categories: data.data ?? [], _source: 'live' };
+    return cacheGet(env, 'servicetitan:list_service_categories', cacheKey, 600, async () => {
+      const qs = new URLSearchParams();
+      if (args.active !== undefined) qs.set('active', String(args.active));
+      qs.set('page', String(page));
+      qs.set('pageSize', String(pageSize));
+
+      const resp = await env.TAYLOR_AI.fetch(
+        `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/431848990/servicecategories?${qs}`)}`,
+        { headers: authHeaders(env, correlation, actor) }
+      );
+      if (!resp.ok) throw new McpError('upstream_error', `list_service_categories failed: ${resp.status}`, { correlation });
+      const data = await resp.json<{ data?: unknown[] }>();
+      return { categories: data.data ?? [], _source: 'live' };
+    });
   },
 };

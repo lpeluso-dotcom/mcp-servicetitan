@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
 import { authHeaders } from '../../auth';
+import { cacheGet } from '../../cache';
 import type { ToolDef } from '../index';
 
 interface Args { customerId: number }
@@ -12,12 +13,14 @@ export const get_customer: ToolDef<Args> = {
     customerId: z.number().int().positive().describe('ST customer ID'),
   },
   async handler(env, args, { actor, correlation }) {
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/crm/v2/tenant/431848990/customers/${args.customerId}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
-    );
-    if (!resp.ok) throw new McpError('upstream_error', `get_customer failed: ${resp.status}`, { correlation });
-    const customer = await resp.json();
-    return { customer, _source: 'live' };
+    return cacheGet(env, 'servicetitan:get_customer', String(args.customerId), 60, async () => {
+      const resp = await env.TAYLOR_AI.fetch(
+        `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/crm/v2/tenant/431848990/customers/${args.customerId}`)}`,
+        { headers: authHeaders(env, correlation, actor) }
+      );
+      if (!resp.ok) throw new McpError('upstream_error', `get_customer failed: ${resp.status}`, { correlation });
+      const customer = await resp.json();
+      return { customer, _source: 'live' };
+    });
   },
 };
