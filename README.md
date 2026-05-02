@@ -68,10 +68,10 @@ Deferred:
 | `POST /mcp` | none | MCP Streamable HTTP — Inspector + Claude Code |
 | `GET /health` | none | Liveness + tool count + version |
 | `GET /admin/roles` | `X-Sync-Key` | List role assignments from `mcp_roles` |
-| `GET /admin/metrics` | `X-Sync-Key` | 1h call summary + 24h top tools + 1h error tops |
+| `GET /admin/metrics` | `X-Sync-Key` | Multi-period call stats: `period_1h`, `period_24h`, `period_7d` with `error_rate_pct`; `by_actor_24h`; `write_gate_24h` dryRun/confirm/expired counts; top 10 tools + errors |
 | `GET /admin/health/audit` | `X-Sync-Key` | Last-activity probe — returns `last_audit_ts`, `is_silent`, `_hint` for diagnosis |
 | `GET /admin/endpoints` | `X-Sync-Key` | ST endpoint inventory — per-tool `stEndpoint` descriptors + undeclared list (v1.2) |
-| `POST /webhooks/st` | (501) | Reserved for v1.3 |
+| `POST /webhooks/st` | none (v1.3) | Reserved for HMAC-verified ST webhook ingest — not yet implemented |
 
 ## Deploy
 
@@ -105,6 +105,30 @@ curl -H "X-Sync-Key: $MCP_SYNC_KEY" \
 ```
 
 Expected on a healthy worker: `is_silent: false`, `last_audit_age_ms` near zero. If `is_silent: true`, the `_hint` field points at the most likely cause — a stale URL in `~/.claude.json` is the v1.0 cutover trap. See [docs/mcp/v1.1/RUNBOOK.md](docs/mcp/v1.1/RUNBOOK.md) for the diagnostic procedure.
+
+## Observability
+
+Every tool call writes a row to D1 `audit_log` via `ctx.waitUntil` (non-blocking — never adds to tool latency). Every error writes to `error_log`. Analytics Engine (`MCP_METRICS` binding) receives a data point per call with tool name, actor, status, and latency.
+
+**Admin metrics endpoint:**
+```bash
+curl -s -H "X-Sync-Key: $MCP_SYNC_KEY" \
+  https://mcp-servicetitan.lpeluso.workers.dev/admin/metrics | jq '{
+    "1h": .period_1h,
+    "24h": .period_24h,
+    "error_rate_pct": .period_24h.error_rate_pct,
+    "top_tools": .top_tools_24h[0:3],
+    "write_gate": .write_gate_24h
+  }'
+```
+
+**Analytics Engine SQL queries** (8 pre-built panels — p50/p95/p99 latency, error rate by tool, calls by actor, composite fanout, write-gate activity):
+```bash
+# See scripts/query-metrics.sql for full query set
+# AE schema: blob1=tool, blob2=actor, blob3=status, double1=latency_ms
+```
+
+**Grafana Cloud dashboard**: wire a Cloudflare Analytics Engine datasource to `mcp_servicetitan_metrics` dataset. See `docs/observability.md` for setup, panel queries, and alert configuration. Dashboard JSON at `docs/observability/dashboards/mcp-servicetitan.json`.
 
 ## Registering with Claude Code
 

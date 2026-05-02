@@ -48,34 +48,72 @@ app.get('/admin/roles', async (c) => {
   return c.json({ roles: rows.results });
 });
 
-// /admin/metrics — tool call summary from audit_log.
+// /admin/metrics — tool call summary from audit_log + confirmation_tokens.
 // p50/p95/p99 are in the CF Analytics Engine dashboard (MCP_METRICS dataset).
 app.get('/admin/metrics', async (c) => {
   const denied = await requireAdminKey(c);
   if (denied) return denied;
+  const now = Date.now();
   try {
-    const [hourly, topTools, errors] = await Promise.all([
+    const [h1, h24, h168, topTools24h, topErrors1h, byActor24h, writeGate24h] = await Promise.all([
+      // 1h summary
       c.env.DB.prepare(
         `SELECT COUNT(*) as calls, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) as errors,
                 AVG(latency_ms) as avg_latency_ms
          FROM audit_log WHERE ts > ?`
-      ).bind(Date.now() - 3600_000).first<{ calls: number; errors: number; avg_latency_ms: number }>(),
+      ).bind(now - 3_600_000).first<{ calls: number; errors: number; avg_latency_ms: number }>(),
+      // 24h summary
+      c.env.DB.prepare(
+        `SELECT COUNT(*) as calls, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) as errors,
+                AVG(latency_ms) as avg_latency_ms
+         FROM audit_log WHERE ts > ?`
+      ).bind(now - 86_400_000).first<{ calls: number; errors: number; avg_latency_ms: number }>(),
+      // 7d summary
+      c.env.DB.prepare(
+        `SELECT COUNT(*) as calls, SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) as errors,
+                AVG(latency_ms) as avg_latency_ms
+         FROM audit_log WHERE ts > ?`
+      ).bind(now - 604_800_000).first<{ calls: number; errors: number; avg_latency_ms: number }>(),
+      // top 10 tools last 24h
       c.env.DB.prepare(
         `SELECT operation as tool, COUNT(*) as calls, AVG(latency_ms) as avg_ms
          FROM audit_log WHERE ts > ?
          GROUP BY operation ORDER BY calls DESC LIMIT 10`
-      ).bind(Date.now() - 86400_000).all(),
+      ).bind(now - 86_400_000).all(),
+      // top 10 errors last 1h
       c.env.DB.prepare(
         `SELECT source, message, COUNT(*) as count
          FROM error_log WHERE ts > ?
          GROUP BY source, message ORDER BY count DESC LIMIT 10`
-      ).bind(Date.now() - 3600_000).all(),
+      ).bind(now - 3_600_000).all(),
+      // calls by actor last 24h
+      c.env.DB.prepare(
+        `SELECT actor, COUNT(*) as calls
+         FROM audit_log WHERE ts > ?
+         GROUP BY actor ORDER BY calls DESC LIMIT 10`
+      ).bind(now - 86_400_000).all(),
+      // write-gate activity last 24h: dryRuns, confirmed, expired
+      c.env.DB.prepare(
+        `SELECT
+           COUNT(*) as dry_runs,
+           SUM(CASE WHEN consumed_at IS NOT NULL THEN 1 ELSE 0 END) as confirmed,
+           SUM(CASE WHEN expires_at < ? AND consumed_at IS NULL THEN 1 ELSE 0 END) as expired
+         FROM confirmation_tokens WHERE issued_at > ?`
+      ).bind(now, now - 86_400_000).first<{ dry_runs: number; confirmed: number; expired: number }>(),
     ]);
+
+    const safe_rate = (errors: number, calls: number) =>
+      calls > 0 ? Math.round((errors / calls) * 10000) / 100 : 0;
+
     return c.json({
-      period_1h: hourly,
-      top_tools_24h: topTools.results,
-      errors_1h: errors.results,
-      _note: 'p50/p95/p99 latency percentiles available in CF Analytics Engine dashboard (MCP_METRICS dataset)',
+      period_1h: { ...h1, error_rate_pct: safe_rate(h1?.errors ?? 0, h1?.calls ?? 0) },
+      period_24h: { ...h24, error_rate_pct: safe_rate(h24?.errors ?? 0, h24?.calls ?? 0) },
+      period_7d: { ...h168, error_rate_pct: safe_rate(h168?.errors ?? 0, h168?.calls ?? 0) },
+      top_tools_24h: topTools24h.results,
+      errors_1h: topErrors1h.results,
+      by_actor_24h: byActor24h.results,
+      write_gate_24h: writeGate24h,
+      _note: 'p50/p95/p99 latency percentiles available in CF Analytics Engine (MCP_METRICS dataset)',
     });
   } catch (e) {
     return c.json({ error: 'metrics query failed', detail: (e as Error).message }, 500);
