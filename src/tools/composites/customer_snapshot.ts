@@ -2,11 +2,50 @@ import { z } from 'zod';
 import { authHeaders } from '../../auth';
 import { gatherFetches, stRead } from '../../composite-helpers';
 import type { ToolDef } from '../index';
+import type { Env } from '../../env';
 
 interface Args { customerId: number }
 
+const SNAPSHOT_TTL_MS = 5 * 60 * 1000;     // 5 min materialized view TTL
+const SINGLEFLIGHT_MAX_WAIT_MS = 6_000;     // max wait for another caller to finish
+const SINGLEFLIGHT_POLL_INTERVAL_MS = 500;  // default re-poll interval
+
+interface SnapshotRow {
+  snapshot: string;
+  expires_at: number;
+}
+
+async function mvRead(env: Env, customerId: number): Promise<unknown | null> {
+  try {
+    const row = await env.DB.prepare(
+      'SELECT snapshot, expires_at FROM mv_customer_snapshot WHERE customer_id = ?'
+    )
+      .bind(customerId)
+      .first<SnapshotRow>();
+    if (row && row.expires_at > Date.now()) {
+      return JSON.parse(row.snapshot);
+    }
+  } catch {
+    // non-fatal — treat as cache miss
+  }
+  return null;
+}
+
+async function mvWrite(env: Env, customerId: number, snapshot: unknown, version: string): Promise<void> {
+  try {
+    const now = Date.now();
+    await env.DB.prepare(
+      'INSERT OR REPLACE INTO mv_customer_snapshot (customer_id, snapshot, computed_at, expires_at, source_version) VALUES (?, ?, ?, ?, ?)'
+    )
+      .bind(customerId, JSON.stringify(snapshot), now, now + SNAPSHOT_TTL_MS, version)
+      .run();
+  } catch {
+    // non-fatal — cache write failure doesn't affect the caller
+  }
+}
+
 // MANDATORY: uses CUSTOMER_SNAPSHOT_FLIGHT DO for single-flight dedup (§12 adoption).
-// Fires 6 parallel sub-calls; advisory lock prevents thundering-herd on same customerId.
+// Fires 6 parallel sub-calls; singleflight DO prevents thundering-herd on same customerId.
 export const customer_snapshot: ToolDef<Args> = {
   name: 'customer_snapshot',
   description: 'L5 composite: returns a full customer snapshot — customer details, locations, jobs, memberships, estimates, and invoices in a single call. Uses single-flight DO to prevent thundering-herd. ~5 min cache via mv_customer_snapshot. Source: mixed (D1 + live ST for memberships).',
@@ -16,27 +55,50 @@ export const customer_snapshot: ToolDef<Args> = {
   async handler(env, args, { actor, correlation }) {
     const { customerId } = args;
 
+    // 1. D1 materialized view cache — fastest path, no DO overhead.
+    const cached = await mvRead(env, customerId);
+    if (cached !== null) {
+      return { ...(cached as Record<string, unknown>), _source: 'mv_d1', correlation };
+    }
+
+    // 2. Try to acquire single-flight lock to prevent concurrent fanouts.
     const doId = env.CUSTOMER_SNAPSHOT_FLIGHT.idFromName(String(customerId));
     const doStub = env.CUSTOMER_SNAPSHOT_FLIGHT.get(doId);
 
-    // The lock is advisory — we proceed whether or not it was acquired — so
-    // race acquire against the fanout instead of serializing them. Saves a DO
-    // RTT (5–50ms) on the hot path. acquire-failure isn't an error, so we
-    // swallow it into { acquired: false }.
-    const acquirePromise = doStub
-      .fetch('https://do/acquire', {
+    let acquired = false;
+    try {
+      const acqResp = await doStub.fetch('https://do/acquire', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ customerId }),
-      })
-      .then((r) => r.json<{ acquired: boolean }>())
-      .catch(() => ({ acquired: false }));
+      });
+      const acq = await acqResp.json<{ acquired: boolean; waitMs?: number }>();
 
+      if (!acq.acquired) {
+        // Another caller is actively fetching — poll D1 until it writes the cache.
+        const waitMs = acq.waitMs ?? SINGLEFLIGHT_POLL_INTERVAL_MS;
+        const deadline = Date.now() + SINGLEFLIGHT_MAX_WAIT_MS;
+        while (Date.now() < deadline) {
+          await new Promise<void>((r) => setTimeout(r, waitMs));
+          const hit = await mvRead(env, customerId);
+          if (hit !== null) {
+            return { ...(hit as Record<string, unknown>), _source: 'mv_d1_wait', correlation };
+          }
+        }
+        // Poll exhausted without a cache hit — fall through to fire own fanout (degraded path).
+      } else {
+        acquired = true;
+      }
+    } catch {
+      // DO unreachable — proceed without singleflight (degraded path).
+    }
+
+    // 3. Fire parallel fanout (lock-holder or degraded fallback).
     const h = authHeaders(env, correlation, actor);
     const tenant = '431848990';
     const signal = AbortSignal.timeout(15_000);
 
-    const fanoutPromise = gatherFetches([
+    const fanout = await gatherFetches([
       { name: 'customer',    promise: stRead(env, h, `/crm/v2/tenant/${tenant}/customers/${customerId}`, signal) },
       { name: 'locations',   promise: stRead(env, h, `/crm/v2/tenant/${tenant}/locations?customerId=${customerId}`, signal) },
       { name: 'jobs',        promise: stRead(env, h, `/jpm/v2/tenant/${tenant}/jobs?customerId=${customerId}`, signal) },
@@ -45,32 +107,13 @@ export const customer_snapshot: ToolDef<Args> = {
       { name: 'invoices',    promise: stRead(env, h, `/accounting/v2/tenant/${tenant}/invoices?customerId=${customerId}`, signal) },
     ]);
 
-    let fanout: Awaited<typeof fanoutPromise>;
-    let acquired = false;
-    try {
-      const [acq, fan] = await Promise.all([acquirePromise, fanoutPromise]);
-      acquired = acq.acquired === true;
-      fanout = fan;
-    } finally {
-      if (acquired) {
-        // Best-effort release; failure here doesn't change the caller's view.
-        doStub
-          .fetch('https://do/release', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ customerId }),
-          })
-          .catch(() => undefined);
-      }
-    }
-
     // Memberships needs client-side re-filter — ST status filter is unreliable (verified 2026-04-23).
     const membershipsRaw = fanout.results.memberships;
     const memberships = Array.isArray(membershipsRaw)
       ? (membershipsRaw as Record<string, unknown>[]).filter((m) => m.status === 'Active')
       : membershipsRaw;
 
-    return {
+    const result = {
       customerId,
       _partial: fanout.partial,
       _failures: fanout.failures,
@@ -84,5 +127,19 @@ export const customer_snapshot: ToolDef<Args> = {
       _source: 'mixed',
       correlation,
     };
+
+    // 4. Lock-holder writes D1 cache, then releases so concurrent waiters can read.
+    if (acquired) {
+      await mvWrite(env, customerId, result, env.MCP_SERVICE_VERSION ?? '0.0.0');
+      doStub
+        .fetch('https://do/release', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ customerId }),
+        })
+        .catch(() => undefined);
+    }
+
+    return result;
   },
 };
