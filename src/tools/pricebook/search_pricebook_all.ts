@@ -55,6 +55,26 @@ const SQL_BY_NAME_EQUIP =
    FROM pb_equipment WHERE active = 1 AND (name LIKE ? OR description LIKE ? OR category_name LIKE ?)
    ORDER BY price DESC LIMIT 3`;
 
+/**
+ * Generate code variants to try in order. Spoken input like "flu150" resolves
+ * to "FLU-150" via the uppercase+hyphen step. Variants are deduped to skip
+ * redundant queries when the input is already in canonical form.
+ */
+export function codeVariants(raw: string): string[] {
+  const trimmed = raw.trim();
+  const upper = trimmed.toUpperCase();
+  const hyphenated = upper.replace(/^([A-Z]+)(\d.*)$/, '$1-$2');
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of [trimmed, upper, hyphenated]) {
+    if (v && !seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  return out;
+}
+
 async function queryD1(env: Env, sql: string, params: unknown[]): Promise<PricebookItem[]> {
   const resp = await env.TAYLOR_AI.fetch('https://taylor-ai/api/sql/read', {
     method: 'POST',
@@ -88,20 +108,29 @@ export const search_pricebook_all: ToolDef<Args> = {
     }
 
     try {
-      // Code path — exact match across all 3 tables, return first hit
+      // Code path — exact match across all 3 tables, return first hit.
+      // Tries code variants in order so spoken/typed input "flu150" resolves
+      // to the canonical "FLU-150" without the caller having to format it:
+      //   1. raw          (flu150)
+      //   2. UPPERCASE    (FLU150)
+      //   3. UPPER + hyphen between letter prefix + digit suffix (FLU-150)
       if (code) {
-        for (const sql of [SQL_BY_CODE_SVC, SQL_BY_CODE_MAT, SQL_BY_CODE_EQUIP]) {
-          const rows = await queryD1(env, sql, [code]);
-          if (rows.length > 0) {
-            return {
-              status: 'success',
-              count: rows.length,
-              items: rows.map((r) => ({ ...r, member_price: r.member_price ?? null, description: r.description ?? '', category: r.category ?? '' })),
-              _source: 'd1',
-            };
+        const variants = codeVariants(code);
+        for (const variant of variants) {
+          for (const sql of [SQL_BY_CODE_SVC, SQL_BY_CODE_MAT, SQL_BY_CODE_EQUIP]) {
+            const rows = await queryD1(env, sql, [variant]);
+            if (rows.length > 0) {
+              return {
+                status: 'success',
+                count: rows.length,
+                matched_code: variant,
+                items: rows.map((r) => ({ ...r, member_price: r.member_price ?? null, description: r.description ?? '', category: r.category ?? '' })),
+                _source: 'd1',
+              };
+            }
           }
         }
-        return { status: 'not_found', message: `No pricebook item with code "${code}".`, count: 0, items: [], _source: 'd1' };
+        return { status: 'not_found', message: `No pricebook item with code "${code}" (also tried ${variants.slice(1).join(', ')}).`, count: 0, items: [], _source: 'd1' };
       }
 
       // Query path — fuzzy search across all 3 tables, merge + rank by price desc, top 8
