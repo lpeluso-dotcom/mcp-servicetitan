@@ -10,10 +10,14 @@
 #   3. write tool dryRun envelope: add_customer_note returns a
 #      confirmation_token without touching ServiceTitan
 #
-# Usage:  bash scripts/inspector-smoke.sh [dev|prod]
+# Usage:  bash scripts/inspector-smoke.sh [dev|prod] [--actor <name>]
 # Returns 0 if all checks pass; 1 on any failure.
 #
 # Requires: MCP_SYNC_KEY in env (or ~/.env). Reads jq.
+#
+# --actor: tags audit_log rows with a custom actor name (e.g.,
+#   smoke-test, soak-monitor). Defaults to "smoke-test" so soak
+#   entries are clearly distinguishable from real claude-code traffic.
 # ============================================================
 
 set -uo pipefail
@@ -28,11 +32,19 @@ if [[ -f "$HOME/.env" ]]; then
   set +a
 fi
 
-ENV_NAME="${1:-dev}"
+ENV_NAME="dev"
+ACTOR="smoke-test"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    dev|prod) ENV_NAME="$1"; shift ;;
+    --actor) ACTOR="$2"; shift 2 ;;
+    *) echo "usage: $0 [dev|prod] [--actor <name>]"; exit 2 ;;
+  esac
+done
+
 case "$ENV_NAME" in
   dev)  URL="https://mcp-servicetitan-dev.lpeluso.workers.dev/mcp" ;;
   prod) URL="https://mcp-servicetitan.lpeluso.workers.dev/mcp" ;;
-  *) echo "usage: $0 [dev|prod]"; exit 2 ;;
 esac
 
 if [[ -z "${MCP_SYNC_KEY:-}" ]]; then
@@ -59,11 +71,12 @@ inspect() {
   npx @modelcontextprotocol/inspector --cli "$URL" \
     --transport http \
     --header "X-Sync-Key: $MCP_SYNC_KEY" \
+    --header "X-Actor: $ACTOR" \
     --method "$@" 2>>"$STDERR_LOG"
 }
 
 echo "============================================================"
-echo "  Inspector smoke — env=$ENV_NAME"
+echo "  Inspector smoke — env=$ENV_NAME actor=$ACTOR"
 echo "  $URL"
 echo "============================================================"
 
