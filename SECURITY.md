@@ -196,7 +196,7 @@ These are honest gaps, not surprises. Each has a v1.3 tracking item:
 4. **No multi-tenant isolation** — single-tenant (`431848990`). Hard-coded tenant in outbound calls. Multi-tenant requires per-tenant key rotation + D1 row isolation.
 5. **`CORS: origin: '*'`** — intentionally permissive for MCP Inspector dev workflow (see `index.ts:100` comment). No credentials are passed via CORS; the auth surface is the `X-Sync-Key` header which browsers can't forge cross-origin. Tightening planned for v1.3 (`H13`).
 6. **`confirmation_tokens` table unbounded** — rows grow with write activity. Cleanup cron planned for v1.3.
-7. **`st_call` admin escape hatch — no path-prefix allowlist** — Per the 2026-05-03 audit (F-2026-05-03-06, staged). Admin role + dryRun + confirm-token are all required, but the path is fully arbitrary so long as `normalizePath()` recognizes the ST API prefix. The `endpoint_registry` D1 table already exists at `migrations/0001_baseline.sql:88-100` to back an allowlist; population deferred to its own pass with a new `migrations/0002_st_call_allowlist.sql`.
+7. **`st_call` admin escape hatch — path-prefix allowlist** — Per the 2026-05-03 audit (F-2026-05-03-06, fixed). Admin role + dryRun + confirm-token are all required, and the path is now restricted to 13 allowed ST API prefixes (`crm`, `jpm`, `pricebook`, `accounting`, `memberships`, `sales`, `marketing`, `dispatch`, `taskmanagement`, `reporting`, `schedulingpro`, `settings`, `forms`). Path normalization applies (e.g., `/task-management/` → `/taskmanagement/`) before the allowlist check.
 
 ---
 

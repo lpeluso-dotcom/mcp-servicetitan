@@ -34,7 +34,19 @@ export const st_call: ToolDef<Args> = {
       throw new McpError('validation_error', 'st_call: path must start with /', { correlation });
     }
 
-    const path = normalizePath(args.path);
+    const ST_CALL_ALLOWED_PREFIXES = [
+      '/crm/', '/jpm/', '/pricebook/', '/accounting/', '/memberships/',
+      '/sales/', '/marketing/', '/dispatch/', '/taskmanagement/',
+      '/reporting/', '/schedulingpro/', '/settings/', '/forms/',
+    ];
+    const normalizedForCheck = normalizePath(args.path);
+    if (!ST_CALL_ALLOWED_PREFIXES.some(p => normalizedForCheck.includes(p))) {
+      throw new McpError('validation_error',
+        `st_call: path must include an allowed ST API prefix. Allowed: ${ST_CALL_ALLOWED_PREFIXES.join(', ')}`,
+        { correlation });
+    }
+
+    const path = normalizedForCheck;
 
     // ── GET: route to read proxy ─────────────────────────────
     if (method === 'GET') {
