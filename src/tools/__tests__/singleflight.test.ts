@@ -110,7 +110,7 @@ describe('singleflight — cache miss, lock acquired', () => {
     expect(result.customerId).toBe(42);
     // D1 write was attempted (INSERT OR REPLACE INTO mv_customer_snapshot)
     const prepareCalls: string[] = (env.DB.prepare as ReturnType<typeof vi.fn>).mock.calls.map(
-      ([sql]: [string]) => sql
+      (call: unknown[]) => call[0] as string
     );
     expect(prepareCalls.some((s) => s.includes('mv_customer_snapshot'))).toBe(true);
   });
