@@ -43,7 +43,7 @@ Do not open GitHub issues for security-sensitive findings.
 │  mcp-servicetitan Worker                             │
 │  ┌────────────────┐  ┌──────────────────────────┐    │
 │  │  resolveRole() │  │  toolsForRole() filter   │    │
-│  │  D1 mcp_roles  │  │  64 default / 65 admin   │    │
+│  │  D1 mcp_roles  │  │  65 default / 66 admin   │    │
 │  └───────┬────────┘  └─────────────┬────────────┘    │
 │          │                         │                  │
 │  ┌───────▼─────────────────────────▼────────────┐    │
@@ -104,6 +104,10 @@ Do not open GitHub issues for security-sensitive findings.
 | Secrets in responses | Tool error envelopes contain `correlation` + short message only. No secret values, no raw ST responses with PII, no stack traces in prod. |
 | Cross-request state bleed | McpServer is built **per-request** (not a shared global). CF docs note post-SDK-1.26 that a shared McpServer can bleed state across requests; we never share one. |
 | D1 / AE data isolation | D1 `qsc-mcp-st` is own-DB (not shared with taylor-ai). Analytics Engine dataset `mcp_servicetitan_metrics` is CF-account scoped with no external read surface beyond the Grafana data source token (Analytics:Read only). |
+| PII in `audit_log.payload` | Per the 2026-05-03 audit, `obs.redactPayload()` walks the args tree and replaces values whose key matches a PII-shaped regex (`/^phone/i`, `/Email$/i`, `/^name$/i`, `/^street/i`, `/^address/i`, `/^city$/i`, `/^zip$/i`, `/^postal/i`, `/^state$/i`, `/^note$/i`, `/^description$/i`, `/^summary$/i`, `/^body$/i`) with type-tagged tokens like `[redacted:str:N]`. Numeric IDs and ISO dates pass through. Recursion depth-capped at 6. |
+| Truncation indistinguishable from short rows | `obs.jsonTruncate(value, 4000)` wraps over-cap payloads in `{ _truncated: true, _orig_length: N, _slice: '...' }` so investigators can tell truncation from missing data. Wired into both `audit_log` and `error_log`. |
+| `error_log.context` absorbing arbitrary objects | `obs.safeContext(input)` allowlist-filters context keys (`status`, `tool`, `actor`, `correlation`, `correlation_id`, `latency_ms`, `code`, `failures`, `source`, `severity`, `op`, `kind`, `ms`). Dropped keys surface via `_dropped_keys` so the trail is visible. Prevents `error('msg', { env, request, args })` leak shape. |
+| `read-router.queryD1` shipping non-SELECT SQL | Per the 2026-05-03 audit, `queryD1()` rejects SQL that doesn't match `^\s*SELECT\b` before any RPC call. taylor-ai's `/internal/query-d1` already enforces SELECT-only server-side; this is defense-in-depth. |
 
 ### Denial of Service
 
@@ -120,6 +124,8 @@ Do not open GitHub issues for security-sensitive findings.
 | Default-role caller invoking admin tool | `toolsForRole('default')` excludes `st_call`. If a default-role caller sends a `tools/call` for `st_call`, the tool is not registered on their server instance — the MCP SDK returns "tool not found" before any handler runs. |
 | Admin role without key | `resolveRole()` requires the correct `X-Sync-Key` AND an `admin` row in D1. Presenting only the header is insufficient. |
 | Write tool without dryRun | All write tools (`st_patch_*`, `st_create_*`, `add_*_note`, `book_job`, `assign_technicians`, etc.) require `dryRun: false` + `confirmation_token`. Calling with `dryRun: true` (default) returns the token + payload preview — no ST mutation. Calling with `dryRun: false` but no token returns an error before any outbound call. |
+| `X-Actor` spoofing into upstream RBAC | Per the 2026-05-03 audit, `auth.safeActorHeader()` validates `X-Actor` against `^[a-zA-Z0-9._:-]{1,64}$` at the boundary. Invalid headers fall back to `'claude-code'` rather than passing through, so log injection (`\r\n`) and trust-gradient escalation upstream are closed off. |
+| Per-tool TTL bypass on confirmation tokens | `WriteGate.dryRun` accepts a per-tool `tokenTtlMs` capped at `MAX_TOKEN_TTL_MS` (15 min). The cap can't be bypassed by passing a larger value. `WriteGate.verifyToken` reads `expires_at` from D1 (set at issue time per-tool) so a 5-min token issued by a pricebook write rejects after 5 min, even though the absolute MAX is still 15. |
 
 ---
 
@@ -190,6 +196,7 @@ These are honest gaps, not surprises. Each has a v1.3 tracking item:
 4. **No multi-tenant isolation** — single-tenant (`431848990`). Hard-coded tenant in outbound calls. Multi-tenant requires per-tenant key rotation + D1 row isolation.
 5. **`CORS: origin: '*'`** — intentionally permissive for MCP Inspector dev workflow (see `index.ts:100` comment). No credentials are passed via CORS; the auth surface is the `X-Sync-Key` header which browsers can't forge cross-origin. Tightening planned for v1.3 (`H13`).
 6. **`confirmation_tokens` table unbounded** — rows grow with write activity. Cleanup cron planned for v1.3.
+7. **`st_call` admin escape hatch — no path-prefix allowlist** — Per the 2026-05-03 audit (F-2026-05-03-06, staged). Admin role + dryRun + confirm-token are all required, but the path is fully arbitrary so long as `normalizePath()` recognizes the ST API prefix. The `endpoint_registry` D1 table already exists at `migrations/0001_baseline.sql:88-100` to back an allowlist; population deferred to its own pass with a new `migrations/0002_st_call_allowlist.sql`.
 
 ---
 
