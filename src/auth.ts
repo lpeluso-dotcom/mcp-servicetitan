@@ -3,6 +3,7 @@
 // ============================================================
 
 import type { Env } from './env';
+import { verifyJwt } from './jwt';
 
 // Constant-time string comparison via HMAC. Generates a per-call ephemeral key
 // so equal inputs always produce equal MACs; the 32-byte XOR loop runs in full
@@ -22,11 +23,22 @@ export async function timingSafeEqual(a: string, b: string): Promise<boolean> {
 }
 
 // Resolve caller role for this request.
-// Flow: validate X-Sync-Key (constant-time) → opt-in check (X-MCP-Role: admin) → D1 lookup.
-// Returns 'admin' only when the caller presents the correct key AND has an admin row in
-// mcp_roles AND explicitly opts in via X-MCP-Role: admin. Degrades to 'default' silently
-// (D1 error, key mismatch, missing header) so the MCP session stays alive with the safe tool set.
+// Dual-mode auth: JWT first, then fall back to X-Sync-Key (constant-time).
+// JWT flow: extract Authorization: Bearer <JWT>, verify signature, return role from claim.
+// Fallback: validate X-Sync-Key → opt-in check (X-MCP-Role: admin) → D1 lookup.
+// Returns 'admin' only when the caller presents valid credentials and has admin role.
+// Degrades to 'default' silently (D1 error, key mismatch, missing header) so the MCP
+// session stays alive with the safe tool set.
 export async function resolveRole(request: Request, env: Env): Promise<'admin' | 'default'> {
+  // JWT path first
+  const authHeader = request.headers.get('authorization');
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    const claims = await verifyJwt(token, env.JWT_SECRET);
+    if (claims) return claims.role;
+  }
+
+  // Fall back to X-Sync-Key (legacy)
   const syncKey = request.headers.get('x-sync-key');
   if (!syncKey) return 'default';
   if (!(await timingSafeEqual(syncKey, env.MCP_SYNC_KEY))) return 'default';
