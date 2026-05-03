@@ -169,9 +169,9 @@ describe('cache invalidation — add_customer_note triggers cache purge', () => 
       run: vi.fn().mockResolvedValue({ success: true }),
       first: vi.fn(() => {
         firstCallCount++;
-        // verifyToken does: SELECT consumed_at FROM confirmation_tokens
-        // We return { consumed_at: null } so it's treated as valid + unused
-        if (firstCallCount === 1) return Promise.resolve({ consumed_at: null });
+        // verifyToken does: SELECT consumed_at, expires_at FROM confirmation_tokens
+        // We return consumed_at=null + a far-future expires_at so it's treated as valid + unused
+        if (firstCallCount === 1) return Promise.resolve({ consumed_at: null, expires_at: Date.now() + 60_000 });
         return Promise.resolve(null);
       }),
       all: vi.fn().mockResolvedValue({ results: [] }),

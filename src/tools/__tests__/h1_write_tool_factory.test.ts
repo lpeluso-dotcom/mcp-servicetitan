@@ -10,7 +10,7 @@ import { defineWriteTool } from '../../write-tool-factory';
 
 const CTX = { actor: 'vitest', correlation: 'test-corr' };
 
-interface TokenRow { token_hash: string; consumed_at: number | null }
+interface TokenRow { token_hash: string; consumed_at: number | null; expires_at: number }
 
 function makeStatefulDB() {
   const tokens: Map<string, TokenRow> = new Map();
@@ -26,7 +26,9 @@ function makeStatefulDB() {
         run: vi.fn(async () => {
           if (/INSERT OR IGNORE INTO confirmation_tokens/i.test(sql)) {
             const tokenHash = String(captured[0]);
-            tokens.set(tokenHash, { token_hash: tokenHash, consumed_at: null });
+            // INSERT params: token_hash, tool, args_hash, actor, issued_at, expires_at, correlation
+            const expiresAt = Number(captured[5]);
+            tokens.set(tokenHash, { token_hash: tokenHash, consumed_at: null, expires_at: expiresAt });
           } else if (/UPDATE confirmation_tokens SET consumed_at/i.test(sql)) {
             const consumedAt = Number(captured[0]);
             const tokenHash = String(captured[1]);
@@ -36,7 +38,7 @@ function makeStatefulDB() {
           return { success: true };
         }),
         first: vi.fn(async () => {
-          if (/SELECT consumed_at FROM confirmation_tokens/i.test(sql)) {
+          if (/SELECT consumed_at, expires_at FROM confirmation_tokens/i.test(sql)) {
             const tokenHash = String(captured[0]);
             return tokens.get(tokenHash) ?? null;
           }

@@ -53,7 +53,7 @@ export const st_patch_material: ToolDef<Args> = {
     const endpoint = `/pricebook/v2/tenant/431848990/materials/${id}`;
 
     if (dryRun) {
-      return gate.dryRun('st_patch_material', businessArgs, actor, correlation, payload, endpoint, 'PATCH');
+      return gate.dryRun('st_patch_material', businessArgs, actor, correlation, payload, endpoint, 'PATCH', 5 * 60 * 1000);
     }
     if (!confirmation_token) {
       throw new McpError('validation_error', 'confirmation_token required when dryRun=false', { correlation });

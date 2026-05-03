@@ -60,6 +60,10 @@ export interface WriteToolSpec<TArgs> {
    * D1 DELETE (~5ms); they fire in parallel via Promise.all. Failures are
    * swallowed inside cachePurgeNamespace so a purge error never fails the write. */
   invalidatesCache?: (args: TArgs) => string[];
+  /** Optional: shorter confirmation-token TTL (ms) for tools that don't need the
+   * default 15-min LLM-rumination buffer. Capped at MAX_TOKEN_TTL_MS in
+   * write-gate.ts. Use 5 * 60 * 1000 for automated single-call writes. */
+  tokenTtlMs?: number;
 }
 
 const DRY_RUN_ZOD = z
@@ -121,7 +125,7 @@ export function defineWriteTool<TArgs extends BaseWriteArgs>(
       const payload = spec.payload(args);
 
       if (dryRun) {
-        return gate.dryRun(spec.name, businessArgs, actor, correlation, payload, endpoint, spec.method);
+        return gate.dryRun(spec.name, businessArgs, actor, correlation, payload, endpoint, spec.method, spec.tokenTtlMs);
       }
       if (!confirmation_token) {
         throw new McpError('validation_error', 'confirmation_token required when dryRun=false', { correlation });

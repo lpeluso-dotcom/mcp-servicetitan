@@ -1,19 +1,27 @@
 // ============================================================
-// write-gate.ts — dryRun + 15-min HMAC confirmation token flow.
+// write-gate.ts — dryRun + HMAC confirmation token flow.
 //
 // Two-phase API:
-//   WriteGate.dryRun(tool, args, actor, correlation, payload)
+//   WriteGate.dryRun(tool, args, actor, correlation, payload, …, tokenTtlMs?)
 //     → issues token + calls taylor-ai /api/st/write?dryRun=1 for echo.
 //   WriteGate.verifyToken(tool, args, actor, confirmation_token)
-//     → throws on invalid/expired/consumed. The caller then executes the real write.
+//     → throws on invalid/expired/consumed. Caller then executes the real write.
 //
-// The 15-min window (extended from original 5-min) accommodates LLM fanout
-// composites that can exceed 5 min under p99 latency.
+// Default TTL is 15 min (extended from original 5-min) to cover LLM thinking
+// time between dryRun and confirm — composite L5 reads run in that window. Tools
+// that don't need that buffer (automated pricebook scripts) can pass a shorter
+// `tokenTtlMs`. MAX_TOKEN_TTL_MS is an absolute hard ceiling — no per-tool override
+// can exceed it; it also acts as the in-memory early-reject so a clearly stale
+// token can fail without a D1 round-trip.
 // ============================================================
 
 import type { Env } from './env';
 
-export const TOKEN_TTL_MS = 15 * 60 * 1000;
+export const DEFAULT_TOKEN_TTL_MS = 15 * 60 * 1000;
+export const MAX_TOKEN_TTL_MS = 15 * 60 * 1000;
+
+// Backward-compat re-export. Older callers (tests, docs) still reference TOKEN_TTL_MS.
+export const TOKEN_TTL_MS = DEFAULT_TOKEN_TTL_MS;
 
 async function hmacSign(key: string, message: string): Promise<string> {
   const enc = new TextEncoder();
@@ -59,6 +67,10 @@ export class WriteGate {
   // taylor-ai /api/st/write does not support ?dryRun=1 (would call ST for real),
   // so we echo the payload locally. Zod already validated inputs; no further
   // pre-flight needed.
+  //
+  // Per-tool TTL: pass `tokenTtlMs` to shorten the window for tools that don't
+  // need 15 min of LLM-rumination buffer (e.g., automated pricebook writes).
+  // The value is capped at MAX_TOKEN_TTL_MS — no override can exceed the hard ceiling.
   async dryRun(
     tool: string,
     args: Record<string, unknown>,
@@ -66,8 +78,10 @@ export class WriteGate {
     correlation: string,
     payload: unknown,
     stEndpoint: string,
-    stMethod: string
+    stMethod: string,
+    tokenTtlMs?: number
   ): Promise<DryRunResult> {
+    const ttlMs = Math.min(tokenTtlMs ?? DEFAULT_TOKEN_TTL_MS, MAX_TOKEN_TTL_MS);
     const argsHash = await hashArgs(args);
     const issuedAt = Date.now();
     // Percent-encode '|' in actor to prevent pipe-injection when splitting the token envelope.
@@ -80,9 +94,9 @@ export class WriteGate {
     await this.env.DB.prepare(
       `INSERT OR IGNORE INTO confirmation_tokens (token_hash, tool, args_hash, actor, issued_at, expires_at, correlation)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).bind(tokenHash, tool, argsHash, actor, issuedAt, issuedAt + TOKEN_TTL_MS, correlation).run();
+    ).bind(tokenHash, tool, argsHash, actor, issuedAt, issuedAt + ttlMs, correlation).run();
 
-    return { dryRun: true, tool, payload, st_endpoint: stEndpoint, st_method: stMethod, confirmation_token: token, expires_in_seconds: TOKEN_TTL_MS / 1000 };
+    return { dryRun: true, tool, payload, st_endpoint: stEndpoint, st_method: stMethod, confirmation_token: token, expires_in_seconds: ttlMs / 1000 };
   }
 
   // Phase 2: verify + consume token. Throws if invalid/expired/consumed/args-changed.
@@ -101,7 +115,10 @@ export class WriteGate {
 
     if (tokenTool !== tool) throw new Error('confirmation_token is for a different tool');
     if (tokenActor !== safeActor) throw new Error('confirmation_token actor mismatch');
-    if (Date.now() - issuedAt > TOKEN_TTL_MS) throw new Error('confirmation_token expired');
+    // Early in-memory reject for clearly stale tokens. The per-tool TTL is
+    // enforced via D1 expires_at below — this guard just avoids the DB round-trip
+    // for tokens that can't survive the absolute ceiling regardless of override.
+    if (Date.now() - issuedAt > MAX_TOKEN_TTL_MS) throw new Error('confirmation_token expired');
 
     const valid = await hmacVerify(this.env.MCP_SYNC_KEY, `${tokenTool}|${argsHash}|${tokenActor}|${issuedAtStr}`, tokenHmac);
     if (!valid) throw new Error('confirmation_token signature invalid');
@@ -111,11 +128,15 @@ export class WriteGate {
 
     const tokenHash = await hashArgs({ token: confirmation_token });
     const row = await this.env.DB.prepare(
-      'SELECT consumed_at FROM confirmation_tokens WHERE token_hash = ? AND tool = ?'
-    ).bind(tokenHash, tool).first<{ consumed_at: number | null }>();
+      'SELECT consumed_at, expires_at FROM confirmation_tokens WHERE token_hash = ? AND tool = ?'
+    ).bind(tokenHash, tool).first<{ consumed_at: number | null; expires_at: number }>();
 
     if (!row) throw new Error('confirmation_token not found — it may have expired from D1');
     if (row.consumed_at) throw new Error('confirmation_token already used');
+    // D1 expires_at is the authoritative per-tool TTL window. A tool that issued
+    // with tokenTtlMs=5min sets expires_at = issuedAt + 5min; this catches tokens
+    // past their per-tool window even though they're still under MAX_TOKEN_TTL_MS.
+    if (Date.now() > row.expires_at) throw new Error('confirmation_token expired (per-tool TTL)');
 
     await this.env.DB.prepare(
       'UPDATE confirmation_tokens SET consumed_at = ? WHERE token_hash = ?'

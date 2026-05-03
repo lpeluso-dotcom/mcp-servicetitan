@@ -46,7 +46,7 @@ export const st_create_material: ToolDef<Args> = {
     const gate = new WriteGate(env);
 
     if (dryRun) {
-      return gate.dryRun('st_create_material', payload, actor, correlation, payload, '/pricebook/v2/tenant/431848990/materials', 'POST');
+      return gate.dryRun('st_create_material', payload, actor, correlation, payload, '/pricebook/v2/tenant/431848990/materials', 'POST', 5 * 60 * 1000);
     }
     if (!confirmation_token) {
       throw new McpError('validation_error', 'confirmation_token required when dryRun=false', { correlation });

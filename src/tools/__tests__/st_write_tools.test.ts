@@ -74,7 +74,9 @@ describe('st_patch_service', () => {
     expect(result.dryRun).toBe(true);
     expect(result.tool).toBe('st_patch_service');
     expect(result.confirmation_token).toBeTypeOf('string');
-    expect(result.expires_in_seconds).toBe(900);
+    // F-07: pricebook tools use a tightened 5-min TTL (vs default 15-min) since they're
+    // typically called from automated scripts, not LLMs that need rumination buffer.
+    expect(result.expires_in_seconds).toBe(300);
     // DB must have recorded the token.
     expect(env.DB.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT OR IGNORE INTO confirmation_tokens'));
   });

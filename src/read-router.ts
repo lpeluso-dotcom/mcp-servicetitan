@@ -40,8 +40,13 @@ export class ReadRouter {
 
   // Query taylor-ai's queryD1 RPC for a nightly-synced table.
   // taylor-ai exposes a read-only parameterized SELECT proxy; it rejects
-  // INSERT/UPDATE/DELETE/DROP/ALTER on the provider side.
+  // INSERT/UPDATE/DELETE/DROP/ALTER on the provider side. We also enforce
+  // SELECT-only here so a future caller can't ship a mutation across the
+  // RPC boundary by accident — defense in depth.
   async queryD1(sql: string, params: unknown[] = []): Promise<{ rows: unknown[]; updatedAt: number | null }> {
+    if (!/^\s*SELECT\b/i.test(sql)) {
+      throw new Error('queryD1: only SELECT statements are permitted from this client');
+    }
     const resp = await this.env.TAYLOR_AI.fetch('https://taylor-ai/internal/query-d1', {
       method: 'POST',
       headers: {
