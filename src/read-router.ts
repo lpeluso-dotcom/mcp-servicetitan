@@ -13,6 +13,7 @@
 
 import type { Env } from './env';
 import { authHeaders, newCorrelationId } from './auth';
+import { familyFromEndpoint, checkRateLimit, reportBackoff } from './rate-limit-guard';
 
 // Tables nightly-synced into taylor-ai D1 (verified 2026-04-22).
 // pb_services is FRESH. pb_materials (23d stale) + pb_equipment (37d stale)
@@ -65,6 +66,9 @@ export class ReadRouter {
 
   // Query live ST via taylor-ai's /api/st/read proxy.
   async queryLive(endpoint: string, query: Record<string, unknown> = {}): Promise<{ rows: unknown[] }> {
+    const family = familyFromEndpoint(endpoint);
+    await checkRateLimit(this.env, family);
+
     const qs = new URLSearchParams(
       Object.fromEntries(Object.entries(query).map(([k, v]) => [k, String(v)]))
     ).toString();
@@ -75,6 +79,11 @@ export class ReadRouter {
     });
 
     if (!resp.ok) {
+      if (resp.status === 429) {
+        const retryAfter = parseInt(resp.headers.get('Retry-After') ?? '60', 10);
+        await reportBackoff(this.env, family, retryAfter);
+        throw new Error(`ST rate limit: retry after ${retryAfter}s`);
+      }
       throw new Error(`live ST read failed: ${resp.status}`);
     }
 
