@@ -26,6 +26,51 @@ export interface RequestContext {
   role: 'default' | 'admin';
 }
 
+// Field-name patterns that indicate values likely to contain PII or free-text
+// customer data. We redact at audit-log time (defense-in-depth), so a future
+// reader endpoint or D1 export can't surface raw customer phone/email/address
+// even though access to qsc-mcp-st is already gated behind MCP_SYNC_KEY.
+// Keep this list in sync with src/__tests__/security_redact.test.ts.
+const REDACT_FIELD_PATTERNS: readonly RegExp[] = [
+  /^phone/i, /Phone$/i,
+  /^email/i, /Email$/i,
+  /^name$/i, /Name$/i,
+  /^street/i, /^address/i, /^city$/i, /^zip$/i, /^postal/i, /^state$/i,
+  /^note$/i, /^notes$/i, /^description$/i, /^summary$/i,
+  /^body$/i,        // raw st_call body — may contain anything
+];
+
+function shouldRedactKey(key: string): boolean {
+  for (const re of REDACT_FIELD_PATTERNS) {
+    if (re.test(key)) return true;
+  }
+  return false;
+}
+
+export function redactPayload(value: unknown, depth = 0): unknown {
+  if (depth > 6) return '[depth-limit]';
+  if (value === null || value === undefined) return value;
+  if (typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((v) => redactPayload(v, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (shouldRedactKey(k)) {
+      if (typeof v === 'string') {
+        out[k] = `[redacted:str:${v.length}]`;
+      } else if (typeof v === 'number') {
+        out[k] = '[redacted:num]';
+      } else if (v === null) {
+        out[k] = null;
+      } else {
+        out[k] = '[redacted]';
+      }
+    } else {
+      out[k] = redactPayload(v, depth + 1);
+    }
+  }
+  return out;
+}
+
 /**
  * Register a tool on the McpServer, wrapping its handler with the full
  * observability + error-handling envelope.
@@ -73,7 +118,7 @@ export function registerTool(
             status: isPartial ? 'partial' : 'ok',
             latency_ms: latency,
             correlation,
-            payload: args,
+            payload: redactPayload(args),
           })
         );
         if (isPartial) {
@@ -110,7 +155,7 @@ export function registerTool(
             severity: mcpErr.code === 'upstream_error' ? 'error' : 'warn',
             message: mcpErr.message,
             stack: (err as Error).stack,
-            context: { actor: reqCtx.actor, args, correlation, code: mcpErr.code },
+            context: obs.safeContext({ actor: reqCtx.actor, correlation, code: mcpErr.code }),
             correlation,
           })
         );
@@ -122,7 +167,7 @@ export function registerTool(
             status: 'error',
             latency_ms: latency,
             correlation,
-            payload: args,
+            payload: redactPayload(args),
             result: { code: mcpErr.code, message: mcpErr.message },
           })
         );

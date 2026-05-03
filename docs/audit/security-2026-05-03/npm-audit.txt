@@ -1,0 +1,18 @@
+# npm audit report
+
+hono  <4.12.14
+Severity: moderate
+hono Improperly Handles JSX Attribute Names Allows HTML Injection in hono/jsx SSR - https://github.com/advisories/GHSA-458j-xx4x-4375
+fix available via `npm audit fix`
+node_modules/hono
+
+postcss  <8.5.10
+Severity: moderate
+PostCSS has XSS via Unescaped </style> in its CSS Stringify Output - https://github.com/advisories/GHSA-qx2v-qp2m-jg93
+fix available via `npm audit fix`
+node_modules/postcss
+
+2 moderate severity vulnerabilities
+
+To address all issues, run:
+  npm audit fix

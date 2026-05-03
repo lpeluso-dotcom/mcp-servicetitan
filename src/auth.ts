@@ -57,6 +57,17 @@ export function authHeaders(env: Env, correlation: string, actor: string): Recor
   };
 }
 
+// X-Actor is forwarded upstream to taylor-ai (and into audit_log + Analytics
+// Engine indexes). Restrict to a printable ASCII subset to prevent log injection
+// and to keep upstream RBAC trust gradients clean if X-Actor ever becomes
+// authoritative. Invalid input falls back to the generic 'claude-code' default
+// rather than rejecting the request — actors are advisory, not auth.
+const ACTOR_RE = /^[a-zA-Z0-9._:-]{1,64}$/;
+export function safeActorHeader(raw: string | null): string {
+  if (raw && ACTOR_RE.test(raw)) return raw;
+  return 'claude-code';
+}
+
 export function newCorrelationId(): string {
   const ts = Date.now().toString(36);
   const rand = Array.from(crypto.getRandomValues(new Uint8Array(8)))

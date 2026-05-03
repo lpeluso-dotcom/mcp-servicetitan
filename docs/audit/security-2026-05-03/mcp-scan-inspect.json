@@ -1,0 +1,2527 @@
+{
+  "/tmp/mcp-st-config.json": {
+    "client": null,
+    "path": "/tmp/mcp-st-config.json",
+    "servers": [
+      {
+        "name": "mcp-servicetitan-dev",
+        "server": {
+          "url": "https://mcp-servicetitan-dev.lpeluso.workers.dev/mcp",
+          "type": "http",
+          "headers": {}
+        },
+        "signature": {
+          "metadata": {
+            "meta": null,
+            "protocolVersion": "2025-11-25",
+            "capabilities": {
+              "experimental": null,
+              "logging": null,
+              "prompts": null,
+              "resources": null,
+              "tools": {
+                "listChanged": true
+              },
+              "completions": null,
+              "tasks": null
+            },
+            "serverInfo": {
+              "name": "qsc-mcp-servicetitan",
+              "title": null,
+              "version": "1.0.0-f3-dev",
+              "websiteUrl": null,
+              "icons": null
+            },
+            "instructions": null
+          },
+          "prompts": [],
+          "resources": [],
+          "resource_templates": [],
+          "tools": [
+            {
+              "name": "st_list_customers",
+              "title": null,
+              "description": "List ServiceTitan customers with optional pagination and modified-after filter. Read-only. Cached 5 min. Calls taylor-ai /api/st/read which handles ST OAuth.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "page": {
+                    "description": "Page number, default 1",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "description": "Page size, default 50, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  },
+                  "modifiedOnOrAfter": {
+                    "description": "ISO 8601 timestamp, returns customers modified on or after this time",
+                    "type": "string"
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "st_get_customer",
+              "title": null,
+              "description": "Get a single ServiceTitan customer by ID. Read-only. Cached 5 min.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "customerId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ServiceTitan customer ID"
+                  }
+                },
+                "required": [
+                  "customerId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "st_list_jobs",
+              "title": null,
+              "description": "List ServiceTitan jobs. Read-only. NOT cached (jobs change frequently). Note: the Jobs API does NOT include the scheduled date \u2014 use st_list_appointments with start filter instead.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "page": {
+                    "description": "Page number, default 1",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "description": "Page size, default 50, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  },
+                  "customerId": {
+                    "description": "Filter by ST customer ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jobStatus": {
+                    "description": "ST job status filter (Scheduled, InProgress, Hold, Completed, Canceled, etc.)",
+                    "type": "string"
+                  },
+                  "modifiedOnOrAfter": {
+                    "description": "ISO 8601 timestamp filter",
+                    "type": "string"
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "st_list_appointments",
+              "title": null,
+              "description": "List ServiceTitan appointments. Read-only. NOT cached. Use this for scheduled-date queries \u2014 the ST Jobs API does NOT have a scheduled date field, Appointments does (start).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "page": {
+                    "description": "Page number, default 1",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "description": "Page size, default 50, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  },
+                  "startsOnOrAfter": {
+                    "description": "ISO 8601 \u2014 filter start >= this",
+                    "type": "string"
+                  },
+                  "startsBefore": {
+                    "description": "ISO 8601 \u2014 filter start < this",
+                    "type": "string"
+                  },
+                  "technicianId": {
+                    "description": "Filter by assigned technician",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jobId": {
+                    "description": "Filter by job ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "st_get_pricebook",
+              "title": null,
+              "description": "List ServiceTitan pricebook items by asset type (services, materials, or equipment). Read-only. Cached 10 min. The primary source for pricebook data is the pb_services / pb_materials / pb_equipment D1 tables synced nightly \u2014 use this tool for live-state verification.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "assetType": {
+                    "type": "string",
+                    "enum": [
+                      "services",
+                      "materials",
+                      "equipment"
+                    ],
+                    "description": "Pricebook asset category"
+                  },
+                  "page": {
+                    "description": "Page number, default 1",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "description": "Page size, default 50, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  },
+                  "active": {
+                    "description": "Filter to only active items",
+                    "type": "boolean"
+                  },
+                  "search": {
+                    "description": "Free-text search",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "assetType"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "st_patch_service",
+              "title": null,
+              "description": "PATCH a ServiceTitan pricebook service by ID. dryRun=true (default) validates and returns a confirmation_token \u2014 call again with dryRun=false + token to write. QSC uses dynamic pricing (useStaticPrice=false) \u2014 do NOT set price unless fixing a static-price item.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST pricebook service ID"
+                  },
+                  "name": {
+                    "description": "Display name",
+                    "type": "string"
+                  },
+                  "code": {
+                    "description": "Service code (e.g. \"HVAC-DIAG-01\")",
+                    "type": "string"
+                  },
+                  "description": {
+                    "description": "Service description shown on invoices",
+                    "type": "string"
+                  },
+                  "cost": {
+                    "description": "Internal cost (required for correct job costing)",
+                    "type": "number"
+                  },
+                  "price": {
+                    "description": "Static price. Only meaningful when useStaticPrice=true.",
+                    "type": "number"
+                  },
+                  "useStaticPrice": {
+                    "description": "true = static price; false = dynamic markup (QSC default)",
+                    "type": "boolean"
+                  },
+                  "active": {
+                    "description": "Whether the service is active in the pricebook",
+                    "type": "boolean"
+                  },
+                  "categoryId": {
+                    "description": "Pricebook category ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call, required when dryRun=false",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "st_create_service",
+              "title": null,
+              "description": "Create a new ServiceTitan pricebook service. dryRun=true (default) validates and returns a confirmation_token \u2014 call again with dryRun=false + token to write. QSC uses dynamic pricing (useStaticPrice=false) \u2014 do NOT set price unless this is a static-price service.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Display name for the service"
+                  },
+                  "categoryId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Pricebook category ID (required by ST)"
+                  },
+                  "code": {
+                    "description": "Service code (e.g. \"HVAC-DIAG-01\")",
+                    "type": "string"
+                  },
+                  "description": {
+                    "description": "Service description shown on invoices",
+                    "type": "string"
+                  },
+                  "cost": {
+                    "description": "Internal cost",
+                    "type": "number"
+                  },
+                  "price": {
+                    "description": "Static price. Only set when useStaticPrice=true.",
+                    "type": "number"
+                  },
+                  "useStaticPrice": {
+                    "description": "true = static price; false = dynamic markup (QSC default)",
+                    "type": "boolean"
+                  },
+                  "active": {
+                    "description": "Whether active in pricebook (default true)",
+                    "type": "boolean"
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call, required when dryRun=false",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "categoryId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "st_patch_material",
+              "title": null,
+              "description": "PATCH a ServiceTitan pricebook material by ID. dryRun=true (default) validates and returns a confirmation_token \u2014 call again with dryRun=false + token to write. Send only the fields you want to change.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST pricebook material ID"
+                  },
+                  "name": {
+                    "description": "Display name",
+                    "type": "string"
+                  },
+                  "code": {
+                    "description": "Material code",
+                    "type": "string"
+                  },
+                  "description": {
+                    "description": "Material description",
+                    "type": "string"
+                  },
+                  "cost": {
+                    "description": "Internal cost per unit",
+                    "type": "number"
+                  },
+                  "price": {
+                    "description": "Price per unit charged to the customer",
+                    "type": "number"
+                  },
+                  "active": {
+                    "description": "Whether active in pricebook",
+                    "type": "boolean"
+                  },
+                  "categoryId": {
+                    "description": "Pricebook category ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "unitOfMeasure": {
+                    "description": "Unit of measure (e.g. \"Each\", \"Box\")",
+                    "type": "string"
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call, required when dryRun=false",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "st_create_material",
+              "title": null,
+              "description": "Create a new ServiceTitan pricebook material. dryRun=true (default) validates and returns a confirmation_token \u2014 call again with dryRun=false + token to write. Requires name and categoryId at minimum.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Display name for the material"
+                  },
+                  "categoryId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Pricebook category ID (required by ST)"
+                  },
+                  "code": {
+                    "description": "Material code",
+                    "type": "string"
+                  },
+                  "description": {
+                    "description": "Material description",
+                    "type": "string"
+                  },
+                  "cost": {
+                    "description": "Internal cost per unit",
+                    "type": "number"
+                  },
+                  "price": {
+                    "description": "Price per unit charged to the customer",
+                    "type": "number"
+                  },
+                  "active": {
+                    "description": "Whether active in pricebook (default true)",
+                    "type": "boolean"
+                  },
+                  "unitOfMeasure": {
+                    "description": "Unit of measure (e.g. \"Each\", \"Box\")",
+                    "type": "string"
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call, required when dryRun=false",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "categoryId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "find_customer",
+              "title": null,
+              "description": "Search ST customers by name, phone, or email. Source: live ST.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "description": "Customer name (partial match)",
+                    "type": "string"
+                  },
+                  "phone": {
+                    "description": "Phone number",
+                    "type": "string"
+                  },
+                  "email": {
+                    "description": "Email address",
+                    "type": "string"
+                  },
+                  "page": {
+                    "description": "Page number, default 1",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "description": "Page size, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_customer",
+              "title": null,
+              "description": "Get a single ST customer by ID. Source: live ST.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "customerId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST customer ID"
+                  }
+                },
+                "required": [
+                  "customerId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_customer_locations",
+              "title": null,
+              "description": "Get service locations for a customer. Source: live ST.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "customerId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST customer ID"
+                  },
+                  "active": {
+                    "description": "Filter to active locations only",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "customerId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "list_customer_jobs",
+              "title": null,
+              "description": "List jobs for a customer. Source: live ST (auto-falls-back to live if D1 stale >48h).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "customerId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST customer ID"
+                  },
+                  "status": {
+                    "description": "Filter by job status (e.g. \"Completed\", \"InProgress\")",
+                    "type": "string"
+                  },
+                  "page": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                },
+                "required": [
+                  "customerId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_customer_membership",
+              "title": null,
+              "description": "Get memberships for a customer. Source: live ST (no D1 memberships table).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "customerId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST customer ID"
+                  },
+                  "active": {
+                    "description": "Filter to active memberships only",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "customerId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "add_customer_note",
+              "title": null,
+              "description": "Append a note to a customer record. ST notes are append-only \u2014 this creates a new note entry, not an update. dryRun=true (default) \u2192 token \u2192 dryRun=false to write.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "customerId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST customer ID"
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Note text to append"
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "customerId",
+                  "note"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_job",
+              "title": null,
+              "description": "Get a single ST job by ID. Source: live ST.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "jobId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST job ID"
+                  }
+                },
+                "required": [
+                  "jobId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "list_jobs_today",
+              "title": null,
+              "description": "List ST jobs scheduled for today. Source: live ST.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "description": "Filter by job status (e.g. \"Scheduled\", \"InProgress\")",
+                    "type": "string"
+                  },
+                  "businessUnitId": {
+                    "description": "Filter by business unit",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "technicianId": {
+                    "description": "Filter by assigned technician",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "page": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_job_appointments",
+              "title": null,
+              "description": "Get appointments for a job. Source: live ST.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "jobId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST job ID"
+                  }
+                },
+                "required": [
+                  "jobId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "add_job_note",
+              "title": null,
+              "description": "Append a note to a job. ST notes are append-only. dryRun=true (default) \u2192 token \u2192 dryRun=false to write.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "jobId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST job ID"
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Note text to append"
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "jobId",
+                  "note"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "book_job",
+              "title": null,
+              "description": "Book a new ST job. campaignId is required \u2014 ST rejects jobs without it. dryRun=true (default) \u2192 token \u2192 dryRun=false to write.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "customerId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST customer ID"
+                  },
+                  "locationId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST location ID"
+                  },
+                  "businessUnitId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST business unit ID"
+                  },
+                  "jobTypeId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST job type ID"
+                  },
+                  "campaignId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST campaign ID \u2014 REQUIRED by ST API"
+                  },
+                  "start": {
+                    "type": "string",
+                    "description": "Appointment start ISO 8601 datetime"
+                  },
+                  "end": {
+                    "type": "string",
+                    "description": "Appointment end ISO 8601 datetime"
+                  },
+                  "priority": {
+                    "description": "Job priority",
+                    "type": "string",
+                    "enum": [
+                      "Normal",
+                      "Urgent",
+                      "Low"
+                    ]
+                  },
+                  "summary": {
+                    "description": "Job summary / customer notes",
+                    "type": "string"
+                  },
+                  "tagTypeIds": {
+                    "description": "Tag type IDs to apply",
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "customerId",
+                  "locationId",
+                  "businessUnitId",
+                  "jobTypeId",
+                  "campaignId",
+                  "start",
+                  "end"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "reschedule_appointment",
+              "title": null,
+              "description": "Reschedule an appointment (PATCH start/end/arrivalWindow). Tech assignments stay pinned to the old slot \u2014 use assign_technicians separately if you need them to follow. dryRun=true (default) \u2192 token \u2192 dryRun=false to write.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "appointmentId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST appointment ID"
+                  },
+                  "start": {
+                    "type": "string",
+                    "description": "New appointment start ISO 8601 datetime"
+                  },
+                  "end": {
+                    "type": "string",
+                    "description": "New appointment end ISO 8601 datetime"
+                  },
+                  "arrivalWindowStart": {
+                    "type": "string",
+                    "description": "Arrival window start ISO 8601 datetime"
+                  },
+                  "arrivalWindowEnd": {
+                    "type": "string",
+                    "description": "Arrival window end ISO 8601 datetime"
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "appointmentId",
+                  "start",
+                  "end",
+                  "arrivalWindowStart",
+                  "arrivalWindowEnd"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "hold_appointment",
+              "title": null,
+              "description": "Place an appointment on hold via the ST /hold sub-route (POST, not PATCH). dryRun=true (default) \u2192 token \u2192 dryRun=false to write.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "appointmentId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST appointment ID"
+                  },
+                  "reasonId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Hold reason ID"
+                  },
+                  "memo": {
+                    "description": "Optional memo text for the hold",
+                    "type": "string"
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "appointmentId",
+                  "reasonId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "assign_technicians",
+              "title": null,
+              "description": "Assign technicians to an appointment. ST requires a two-call compound: unassign all current techs, then assign the new set. Both calls are shown in the dryRun preview. dryRun=true (default) \u2192 token \u2192 dryRun=false to write.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "appointmentId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST appointment ID"
+                  },
+                  "technicianIds": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "description": "Technician IDs to assign (replaces current assignment)"
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "appointmentId",
+                  "technicianIds"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "search_pricebook_services",
+              "title": null,
+              "description": "Search pricebook services by name or category. Source: D1 (pb_services fresh 2026-04-22; auto-falls-back to live ST if stale >48h).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "description": "Service name (partial match)",
+                    "type": "string"
+                  },
+                  "categoryId": {
+                    "description": "Filter by category ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "active": {
+                    "description": "Filter by active status (default: all)",
+                    "type": "boolean"
+                  },
+                  "page": {
+                    "default": 1,
+                    "description": "Page number",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "default": 50,
+                    "description": "Page size, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_service_details",
+              "title": null,
+              "description": "Get full details for a single pricebook service including pricing tiers and categories. Source: D1 (pb_services fresh 2026-04-22).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "serviceId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST pricebook service ID"
+                  }
+                },
+                "required": [
+                  "serviceId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "search_materials",
+              "title": null,
+              "description": "Search pricebook materials by name or category. Source: live ST (pb_materials 23d stale in D1 \u2014 falls back to live until sync fixed).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "description": "Material name (partial match)",
+                    "type": "string"
+                  },
+                  "categoryId": {
+                    "description": "Filter by category ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "active": {
+                    "description": "Filter by active status (default: all)",
+                    "type": "boolean"
+                  },
+                  "page": {
+                    "default": 1,
+                    "description": "Page number",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "default": 50,
+                    "description": "Page size, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_configurable_equipment_children",
+              "title": null,
+              "description": "Get child equipment variations for a configurable (parent) equipment item. ST vocabulary: isConfigurableEquipment=true on the parent. Source: live ST (pb_equipment 37d stale in D1).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "parentEquipmentId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST pricebook equipment ID of the parent (isConfigurableEquipment=true)"
+                  },
+                  "active": {
+                    "description": "Filter by active status (default: all)",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "parentEquipmentId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "list_service_categories",
+              "title": null,
+              "description": "List pricebook service categories (not materials/equipment categories \u2014 those are separate trees). Source: live ST.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "active": {
+                    "description": "Filter by active status (default: all)",
+                    "type": "boolean"
+                  },
+                  "page": {
+                    "default": 1,
+                    "description": "Page number",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "default": 200,
+                    "description": "Page size, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_invoice",
+              "title": null,
+              "description": "Get full invoice details including line items and totals. Source: D1 (invoices nightly-synced).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "invoiceId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST invoice ID"
+                  }
+                },
+                "required": [
+                  "invoiceId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "list_invoices_job",
+              "title": null,
+              "description": "List all invoices for a specific job. Source: D1 (invoices nightly-synced).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "jobId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST job ID"
+                  },
+                  "page": {
+                    "default": 1,
+                    "description": "Page number",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "default": 50,
+                    "description": "Page size, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                },
+                "required": [
+                  "jobId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_invoice_balance",
+              "title": null,
+              "description": "Get the outstanding balance for an invoice. Returns balance, total, and payment summary from the invoice record. Source: D1 (invoices nightly-synced). Note: renamed from get_payment_status \u2014 /payments/{id} returns a payment object; balance lives on the invoice.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "invoiceId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST invoice ID"
+                  }
+                },
+                "required": [
+                  "invoiceId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "list_unpaid_invoices",
+              "title": null,
+              "description": "List invoices with an outstanding balance (unpaid or partially paid). Source: D1 (invoices nightly-synced).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "businessUnitId": {
+                    "description": "Filter by business unit ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "customerId": {
+                    "description": "Filter by customer ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "page": {
+                    "default": 1,
+                    "description": "Page number",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "default": 50,
+                    "description": "Page size, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "list_estimates_job",
+              "title": null,
+              "description": "List all estimates for a specific job. Source: D1 (estimates nightly-synced).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "jobId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST job ID"
+                  },
+                  "page": {
+                    "default": 1,
+                    "description": "Page number",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "default": 50,
+                    "description": "Page size, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                },
+                "required": [
+                  "jobId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_estimate",
+              "title": null,
+              "description": "Get full details for a single estimate including line items and status. Source: D1 (estimates nightly-synced).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "estimateId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST estimate ID"
+                  }
+                },
+                "required": [
+                  "estimateId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "update_estimate_status",
+              "title": null,
+              "description": "Update the status of an estimate (Open \u2192 Presented \u2192 Sold|Dismissed|Expired). status=Sold requires soldBy technicianId (ST rejects without it). dryRun=true (default) \u2192 token \u2192 dryRun=false to write.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "estimateId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "Open",
+                      "Presented",
+                      "Sold",
+                      "Dismissed",
+                      "Expired"
+                    ]
+                  },
+                  "soldBy": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "estimateId",
+                  "status"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_capacity",
+              "title": null,
+              "description": "Get dispatch capacity for business units over a date range. Note: this is a POST call to ST (not GET \u2014 the body carries the filter params). Source: live ST (computed endpoint).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "businessUnitIds": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "description": "Business unit IDs to check capacity for"
+                  },
+                  "startDate": {
+                    "type": "string",
+                    "description": "Start date (YYYY-MM-DD)"
+                  },
+                  "endDate": {
+                    "type": "string",
+                    "description": "End date (YYYY-MM-DD)"
+                  },
+                  "skillBasedAvailability": {
+                    "description": "Use skill-based availability matching (default: false)",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "businessUnitIds",
+                  "startDate",
+                  "endDate"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "list_technicians_available",
+              "title": null,
+              "description": "List technicians available for dispatch on a given date. Source: D1 (technicians nightly-synced).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "date": {
+                    "description": "Date to check availability (YYYY-MM-DD, default: today)",
+                    "type": "string"
+                  },
+                  "businessUnitId": {
+                    "description": "Filter by business unit ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "page": {
+                    "default": 1,
+                    "description": "Page number",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "default": 50,
+                    "description": "Page size, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_technician_shifts",
+              "title": null,
+              "description": "Get scheduled shifts for a technician. Source: live ST (shifts are computed, not in D1).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "technicianId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST technician ID"
+                  },
+                  "startsOnOrAfter": {
+                    "description": "Filter shifts starting on or after this date (ISO 8601)",
+                    "type": "string"
+                  },
+                  "startsBefore": {
+                    "description": "Filter shifts starting before this date (ISO 8601)",
+                    "type": "string"
+                  },
+                  "page": {
+                    "default": 1,
+                    "description": "Page number",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "default": 50,
+                    "description": "Page size, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                },
+                "required": [
+                  "technicianId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "list_non_job_events",
+              "title": null,
+              "description": "List non-job dispatch events (time-off, training, meetings) for technicians. Source: live ST.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "technicianId": {
+                    "description": "Filter by technician ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "startsOnOrAfter": {
+                    "description": "Filter events starting on or after this date (ISO 8601)",
+                    "type": "string"
+                  },
+                  "startsBefore": {
+                    "description": "Filter events starting before this date (ISO 8601)",
+                    "type": "string"
+                  },
+                  "page": {
+                    "default": 1,
+                    "description": "Page number",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "default": 50,
+                    "description": "Page size, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "list_campaigns",
+              "title": null,
+              "description": "List marketing campaigns. Source: D1 (campaigns nightly-synced).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "active": {
+                    "description": "Filter by active status (default: all)",
+                    "type": "boolean"
+                  },
+                  "page": {
+                    "default": 1,
+                    "description": "Page number",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "default": 50,
+                    "description": "Page size, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_campaign_performance",
+              "title": null,
+              "description": "Get performance metrics for a campaign (leads, bookings, revenue) via ST Reporting API. Source: live ST (Reporting API \u2014 not in D1).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "campaignId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST campaign ID"
+                  },
+                  "from": {
+                    "description": "Start date for the period (YYYY-MM-DD)",
+                    "type": "string"
+                  },
+                  "to": {
+                    "description": "End date for the period (YYYY-MM-DD)",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "campaignId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "create_call_with_campaign",
+              "title": null,
+              "description": "Create a telecom call record attributed to a marketing campaign. Note: ST has no \"lead attribution\" object \u2014 this POSTs to /telecom/v3/tenant/.../calls with campaignId stitched in. dryRun=true (default) \u2192 token \u2192 dryRun=false to write.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "customerId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST customer ID"
+                  },
+                  "campaignId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST campaign ID to attribute the call to"
+                  },
+                  "leadCallId": {
+                    "description": "External call ID from your call tracking system (e.g. Lace)",
+                    "type": "string"
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "customerId",
+                  "campaignId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "list_memberships_active",
+              "title": null,
+              "description": "List active memberships. Source: live ST (no D1 table for memberships \u2014 all membership tools hit live ST). Response is trimmed to essential fields; client-side filtered to status=Active since ST statuses param filters on the meaningless active-bool, not the status enum.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "customerId": {
+                    "description": "Filter by customer ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "locationId": {
+                    "description": "Filter by location ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "page": {
+                    "default": 1,
+                    "description": "Page number",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "default": 50,
+                    "description": "Page size, max 100 (capped to keep response under MCP token limit)",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 100
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "list_memberships_expiring",
+              "title": null,
+              "description": "List active memberships expiring within the next N days. Uses expirationDate range filter (NOT renewedById \u2014 unreliable). Response is trimmed to essential fields; client-side filtered to status=Active. Source: live ST (no D1 memberships table).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "windowDays": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "Number of days ahead to look for expiring memberships (e.g. 30 = expiring within 30 days)"
+                  },
+                  "customerId": {
+                    "description": "Filter by customer ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "page": {
+                    "default": 1,
+                    "description": "Page number",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "default": 50,
+                    "description": "Page size, max 100 (capped to keep response under MCP token limit)",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 100
+                  }
+                },
+                "required": [
+                  "windowDays"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "create_recurring_service",
+              "title": null,
+              "description": "Create a recurring service under an active membership. ST requires the membership to be Active (returns 400 otherwise). dryRun=true (default) \u2192 token \u2192 dryRun=false to write.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "membershipId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST membership ID (must be Active status)"
+                  },
+                  "serviceTypeId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST service type ID for the recurring service"
+                  },
+                  "locationId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST location ID where the service will be performed"
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "membershipId",
+                  "serviceTypeId",
+                  "locationId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_call",
+              "title": null,
+              "description": "Get details for a telecom call record including duration, campaign attribution, and recording info. Source: D1 (calls nightly-synced).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "callId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST call ID"
+                  }
+                },
+                "required": [
+                  "callId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_form_submission",
+              "title": null,
+              "description": "Get a form submission record. Note: form submissions return unit IDs, not equipment IDs \u2014 equipment join is done in the job_closeout_report composite via the forms_equipment D1 table. Source: live ST.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "formSubmissionId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST form submission ID"
+                  }
+                },
+                "required": [
+                  "formSubmissionId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "create_task",
+              "title": null,
+              "description": "Create a task linked to a job. Path: /taskmanagement/ (no hyphen \u2014 ST 404s on /task-management/). dryRun=true (default) \u2192 token \u2192 dryRun=false to write.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Task name/description"
+                  },
+                  "jobId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST job ID to link the task to"
+                  },
+                  "dueDate": {
+                    "description": "Due date (ISO 8601 date string)",
+                    "type": "string"
+                  },
+                  "assignedToId": {
+                    "description": "Employee ID to assign the task to",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "dryRun": {
+                    "default": true,
+                    "description": "true (default) = preview + token; false = execute write",
+                    "type": "boolean"
+                  },
+                  "confirmation_token": {
+                    "description": "Token from prior dryRun=true call",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "jobId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "list_open_tasks",
+              "title": null,
+              "description": "List open (incomplete) tasks. Path: /taskmanagement/ (no hyphen \u2014 ST 404s on /task-management/). Source: live ST.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "jobId": {
+                    "description": "Filter by job ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "assignedToId": {
+                    "description": "Filter by assigned employee ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "page": {
+                    "default": 1,
+                    "description": "Page number",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "pageSize": {
+                    "default": 50,
+                    "description": "Page size, max 200",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 200
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "customer_snapshot",
+              "title": null,
+              "description": "L5 composite: returns a full customer snapshot \u2014 customer details, locations, jobs, memberships, estimates, and invoices in a single call. Uses single-flight DO to prevent thundering-herd. ~5 min cache via mv_customer_snapshot. Source: mixed (D1 + live ST for memberships).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "customerId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST customer ID"
+                  }
+                },
+                "required": [
+                  "customerId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "pricebook_health_check_services",
+              "title": null,
+              "description": "L5 composite: pricebook health check for SERVICES only. Checks for zero-cost services, missing categories, and inactive items. pb_services is fresh (synced 2026-04-22). Materials + equipment blocked until nightly sync fix (\u00a713#1). Source: D1 (pb_services).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "activeOnly": {
+                    "default": true,
+                    "description": "Only check active services (default: true)",
+                    "type": "boolean"
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "job_closeout_report",
+              "title": null,
+              "description": "L5 composite: full job closeout report \u2014 job details, appointments, technicians, invoice, and form submissions. Note: form submissions use unit IDs (not equipment IDs); equipment join done via forms_equipment D1 table. Source: mixed (D1 + live ST).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "jobId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST job ID"
+                  }
+                },
+                "required": [
+                  "jobId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "margin_audit",
+              "title": null,
+              "description": "L5 composite: margin audit for a business unit over a date range. Joins jobs + invoice items + cost fields. 60 min memo (mv_margin_audit). Source: D1 (jobs/invoices nightly-synced).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "businessUnitId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "description": "ST business unit ID"
+                  },
+                  "from": {
+                    "type": "string",
+                    "description": "Start date (YYYY-MM-DD)"
+                  },
+                  "to": {
+                    "type": "string",
+                    "description": "End date (YYYY-MM-DD)"
+                  }
+                },
+                "required": [
+                  "businessUnitId",
+                  "from",
+                  "to"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "membership_outreach_list",
+              "title": null,
+              "description": "L5 composite: outreach contact list for a membership segment. Segments: expiring_30/60/90 (expiring within N days), lapsed (status=Cancelled last 90d). 30 min memo. Source: live ST (no D1 memberships table).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "segment": {
+                    "type": "string",
+                    "enum": [
+                      "expiring_30",
+                      "expiring_60",
+                      "expiring_90",
+                      "lapsed"
+                    ],
+                    "description": "Target segment for outreach"
+                  },
+                  "businessUnitId": {
+                    "description": "Filter by business unit ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "segment"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "dispatch_override_audit",
+              "title": null,
+              "description": "L5 composite: audit of dispatch assignment overrides (technician reassignments) in a date range. Joins appointment_assignments + appointments + technicians. 60 min memo. Source: D1 (appointment_assignments nightly-synced).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "Start date (ISO 8601)"
+                  },
+                  "to": {
+                    "type": "string",
+                    "description": "End date (ISO 8601)"
+                  },
+                  "technicianId": {
+                    "description": "Filter by technician ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "call_quality_review",
+              "title": null,
+              "description": "L5 composite: call quality review combining ST call records with available transcripts. 15 min memo. Source: D1 (calls + call_transcripts nightly-synced). Note: Lace score integration deferred to v1.1.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "Start date (ISO 8601)"
+                  },
+                  "to": {
+                    "type": "string",
+                    "description": "End date (ISO 8601)"
+                  },
+                  "csr": {
+                    "description": "Filter by CSR name or employee ID",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "commercial_plumbing_opportunities",
+              "title": null,
+              "description": "L5 composite: commercial plumbing upsell opportunities \u2014 customers with commercial plumbing history who haven't booked in 90+ days. 60 min memo. Source: D1 (jobs + tags nightly-synced).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "businessUnitId": {
+                    "description": "Filter by business unit ID",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "lookbackDays": {
+                    "default": 90,
+                    "description": "Days without booking to consider an opportunity (default: 90)",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "membership_jackpot_leaderboard",
+              "title": null,
+              "description": "L5 composite: membership sales leaderboard for the Jackpot Drive. Employee names anonymized until 2026-07-04 per Jackpot Drive rules \u2014 only rank and count are shown before that date. 30 min memo. Source: D1 (memberships nightly-synced).",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "limit": {
+                    "default": 10,
+                    "description": "Number of top performers to return (default: 10, max: 50)",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 50
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "siro_list_mobile_events",
+              "title": null,
+              "description": "List Siro mobile events (recording/sync/activity events). Read-only. Cached 2 min. Siro is the in-person sales coaching recorder acquired by ServiceTitan.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "pageSize": {
+                    "description": "Max events per page (default 50, max 100 per Siro docs)",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 100
+                  },
+                  "after": {
+                    "description": "ISO timestamp \u2014 return events after this time",
+                    "type": "string"
+                  },
+                  "before": {
+                    "description": "ISO timestamp \u2014 return events before this time",
+                    "type": "string"
+                  },
+                  "userId": {
+                    "description": "Filter to a specific Siro user",
+                    "type": "string"
+                  }
+                }
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "siro_get_recording_summary",
+              "title": null,
+              "description": "Get the AI-generated summary for a Siro recording (sales conversation analysis, key moments, coaching points). Read-only. Cached 1 hour.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "recordingId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Siro recording ID"
+                  }
+                },
+                "required": [
+                  "recordingId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "siro_get_engagement",
+              "title": null,
+              "description": "Get a Siro engagement (linked recording data \u2014 typically a single visit/interaction with a customer). Read-only. Cached 10 min.",
+              "inputSchema": {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "properties": {
+                  "engagementId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Siro engagement ID"
+                  }
+                },
+                "required": [
+                  "engagementId"
+                ]
+              },
+              "outputSchema": null,
+              "icons": null,
+              "annotations": null,
+              "meta": null,
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            }
+          ]
+        },
+        "error": null
+      }
+    ],
+    "issues": [],
+    "labels": [],
+    "error": null
+  }
+}

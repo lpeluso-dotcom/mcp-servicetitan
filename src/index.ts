@@ -16,7 +16,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Env } from './env';
 import { TOOLS, toolsForRole } from './tools/index';
 import { registerTool, type RequestContext } from './tool-registry';
-import { resolveRole } from './auth';
+import { resolveRole, safeActorHeader } from './auth';
 import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
 import { endpointsHandler } from './routes/admin-endpoints';
@@ -173,7 +173,7 @@ export default {
     }
 
     // MCP dispatch: resolve role via D1 mcp_roles (F2), build per-request server.
-    const actor = request.headers.get('x-actor') ?? 'claude-code';
+    const actor = safeActorHeader(request.headers.get('x-actor'));
     const role = await resolveRole(request, env);
     const reqCtx: RequestContext = { actor, role };
 

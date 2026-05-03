@@ -1,0 +1,31 @@
+
+/home/taylor/work/mcp-servicetitan/src/auth.ts
+  20:47  warning  Generic Object Injection Sink  security/detect-object-injection
+  20:55  warning  Generic Object Injection Sink  security/detect-object-injection
+
+/home/taylor/work/mcp-servicetitan/src/composite-helpers.ts
+  94:18  warning  Generic Object Injection Sink               security/detect-object-injection
+  95:17  warning  Variable Assigned to Object Injection Sink  security/detect-object-injection
+  97:7   warning  Generic Object Injection Sink               security/detect-object-injection
+  99:7   warning  Generic Object Injection Sink               security/detect-object-injection
+
+/home/taylor/work/mcp-servicetitan/src/durable/st-rate-limiter.ts
+  117:51  warning  Generic Object Injection Sink  security/detect-object-injection
+  117:77  warning  Generic Object Injection Sink  security/detect-object-injection
+
+/home/taylor/work/mcp-servicetitan/src/shared/schemas.ts
+  21:46  warning  Unsafe Regular Expression  security/detect-unsafe-regex
+
+/home/taylor/work/mcp-servicetitan/src/tools/marketing/st_post_marketing_attribution.ts
+  103:64  warning  Generic Object Injection Sink  security/detect-object-injection
+
+/home/taylor/work/mcp-servicetitan/src/tools/memberships/list_memberships_active.ts
+  18:37  warning  Generic Object Injection Sink  security/detect-object-injection
+  18:46  warning  Generic Object Injection Sink  security/detect-object-injection
+
+/home/taylor/work/mcp-servicetitan/src/tools/memberships/list_memberships_expiring.ts
+  17:37  warning  Generic Object Injection Sink  security/detect-object-injection
+  17:46  warning  Generic Object Injection Sink  security/detect-object-injection
+
+✖ 14 problems (0 errors, 14 warnings)
+

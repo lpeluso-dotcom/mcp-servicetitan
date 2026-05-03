@@ -12,6 +12,51 @@
 
 import type { Env } from './env';
 
+const PAYLOAD_MAX = 4000;
+
+// Stringify + cap. When the JSON exceeds PAYLOAD_MAX, return a marker envelope
+// so investigators can distinguish truncation from missing data. Without this,
+// a silent .slice(0, 4000) made a 4001-char row indistinguishable from a 50KB row.
+export function jsonTruncate(value: unknown, max: number = PAYLOAD_MAX): string | null {
+  if (value === null || value === undefined) return null;
+  let json: string;
+  try {
+    json = JSON.stringify(value);
+  } catch {
+    return JSON.stringify({ _serialize_failed: true });
+  }
+  if (json.length <= max) return json;
+  return JSON.stringify({
+    _truncated: true,
+    _orig_length: json.length,
+    _slice: json.slice(0, max - 80),
+  });
+}
+
+// Allowlist of context keys safe to persist in error_log.context.
+// Anything else gets dropped (and surfaced via _dropped_keys for visibility)
+// so a careless caller passing {request, env, args} can't leak secrets/PII.
+const SAFE_CONTEXT_KEYS = new Set([
+  'status', 'tool', 'actor', 'correlation', 'correlation_id',
+  'latency_ms', 'code', 'failures', 'source', 'severity',
+  'op', 'kind', 'ms',
+]);
+
+export function safeContext(input: unknown): Record<string, unknown> {
+  if (!input || typeof input !== 'object') return {};
+  const out: Record<string, unknown> = {};
+  const dropped: string[] = [];
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    if (SAFE_CONTEXT_KEYS.has(k)) {
+      out[k] = v;
+    } else {
+      dropped.push(k);
+    }
+  }
+  if (dropped.length > 0) out._dropped_keys = dropped;
+  return out;
+}
+
 export interface AuditRow {
   actor: string;
   surface: string;
@@ -53,8 +98,8 @@ export async function audit(env: Env, row: AuditRow): Promise<void> {
         row.operation ?? 'unknown',
         row.target_id ?? null,
         row.dry_run ? 1 : 0,
-        row.payload ? JSON.stringify(row.payload).slice(0, 4000) : null,
-        row.result ? JSON.stringify(row.result).slice(0, 4000) : null,
+        jsonTruncate(row.payload),
+        jsonTruncate(row.result),
         row.status ?? 'ok',
         row.latency_ms ?? null,
         row.correlation ?? null
@@ -80,7 +125,7 @@ export async function error(env: Env, row: ErrorRow): Promise<void> {
         row.severity ?? 'error',
         row.message ?? 'unknown error',
         row.stack ?? null,
-        row.context ? JSON.stringify(row.context).slice(0, 4000) : null,
+        jsonTruncate(row.context),
         row.correlation ?? null
       )
       .run();
