@@ -50,6 +50,7 @@ MCP_SERVICE_VERSION = "1.2.0"
 # Secrets (via `wrangler secret put`):
 # MCP_SYNC_KEY — shared bearer between mcp-servicetitan and taylor-ai /api/st/read
 # SIRO_API_TOKEN — Siro org API token for v1 read endpoints
+# ST_WEBHOOK_SECRET — ServiceTitan webhook HMAC-SHA256 secret
 
 [[durable_objects.bindings]]
 name = "ST_RATE_LIMITER"
@@ -111,3 +112,4 @@ service = "taylor-ai-dev"
 # Dev secrets (same command, add --env dev):
 # wrangler secret put MCP_SYNC_KEY --env dev
 # wrangler secret put SIRO_API_TOKEN --env dev
+# wrangler secret put ST_WEBHOOK_SECRET --env dev

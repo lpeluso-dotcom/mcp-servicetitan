@@ -20,6 +20,7 @@ import { resolveRole, safeActorHeader } from './auth';
 import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
 import { endpointsHandler } from './routes/admin-endpoints';
+import { handleWebhook } from './webhook-ingest';
 
 // Durable Object classes must be exported from the worker entry point.
 export { StRateLimiter } from './durable/st-rate-limiter';
@@ -126,8 +127,8 @@ app.get('/admin/health/audit', auditHealthHandler);
 // /admin/endpoints — ST endpoint inventory: per-tool stEndpoint descriptors + undeclared list.
 app.get('/admin/endpoints', endpointsHandler);
 
-// /webhooks/st — HMAC-verified ST webhook ingest (H13 stub).
-app.post('/webhooks/st', (c) => c.json({ error: 'H13: webhook ingest not yet implemented' }, 501));
+// /webhooks/st — HMAC-verified ST webhook ingest.
+app.post('/webhooks/st', (c) => handleWebhook(c.env, c.req.raw));
 
 app.notFound((c) => c.json({ error: 'not found' }, 404));
 

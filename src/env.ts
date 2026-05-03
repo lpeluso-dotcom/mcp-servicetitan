@@ -15,6 +15,7 @@ export interface Env {
   // Secrets
   MCP_SYNC_KEY: string; // For taylor-ai /api/st/read proxy
   SIRO_API_TOKEN: string; // Siro org API token (Bearer auth)
+  ST_WEBHOOK_SECRET: string; // ServiceTitan webhook HMAC-SHA256 secret
 
   // F3 Durable Objects
   ST_RATE_LIMITER: DurableObjectNamespace;
