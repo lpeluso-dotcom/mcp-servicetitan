@@ -160,8 +160,9 @@ describe('list_service_categories', () => {
     const env = makeEnv(liveOk([]));
     await list_service_categories.handler(env, {}, CTX);
     const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
-    expect(url).toContain('service');
+    expect(url).toContain('pricebook');
     expect(url).toContain('categor');
+    expect(url).not.toContain('materials');
   });
 });
 

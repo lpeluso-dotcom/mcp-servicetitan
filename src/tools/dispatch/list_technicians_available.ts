@@ -8,6 +8,7 @@ interface Args { date?: string; businessUnitId?: number; page?: number; pageSize
 export const list_technicians_available: ToolDef<Args> = {
   name: 'list_technicians_available',
   description: 'List technicians available for dispatch on a given date. Source: D1 (technicians nightly-synced).',
+  stEndpoint: { method: 'GET', path: '/dispatch/v2/tenant/{tid}/technicians', source: 'live' },
   zodSchema: {
     date: z.string().optional().describe('Date to check availability (YYYY-MM-DD, default: today)'),
     businessUnitId: z.number().int().positive().optional().describe('Filter by business unit ID'),
@@ -22,7 +23,7 @@ export const list_technicians_available: ToolDef<Args> = {
     qs.set('pageSize', String(args.pageSize ?? 50));
 
     const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/dispatch/v2/tenant/431848990/technicians/available?${qs}`)}`,
+      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/dispatch/v2/tenant/431848990/technicians?${qs}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `list_technicians_available failed: ${resp.status}`, { correlation });

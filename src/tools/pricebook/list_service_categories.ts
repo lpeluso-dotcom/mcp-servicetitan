@@ -10,6 +10,7 @@ interface Args { active?: boolean; page?: number; pageSize?: number }
 export const list_service_categories: ToolDef<Args> = {
   name: 'list_service_categories',
   description: 'List pricebook service categories (not materials/equipment categories — those are separate trees). Source: live ST.',
+  stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/categories', source: 'live' },
   zodSchema: {
     active: z.boolean().optional().describe('Filter by active status (default: all)'),
     page: z.number().int().positive().default(1).describe('Page number'),
@@ -27,7 +28,7 @@ export const list_service_categories: ToolDef<Args> = {
       qs.set('pageSize', String(pageSize));
 
       const resp = await env.TAYLOR_AI.fetch(
-        `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/431848990/servicecategories?${qs}`)}`,
+        `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/431848990/categories?${qs}`)}`,
         { headers: authHeaders(env, correlation, actor) }
       );
       if (!resp.ok) throw new McpError('upstream_error', `list_service_categories failed: ${resp.status}`, { correlation });
