@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use this only for non-sensitive hardening suggestions. Do not disclose exploitable vulnerabilities, secrets, live endpoints with valid credentials, or private tenant data in a public issue. Send sensitive reports to the email in SECURITY.md.
+        Use this only for non-sensitive hardening suggestions. Do not disclose exploitable vulnerabilities, secrets, live endpoints with valid credentials, or private tenant data in a public issue. Send sensitive reports through the private reporting path in SECURITY.md.
   - type: dropdown
     id: area
     attributes:
