@@ -15,7 +15,7 @@
 import type { Env } from './env';
 
 /**
- * Extract the `data` payload from a taylor-ai/ST response shape, falling back
+ * Extract the `data` payload from a servicetitan-proxy/ST response shape, falling back
  * to the root object only when there is no `data` key (vs taking the wrapper
  * literally when `data` is undefined or null — the latter is a shape leak).
  */
@@ -27,7 +27,7 @@ export function extractStData<T = unknown>(json: unknown): T {
 }
 
 /**
- * Build a fetch promise to taylor-ai's `/api/st/read` proxy with a
+ * Build a fetch promise to servicetitan-proxy's `/api/st/read` proxy with a
  * URL-encoded ST endpoint. Used by composite fanouts; single-fetch tools
  * still inline the URL (migrating them is a v1.2 mechanical pass).
  */
@@ -37,8 +37,8 @@ export function stRead(
   endpoint: string,
   signal?: AbortSignal
 ): Promise<Response> {
-  const url = `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
-  return env.TAYLOR_AI.fetch(url, signal ? { headers, signal } : { headers });
+  const url = `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
+  return env.ST_PROXY.fetch(url, signal ? { headers, signal } : { headers });
 }
 
 export interface FanoutFailure {
@@ -70,7 +70,7 @@ function tagged(name: string, message: string): Error {
  * inside the promise chain so the parses interleave instead of
  * serializing in a post-allSettled loop, and parse errors land in the
  * same rejection path as network/HTTP failures (collapses three branches
- * to one). JSON extraction follows the taylor-ai shape via extractStData.
+ * to one). JSON extraction follows the servicetitan-proxy shape via extractStData.
  */
 export async function gatherFetches(calls: NamedCall[]): Promise<FanoutResult> {
   const settled = await Promise.allSettled(

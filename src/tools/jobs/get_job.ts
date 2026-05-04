@@ -12,8 +12,8 @@ export const get_job: ToolDef<Args> = {
     jobId: z.number().int().positive().describe('ST job ID'),
   },
   async handler(env, args, { actor, correlation }) {
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/431848990/jobs/${args.jobId}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/000000000/jobs/${args.jobId}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `get_job failed: ${resp.status}`, { correlation });

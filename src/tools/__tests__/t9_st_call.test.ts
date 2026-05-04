@@ -22,11 +22,11 @@ function makeDB(firstResult: unknown = null) {
 
 function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>): any {
   return {
-    TAYLOR_AI: { fetch: vi.fn(fetchImpl) },
+    ST_PROXY: { fetch: vi.fn(fetchImpl) },
     MCP_SYNC_KEY: 'test-key',
     MCP_SERVICE_VERSION: '0.0.0-test',
     DB: makeDB(),
-    TAI_STATE: {},
+    PROXY_STATE: {},
     SIRO_API_TOKEN: '',
   };
 }
@@ -58,11 +58,11 @@ describe('st_call schema', () => {
   });
 
   it('accepts GET with path', () => {
-    expect(s.safeParse({ method: 'GET', path: '/crm/v2/tenant/431848990/customers' }).success).toBe(true);
+    expect(s.safeParse({ method: 'GET', path: '/crm/v2/tenant/000000000/customers' }).success).toBe(true);
   });
 
   it('accepts POST with body', () => {
-    expect(s.safeParse({ method: 'POST', path: '/jpm/v2/tenant/431848990/jobs', body: { foo: 1 } }).success).toBe(true);
+    expect(s.safeParse({ method: 'POST', path: '/jpm/v2/tenant/000000000/jobs', body: { foo: 1 } }).success).toBe(true);
   });
 
   it('rejects unknown method', () => {
@@ -81,8 +81,8 @@ describe('st_call path middleware', () => {
 
   it('correction 1: /task-management/ → /taskmanagement/', async () => {
     const env = makeEnv(liveOk([]));
-    await st_call.handler(env, { method: 'GET', path: '/task-management/v2/tenant/431848990/tasks' }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    await st_call.handler(env, { method: 'GET', path: '/task-management/v2/tenant/000000000/tasks' }, CTX);
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('taskmanagement');
     expect(url).not.toContain('task-management');
   });
@@ -90,22 +90,22 @@ describe('st_call path middleware', () => {
   it('correction 2: auto-injects tenant ID when missing', async () => {
     const env = makeEnv(liveOk([]));
     await st_call.handler(env, { method: 'GET', path: '/crm/v2/customers' }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
-    expect(url).toContain('431848990');
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
+    expect(url).toContain('000000000');
   });
 
   it('correction 2: does not double-inject tenant ID when already present', async () => {
     const env = makeEnv(liveOk([]));
-    await st_call.handler(env, { method: 'GET', path: '/crm/v2/tenant/431848990/customers' }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
-    const matches = (url as string).match(/431848990/g);
+    await st_call.handler(env, { method: 'GET', path: '/crm/v2/tenant/000000000/customers' }, CTX);
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
+    const matches = (url as string).match(/000000000/g);
     expect(matches?.length).toBe(1);
   });
 
   it('strips trailing slash on GET', async () => {
     const env = makeEnv(liveOk([]));
-    await st_call.handler(env, { method: 'GET', path: '/crm/v2/tenant/431848990/customers/' }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    await st_call.handler(env, { method: 'GET', path: '/crm/v2/tenant/000000000/customers/' }, CTX);
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     // endpoint param should not have trailing slash
     const endpointParam = new URL(url).searchParams.get('endpoint') ?? '';
     expect(endpointParam.endsWith('/')).toBe(false);
@@ -113,8 +113,8 @@ describe('st_call path middleware', () => {
 
   it('does not strip trailing slash for ODATA paths', async () => {
     const env = makeEnv(liveOk([]));
-    await st_call.handler(env, { method: 'GET', path: '/crm/v2/tenant/431848990/customers/$query' }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    await st_call.handler(env, { method: 'GET', path: '/crm/v2/tenant/000000000/customers/$query' }, CTX);
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     // $query is percent-encoded in the URL; decode to verify passthrough
     expect(decodeURIComponent(url)).toContain('$query');
   });
@@ -127,7 +127,7 @@ describe('st_call body middleware', () => {
     const env = makeEnv(dryRunFetch());
     const result: any = await st_call.handler(env, {
       method: 'PATCH',
-      path: '/pricebook/v2/tenant/431848990/equipment/1',
+      path: '/pricebook/v2/tenant/000000000/equipment/1',
       body: { isConfigurable: true, name: 'Test' },
     }, CTX);
     expect(result.payload.isConfigurableEquipment).toBe(true);
@@ -138,7 +138,7 @@ describe('st_call body middleware', () => {
     const env = makeEnv(dryRunFetch());
     const result: any = await st_call.handler(env, {
       method: 'PATCH',
-      path: '/pricebook/v2/tenant/431848990/services/1',
+      path: '/pricebook/v2/tenant/000000000/services/1',
       body: { useStaticPrice: true, price: 100 },
     }, CTX);
     expect(result.payload.useStaticPrices).toBe(true);
@@ -151,8 +151,8 @@ describe('st_call body middleware', () => {
 describe('st_call routing', () => {
   it('GET routes to /api/st/read', async () => {
     const env = makeEnv(liveOk([]));
-    await st_call.handler(env, { method: 'GET', path: '/crm/v2/tenant/431848990/customers' }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    await st_call.handler(env, { method: 'GET', path: '/crm/v2/tenant/000000000/customers' }, CTX);
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('/api/st/read');
   });
 
@@ -160,7 +160,7 @@ describe('st_call routing', () => {
     const env = makeEnv(dryRunFetch());
     const result: any = await st_call.handler(env, {
       method: 'POST',
-      path: '/jpm/v2/tenant/431848990/jobs',
+      path: '/jpm/v2/tenant/000000000/jobs',
       body: { foo: 1 },
     }, CTX);
     expect(result.dryRun).toBe(true);
@@ -170,10 +170,10 @@ describe('st_call routing', () => {
     const env = makeEnv(liveOk([]));
     await st_call.handler(env, {
       method: 'GET',
-      path: '/crm/v2/tenant/431848990/customers',
+      path: '/crm/v2/tenant/000000000/customers',
       query: { name: 'Alice', pageSize: 50 },
     }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('Alice');
     expect(url).toContain('50');
   });

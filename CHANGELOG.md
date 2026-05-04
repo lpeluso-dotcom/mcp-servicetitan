@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Security
+- Require credentials for `POST /mcp` (`Authorization: Bearer <JWT>` or `X-Sync-Key`) before registering tools.
+- Reject JWT authentication when `JWT_SECRET` is missing, too short, or placeholder-like.
+- Make confirmation-token consumption conditional on `consumed_at IS NULL` to close the replay race window.
+
+### Repository readiness
+- Declare direct `jose` dependency and align `package-lock.json` root metadata with v1.2.0.
+- Add CI, Dependabot, issue templates, `.env.example`, `CONTRIBUTING.md`, and `docs/PUBLISHING_CHECKLIST.md` for public feedback.
+- Change Cloudflare deployment to manual dispatch so public-feedback changes are not automatically deployed from `main`.
+- Replace production tenant IDs, worker URLs, Cloudflare resource IDs, and raw audit artifacts with public-safe placeholders.
+- Add runtime tenant placeholder rewriting from `ST_TENANT_ID` so the public source can remain sanitized.
+
 ## v1.2.0 — 2026-05-02
 
 ### New tools
@@ -78,5 +92,5 @@
 - C10 Composite: `customer_snapshot`, `job_closeout_report`
 - Siro: `siro_list_mobile_events`, `siro_get_recording_summary`, `siro_get_engagement`
 - Cloudflare Worker, Hono, Agents SDK Streamable HTTP (`/mcp` route)
-- D1 bindings, Analytics Engine (`MCP_METRICS`), taylor-ai service binding
+- D1 bindings, Analytics Engine (`MCP_METRICS`), servicetitan-proxy service binding
 - CI auto-deploy via GitHub Actions (`CLOUDFLARE_API_TOKEN` secret)

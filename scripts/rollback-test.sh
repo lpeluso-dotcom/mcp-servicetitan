@@ -6,7 +6,7 @@
 # even under partial-apply conditions.
 #
 # Usage:  CLOUDFLARE_API_TOKEN=... bash scripts/rollback-test.sh [db-name]
-# Default DB: qsc-mcp-st-dev
+# Default DB: mcp-servicetitan-dev
 #
 # REQUIREMENT: the CLOUDFLARE_API_TOKEN must have D1:Edit scope.
 # The Workers:Deploy scope alone is NOT sufficient — wrangler d1 execute --remote
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 # Stage 0 — verify token has D1 access (fast fail with clear message).
-if ! npx wrangler d1 list 2>&1 | grep -q "qsc-mcp-st"; then
+if ! npx wrangler d1 list 2>&1 | grep -q "mcp-servicetitan"; then
   echo "  ❌ Stage 0 FAIL: cannot list D1 databases. Check CLOUDFLARE_API_TOKEN has D1:Edit scope."
   exit 1
 fi
@@ -27,7 +27,7 @@ fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-DB="${1:-qsc-mcp-st-dev}"
+DB="${1:-mcp-servicetitan-dev}"
 UP="migrations/0001_baseline.sql"
 DOWN="migrations/0001_baseline_down.sql"
 

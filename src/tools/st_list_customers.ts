@@ -10,7 +10,7 @@ import { cacheGet } from '../cache';
 import { McpError, mapUpstreamStatus } from '../errors';
 import type { ToolDef } from './index';
 
-const TENANT_ID = '431848990';
+const TENANT_ID = '000000000';
 const NAMESPACE = 'servicetitan:customers';
 const CACHE_TTL_SEC = 300; // 5 min
 
@@ -23,7 +23,7 @@ interface Args {
 export const st_list_customers: ToolDef<Args> = {
   name: 'st_list_customers',
   description:
-    'List ServiceTitan customers with optional pagination and modified-after filter. Read-only. Cached 5 min. Calls taylor-ai /api/st/read which handles ST OAuth.',
+    'List ServiceTitan customers with optional pagination and modified-after filter. Read-only. Cached 5 min. Calls servicetitan-proxy /api/st/read which handles ST OAuth.',
   zodSchema: {
     page: z.number().int().positive().optional().describe('Page number, default 1'),
     pageSize: z.number().int().positive().max(200).optional().describe('Page size, default 50, max 200'),
@@ -42,8 +42,8 @@ export const st_list_customers: ToolDef<Args> = {
     const cacheKey = `page=${page}&pageSize=${pageSize}&mod=${args.modifiedOnOrAfter ?? ''}`;
 
     return cacheGet(env, NAMESPACE, cacheKey, CACHE_TTL_SEC, async () => {
-      const url = `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
-      const resp = await env.TAYLOR_AI.fetch(url, { headers: authHeaders(env, correlation, actor) });
+      const url = `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
+      const resp = await env.ST_PROXY.fetch(url, { headers: authHeaders(env, correlation, actor) });
       if (!resp.ok) {
         const body = await resp.text().catch(() => '');
         throw new McpError(mapUpstreamStatus(resp.status), `ST list_customers ${resp.status}: ${body.slice(0, 200)}`, { correlation });

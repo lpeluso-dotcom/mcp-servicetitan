@@ -1,7 +1,7 @@
 // ============================================================
 // F-05 — read-router.queryD1 client-side SELECT guard.
 //
-// taylor-ai's /internal/query-d1 RPC enforces SELECT-only on the server side.
+// servicetitan-proxy's /internal/query-d1 RPC enforces SELECT-only on the server side.
 // This test pins the worker-side defense-in-depth check that rejects mutations
 // before they ever leave the worker.
 // ============================================================
@@ -15,7 +15,7 @@ function makeEnv() {
     new Response(JSON.stringify({ rows: [], updatedAt: 0 }), { status: 200 })
   );
   const env = {
-    TAYLOR_AI: { fetch },
+    ST_PROXY: { fetch },
     MCP_SYNC_KEY: 'test-secret-key',
     MCP_SERVICE_VERSION: '1.2.0-test',
   } as unknown as Env;
@@ -23,7 +23,7 @@ function makeEnv() {
 }
 
 describe('ReadRouter.queryD1 SQL guard', () => {
-  it('passes a valid SELECT through to taylor-ai', async () => {
+  it('passes a valid SELECT through to servicetitan-proxy', async () => {
     const { env, fetch } = makeEnv();
     const router = new ReadRouter(env);
     const result = await router.queryD1('SELECT * FROM customers WHERE id = ?', [1]);

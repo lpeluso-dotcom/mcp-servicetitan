@@ -1,12 +1,15 @@
 {
   "name": "mcp-servicetitan",
   "version": "1.2.0",
-  "description": "QSC ServiceTitan MCP server — v1.2 (65 tools: 41 L4 purposeful + 10 L5 composites + 1 admin gateway + 3 Siro + 3 v1.2: capacity-slots, run-report, marketing-attribution). Streamable HTTP via Agents SDK; HMAC write-gate; D1 audit; Analytics Engine telemetry.",
+  "description": "ServiceTitan MCP server — v1.2 (65 tools: 41 L4 purposeful + 10 L5 composites + 1 admin gateway + 3 Siro + 3 v1.2: capacity-slots, run-report, marketing-attribution). Streamable HTTP via Agents SDK; HMAC write-gate; D1 audit; Analytics Engine telemetry.",
+  "license": "MIT",
   "private": true,
   "scripts": {
+    "check": "npm run typecheck && npm test",
     "deploy": "wrangler deploy",
     "deploy:dev": "wrangler deploy --env dev",
     "dev": "wrangler dev",
+    "security:audit": "npm audit --omit=dev",
     "types": "wrangler types",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -17,6 +20,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "agents": "^0.11.4",
     "hono": "^4.6.0",
+    "jose": "^6.1.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {

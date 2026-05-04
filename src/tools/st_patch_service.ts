@@ -32,7 +32,7 @@ export const st_patch_service: ToolDef<Args> = {
   description:
     'PATCH a ServiceTitan pricebook service by ID. ' +
     'dryRun=true (default) validates and returns a confirmation_token — call again with dryRun=false + token to write. ' +
-    'QSC uses dynamic pricing (useStaticPrice=false) — do NOT set price unless fixing a static-price item.',
+    'This deployment uses dynamic pricing (useStaticPrice=false) — do NOT set price unless fixing a static-price item.',
   isWrite: true,
   zodSchema: {
     id: z.number().int().positive().describe('ST pricebook service ID'),
@@ -41,7 +41,7 @@ export const st_patch_service: ToolDef<Args> = {
     description: z.string().optional().describe('Service description shown on invoices'),
     cost: z.number().optional().describe('Internal cost (required for correct job costing)'),
     price: z.number().optional().describe('Static price. Only meaningful when useStaticPrice=true.'),
-    useStaticPrice: z.boolean().optional().describe('true = static price; false = dynamic markup (QSC default)'),
+    useStaticPrice: z.boolean().optional().describe('true = static price; false = dynamic markup (deployment default)'),
     active: z.boolean().optional().describe('Whether the service is active in the pricebook'),
     categoryId: z.number().int().positive().optional().describe('Pricebook category ID'),
     dryRun: z.boolean().default(true).describe('true (default) = preview + token; false = execute write'),
@@ -54,7 +54,7 @@ export const st_patch_service: ToolDef<Args> = {
     }
     const businessArgs = { id, ...payload };
     const gate = new WriteGate(env);
-    const endpoint = `/pricebook/v2/tenant/431848990/services/${id}`;
+    const endpoint = `/pricebook/v2/tenant/000000000/services/${id}`;
 
     if (dryRun) {
       return gate.dryRun('st_patch_service', businessArgs, actor, correlation, payload, endpoint, 'PATCH', 5 * 60 * 1000);
@@ -85,7 +85,7 @@ export async function durableWrite(env: Env, opts: DurableWriteOpts): Promise<un
     _pollMaxAttempts = POLL_MAX_ATTEMPTS,
   } = opts;
 
-  const submitResp = await env.TAYLOR_AI.fetch('https://taylor-ai/api/st/durable-write', {
+  const submitResp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/durable-write', {
     method: 'POST',
     headers: { ...authHeaders(env, correlation, actor), 'Content-Type': 'application/json' },
     body: JSON.stringify({ actor, operation, target, payload, dry_run: false, correlation }),
@@ -104,8 +104,8 @@ export async function durableWrite(env: Env, opts: DurableWriteOpts): Promise<un
 
   for (let i = 0; i < _pollMaxAttempts; i++) {
     if (i > 0) await new Promise((r) => setTimeout(r, _pollIntervalMs));
-    const statusResp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/durable-write/${instance_id}/status`,
+    const statusResp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/durable-write/${instance_id}/status`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!statusResp.ok) {

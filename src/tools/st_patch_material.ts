@@ -50,7 +50,7 @@ export const st_patch_material: ToolDef<Args> = {
     }
     const businessArgs = { id, ...payload };
     const gate = new WriteGate(env);
-    const endpoint = `/pricebook/v2/tenant/431848990/materials/${id}`;
+    const endpoint = `/pricebook/v2/tenant/000000000/materials/${id}`;
 
     if (dryRun) {
       return gate.dryRun('st_patch_material', businessArgs, actor, correlation, payload, endpoint, 'PATCH', 5 * 60 * 1000);

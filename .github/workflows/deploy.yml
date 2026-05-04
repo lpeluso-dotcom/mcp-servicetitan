@@ -1,18 +1,15 @@
 name: Deploy to Cloudflare
 
-# Eliminates the deploy-from-workstation drift class:
-# - Pushes to main trigger an automated wrangler deploy from CI
-# - CI is by definition synced with origin/main
+# Manual deploy only. CI validates pushes and pull requests; deployment is kept
+# explicit so public-feedback changes are not coupled directly to the live worker.
 #
-# Setup (one-time, on lpeluso-dotcom/mcp-servicetitan):
+# Setup (one-time, on your-org/mcp-servicetitan):
 #   gh secret set CLOUDFLARE_API_TOKEN --body "<token>"
 #
 # Manual trigger:
 #   gh workflow run deploy.yml
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       env:
@@ -50,16 +47,14 @@ jobs:
             | tar -xz -C /usr/local/bin gitleaks
           gitleaks version
 
-      # Preflight runs the full pre-deploy gate (file presence, bindings,
-      # secrets). The git-alignment subcheck self-skips on GITHUB_ACTIONS=true
-      # — see qsc-infra/scripts/preflight-git.sh.
+      # Preflight runs the full pre-deploy gate: file presence, bindings,
+      # secrets, and local repository hygiene.
       - name: Preflight
         run: bash scripts/preflight.sh --env $DEPLOY_ENV
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-      # wrangler.toml's top-level config IS prod (no [env.prod] section);
-      # only [env.dev] is a named override. So pass --env only for dev.
+      # wrangler.toml's top-level config is prod; only dev is a named override.
       - name: Deploy to Cloudflare
         run: |
           if [ "$DEPLOY_ENV" = "dev" ]; then

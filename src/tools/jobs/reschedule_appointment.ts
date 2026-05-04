@@ -25,7 +25,7 @@ export const reschedule_appointment = defineWriteTool<Args>({
     arrivalWindowStart: z.string().describe('Arrival window start ISO 8601 datetime'),
     arrivalWindowEnd: z.string().describe('Arrival window end ISO 8601 datetime'),
   },
-  endpoint: ({ appointmentId }) => `/jpm/v2/tenant/431848990/appointments/${appointmentId}`,
+  endpoint: ({ appointmentId }) => `/jpm/v2/tenant/000000000/appointments/${appointmentId}`,
   method: 'PATCH',
   payload: ({ start, end, arrivalWindowStart, arrivalWindowEnd }) => ({
     start,

@@ -12,8 +12,8 @@ export const get_invoice: ToolDef<Args> = {
     invoiceId: z.number().int().positive().describe('ST invoice ID'),
   },
   async handler(env, args, { actor, correlation }) {
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/accounting/v2/tenant/431848990/invoices/${args.invoiceId}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/accounting/v2/tenant/000000000/invoices/${args.invoiceId}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `get_invoice failed: ${resp.status}`, { correlation });

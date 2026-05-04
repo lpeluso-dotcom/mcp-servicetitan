@@ -15,8 +15,8 @@ export const get_customer_locations: ToolDef<Args> = {
   async handler(env, args, { actor, correlation }) {
     const qs = new URLSearchParams({ customerId: String(args.customerId) });
     if (args.active !== undefined) qs.set('active', String(args.active));
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/crm/v2/tenant/431848990/locations?${qs}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/crm/v2/tenant/000000000/locations?${qs}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `get_customer_locations failed: ${resp.status}`, { correlation });

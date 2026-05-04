@@ -6,7 +6,7 @@
 // the live availability picker — required input for any "what slots are
 // available next Tuesday for BU=3" UX.
 //
-// Both endpoints are POST-as-read (taylor-ai's /api/st/read accepts POST).
+// Both endpoints are POST-as-read (servicetitan-proxy's /api/st/read accepts POST).
 // ============================================================
 import { z } from 'zod';
 import { McpError } from '../../errors';
@@ -55,8 +55,8 @@ export const st_get_capacity_slots: ToolDef<Args> = {
       body.businessUnitIds = args.businessUnitIds;
     }
 
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent('/dispatch/v2/tenant/431848990/capacity')}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent('/dispatch/v2/tenant/000000000/capacity')}`,
       {
         method: 'POST',
         headers: { ...authHeaders(env, correlation, actor), 'content-type': 'application/json' },

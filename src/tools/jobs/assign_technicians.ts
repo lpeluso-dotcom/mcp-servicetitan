@@ -25,14 +25,14 @@ export const assign_technicians: ToolDef<Args> = {
     // Show the compound operation in the dryRun payload.
     const compoundPayload = {
       steps: [
-        { call: 1, endpoint: `/jpm/v2/tenant/431848990/appointment-assignments/unassign-technicians`, method: 'POST', payload: { appointmentId } },
-        { call: 2, endpoint: `/jpm/v2/tenant/431848990/appointment-assignments/assign-technicians`, method: 'POST', payload: { appointmentId, technicianIds } },
+        { call: 1, endpoint: `/jpm/v2/tenant/000000000/appointment-assignments/unassign-technicians`, method: 'POST', payload: { appointmentId } },
+        { call: 2, endpoint: `/jpm/v2/tenant/000000000/appointment-assignments/assign-technicians`, method: 'POST', payload: { appointmentId, technicianIds } },
       ],
     };
 
     if (dryRun) {
       return gate.dryRun('assign_technicians', businessArgs, actor, correlation, compoundPayload,
-        `/jpm/v2/tenant/431848990/appointment-assignments`, 'POST');
+        `/jpm/v2/tenant/000000000/appointment-assignments`, 'POST');
     }
     if (!confirmation_token) {
       throw new McpError('validation_error', 'confirmation_token required when dryRun=false', { correlation });
@@ -40,11 +40,11 @@ export const assign_technicians: ToolDef<Args> = {
     await gate.verifyToken('assign_technicians', businessArgs, actor, confirmation_token);
 
     // Call 1: unassign all current technicians from this appointment.
-    const unassignResp = await env.TAYLOR_AI.fetch('https://taylor-ai/api/st/write', {
+    const unassignResp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-sync-key': env.MCP_SYNC_KEY, 'x-correlation-id': correlation, 'x-actor': actor },
       body: JSON.stringify({
-        endpoint: `/jpm/v2/tenant/431848990/appointment-assignments/unassign-technicians`,
+        endpoint: `/jpm/v2/tenant/000000000/appointment-assignments/unassign-technicians`,
         method: 'POST',
         payload: { appointmentId },
       }),
@@ -54,11 +54,11 @@ export const assign_technicians: ToolDef<Args> = {
     }
 
     // Call 2: assign the new technician set.
-    const assignResp = await env.TAYLOR_AI.fetch('https://taylor-ai/api/st/write', {
+    const assignResp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-sync-key': env.MCP_SYNC_KEY, 'x-correlation-id': correlation, 'x-actor': actor },
       body: JSON.stringify({
-        endpoint: `/jpm/v2/tenant/431848990/appointment-assignments/assign-technicians`,
+        endpoint: `/jpm/v2/tenant/000000000/appointment-assignments/assign-technicians`,
         method: 'POST',
         payload: { appointmentId, technicianIds },
       }),

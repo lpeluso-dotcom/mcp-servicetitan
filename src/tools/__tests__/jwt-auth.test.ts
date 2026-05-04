@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SignJWT } from 'jose';
-import { resolveRole } from '../../auth';
+import { resolveAuth, resolveRole } from '../../auth';
 
 describe('jwt-auth dual-mode', () => {
-  const secret = 'test-secret-key';
+  const secret = 'test-secret-key-long-enough';
 
   async function signToken(claims: Record<string, unknown>): Promise<string> {
     const token = new SignJWT(claims)
@@ -36,6 +36,20 @@ describe('jwt-auth dual-mode', () => {
     expect(role).toBe('admin');
   });
 
+  it('marks valid JWT requests as authenticated and uses the actor claim', async () => {
+    const token = await signToken({ sub: 'user-123', actor: 'jwt-actor', role: 'default' });
+    const env = makeEnv(secret) as any;
+    const req = makeRequest(`Bearer ${token}`);
+
+    const auth = await resolveAuth(req, env);
+    expect(auth).toMatchObject({
+      authenticated: true,
+      role: 'default',
+      actor: 'jwt-actor',
+      authMode: 'jwt',
+    });
+  });
+
   it('returns default role for valid default JWT', async () => {
     const token = await signToken({ sub: 'user-456', actor: 'user', role: 'default' });
     const env = makeEnv(secret) as any;
@@ -62,6 +76,19 @@ describe('jwt-auth dual-mode', () => {
     expect(role).toBe('default');
   });
 
+  it('does not authenticate JWTs when JWT_SECRET is missing or placeholder-like', async () => {
+    const token = await new SignJWT({ sub: 'user-123', role: 'admin' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .sign(new TextEncoder().encode('undefined'));
+    const env = makeEnv(undefined as any) as any;
+    const req = makeRequest(`Bearer ${token}`);
+
+    const auth = await resolveAuth(req, env);
+    expect(auth.authenticated).toBe(false);
+    expect(auth.role).toBe('default');
+  });
+
   it('falls back to X-Sync-Key when no JWT present', async () => {
     const env = makeEnv(secret) as any;
     const req = makeRequest(undefined, 'fallback-key');
@@ -75,12 +102,35 @@ describe('jwt-auth dual-mode', () => {
     expect(role).toBe('admin');
   });
 
+  it('authenticates X-Sync-Key clients as default without admin opt-in', async () => {
+    const env = makeEnv(secret) as any;
+    const req = makeRequest(undefined, 'fallback-key');
+    req.headers.set('x-actor', 'sync-client');
+
+    const auth = await resolveAuth(req, env);
+    expect(auth).toMatchObject({
+      authenticated: true,
+      role: 'default',
+      actor: 'sync-client',
+      authMode: 'sync-key',
+    });
+  });
+
   it('returns default when no JWT and no sync-key', async () => {
     const env = makeEnv(secret) as any;
     const req = makeRequest();
 
     const role = await resolveRole(req, env);
     expect(role).toBe('default');
+  });
+
+  it('does not authenticate when no JWT and no sync-key are present', async () => {
+    const env = makeEnv(secret) as any;
+    const req = makeRequest();
+
+    const auth = await resolveAuth(req, env);
+    expect(auth.authenticated).toBe(false);
+    expect(auth.role).toBe('default');
   });
 
   it('prefers JWT over X-Sync-Key when both present', async () => {

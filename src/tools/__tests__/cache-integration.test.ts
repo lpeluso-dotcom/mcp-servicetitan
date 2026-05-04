@@ -4,7 +4,7 @@
 //
 // Pattern: stub env.DB.prepare to track which SQL ran, fake a cache
 // hit by returning a row with a future expires_at, fake a miss by
-// returning null. Verify the tool's TAYLOR_AI fetch is called on miss
+// returning null. Verify the tool's ST_PROXY fetch is called on miss
 // and skipped on hit.
 // ============================================================
 
@@ -33,11 +33,11 @@ function makeDB(firstResults: Array<unknown>) {
 
 function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>, firstResults: Array<unknown> = []): any {
   return {
-    TAYLOR_AI: { fetch: vi.fn(fetchImpl) },
+    ST_PROXY: { fetch: vi.fn(fetchImpl) },
     MCP_SYNC_KEY: 'test-key',
     MCP_SERVICE_VERSION: '0.0.0-test',
     DB: makeDB(firstResults),
-    TAI_STATE: {},
+    PROXY_STATE: {},
     SIRO_API_TOKEN: '',
   };
 }
@@ -55,7 +55,7 @@ describe('cache integration — find_customer', () => {
     const env = makeEnv(liveOk([{ id: 1, name: 'Alice' }]));
     const result: any = await find_customer.handler(env, { name: 'Alice' }, CTX);
     expect(result.customers).toHaveLength(1);
-    expect(env.TAYLOR_AI.fetch).toHaveBeenCalledTimes(1);
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);
   });
 
   it('returns cached value on cache hit and skips ST', async () => {
@@ -63,7 +63,7 @@ describe('cache integration — find_customer', () => {
     const env = makeEnv(liveOk([{ id: 1, name: 'WRONG' }]), [cacheHitRow(cached)]);
     const result: any = await find_customer.handler(env, { name: 'Alice' }, CTX);
     expect(result.customers[0].name).toBe('CACHED');
-    expect(env.TAYLOR_AI.fetch).not.toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -72,7 +72,7 @@ describe('cache integration — get_customer', () => {
     const env = makeEnv(liveOk({ id: 42 }));
     const result: any = await get_customer.handler(env, { customerId: 42 }, CTX);
     expect(result.customer).toBeDefined();
-    expect(env.TAYLOR_AI.fetch).toHaveBeenCalledTimes(1);
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);
   });
 
   it('returns cached value on hit', async () => {
@@ -80,7 +80,7 @@ describe('cache integration — get_customer', () => {
     const env = makeEnv(liveOk({ id: 999, name: 'WRONG' }), [cacheHitRow(cached)]);
     const result: any = await get_customer.handler(env, { customerId: 42 }, CTX);
     expect(result.customer.name).toBe('CACHED');
-    expect(env.TAYLOR_AI.fetch).not.toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -89,7 +89,7 @@ describe('cache integration — list_jobs_today', () => {
     const env = makeEnv(liveOk([{ id: 1 }]));
     const result: any = await list_jobs_today.handler(env, {}, CTX);
     expect(result.jobs).toHaveLength(1);
-    expect(env.TAYLOR_AI.fetch).toHaveBeenCalledTimes(1);
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);
   });
 
   it('returns cached value on hit', async () => {
@@ -97,7 +97,7 @@ describe('cache integration — list_jobs_today', () => {
     const env = makeEnv(liveOk([{ id: 1 }]), [cacheHitRow(cached)]);
     const result: any = await list_jobs_today.handler(env, {}, CTX);
     expect(result.jobs[0]._cached).toBe(true);
-    expect(env.TAYLOR_AI.fetch).not.toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -106,7 +106,7 @@ describe('cache integration — list_service_categories', () => {
     const env = makeEnv(liveOk([{ id: 1, name: 'HVAC' }]));
     const result: any = await list_service_categories.handler(env, {}, CTX);
     expect(result.categories).toHaveLength(1);
-    expect(env.TAYLOR_AI.fetch).toHaveBeenCalledTimes(1);
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);
   });
 
   it('returns cached value on hit', async () => {
@@ -114,7 +114,7 @@ describe('cache integration — list_service_categories', () => {
     const env = makeEnv(liveOk([]), [cacheHitRow(cached)]);
     const result: any = await list_service_categories.handler(env, {}, CTX);
     expect(result.categories[0].name).toBe('CACHED');
-    expect(env.TAYLOR_AI.fetch).not.toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -123,7 +123,7 @@ describe('cache integration — list_unpaid_invoices', () => {
     const env = makeEnv(liveOk([{ id: 1 }]));
     const result: any = await list_unpaid_invoices.handler(env, {}, CTX);
     expect(result.invoices).toHaveLength(1);
-    expect(env.TAYLOR_AI.fetch).toHaveBeenCalledTimes(1);
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);
   });
 
   it('returns cached value on hit', async () => {
@@ -131,13 +131,13 @@ describe('cache integration — list_unpaid_invoices', () => {
     const env = makeEnv(liveOk([]), [cacheHitRow(cached)]);
     const result: any = await list_unpaid_invoices.handler(env, {}, CTX);
     expect(result.invoices[0].id).toBe(999);
-    expect(env.TAYLOR_AI.fetch).not.toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
   });
 });
 
 describe('cache invalidation — add_customer_note triggers cache purge', () => {
   it('purges get_customer + find_customer caches on confirmed write', async () => {
-    // The factory generates a token in dryRun; we intercept the TAYLOR_AI fetch
+    // The factory generates a token in dryRun; we intercept the ST_PROXY fetch
     // for both the dryRun echo and the live write. To test the invalidation
     // path, we go through dryRun → confirm. Easier path: skip the gate by
     // verifying via the underlying spec — but the factory doesn't expose that.

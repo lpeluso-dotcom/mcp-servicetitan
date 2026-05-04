@@ -1,7 +1,7 @@
 -- ============================================================
 -- Migration 0001 — mcp_cache
--- Shared read-through cache for QSC-internal MCP modules.
--- Lives on taylor-ai D1 (both prod ba02a8c6-... and dev 28848a36-...)
+-- Shared read-through cache for internal MCP modules.
+-- Lives on the configured ServiceTitan proxy D1.
 --
 -- Apply via:
 --   mcp__cloudflare__d1_database_query on each DB

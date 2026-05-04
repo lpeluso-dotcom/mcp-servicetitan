@@ -3,55 +3,47 @@ main = "src/index.ts"
 compatibility_date = "2026-04-12"
 compatibility_flags = ["nodejs_compat"]
 
-# Cloudflare Smart Placement — sits this worker near taylor-ai + D1
+# Cloudflare Smart Placement keeps this worker near D1 and the upstream proxy.
 placement = { mode = "smart" }
 
 [limits]
-# Per-request CPU cap. 55-tool Zod registration is non-trivial; measure + tune.
 cpu_ms = 50
 
 [observability]
 enabled = true
 
-# Analytics Engine — p50/p95/p99 latency + error-rate timeseries queryable via SQL API.
-# D1 audit_log can't scale to percentiles; this is the observability backbone.
 [[analytics_engine_datasets]]
 binding = "MCP_METRICS"
 dataset = "mcp_servicetitan_metrics"
 
-# No crons — MCP is on-demand HTTP only.
 [triggers]
 crons = []
 
-# D1 own database — mcp-servicetitan's schema (audit_log, error_log, mcp_cache, mcp_roles,
-# confirmation_tokens, endpoint_registry, mv_* composite caches). Migrated from shared
-# taylor-ai DB in F2. Taylor-ai sync tables accessed via TAYLOR_AI service binding queryD1 RPC.
+# Replace placeholder IDs with resources from your own Cloudflare account.
 [[d1_databases]]
 binding = "DB"
-database_name = "qsc-mcp-st"
-database_id = "5380b37c-132c-4f21-a294-d99b7e05e6cf"
+database_name = "mcp-servicetitan"
+database_id = "00000000-0000-0000-0000-000000000000"
 
-# Shares TAI-STATE for heartbeat keys (heartbeat:mcp-servicetitan:*)
 [[kv_namespaces]]
-binding = "TAI_STATE"
-id = "4c18d1ac623145ab86901d5fb44a022a"
+binding = "PROXY_STATE"
+id = "00000000000000000000000000000000"
 
-# Service binding — prod fetches against taylor-ai (top-level env).
-# Required: workers on the same account can't fetch each other via
-# workers.dev subdomains (Cloudflare error 1042). Service bindings
-# bypass that restriction and are also faster (no network round-trip).
+# Service binding to your own ServiceTitan proxy worker. The proxy is expected
+# to expose /api/st/read, /api/st/write, and queryD1-compatible behavior.
 [[services]]
-binding = "TAYLOR_AI"
-service = "taylor-ai"
+binding = "ST_PROXY"
+service = "your-servicetitan-proxy"
 
 [vars]
 MCP_SERVICE_VERSION = "1.2.0"
+ST_TENANT_ID = "000000000"
 
-# Secrets (via `wrangler secret put`):
-# MCP_SYNC_KEY — shared bearer between mcp-servicetitan and taylor-ai /api/st/read
-# SIRO_API_TOKEN — Siro org API token for v1 read endpoints
-# ST_WEBHOOK_SECRET — ServiceTitan webhook HMAC-SHA256 secret
-# JWT_SECRET — JWT signing secret for dual-mode auth
+# Secrets (set with `wrangler secret put`):
+# MCP_SYNC_KEY - shared bearer between mcp-servicetitan and the upstream proxy
+# SIRO_API_TOKEN - Siro org API token for v1 read endpoints
+# ST_WEBHOOK_SECRET - ServiceTitan webhook HMAC-SHA256 secret
+# JWT_SECRET - JWT signing secret for dual-mode auth
 
 [[durable_objects.bindings]]
 name = "ST_RATE_LIMITER"
@@ -65,9 +57,7 @@ class_name = "CustomerSnapshotSingleflight"
 tag = "v1"
 new_classes = ["StRateLimiter", "CustomerSnapshotSingleflight"]
 
-# ─── DEV ENVIRONMENT ─────────────────────────────────────────
-# Deploy: wrangler deploy --env dev
-# URL: mcp-servicetitan-dev.lpeluso.workers.dev
+# DEV ENVIRONMENT
 [env.dev]
 name = "mcp-servicetitan-dev"
 placement = { mode = "smart" }
@@ -80,6 +70,7 @@ cpu_ms = 50
 
 [env.dev.vars]
 MCP_SERVICE_VERSION = "1.2.0-dev"
+ST_TENANT_ID = "000000000"
 
 [[env.dev.durable_objects.bindings]]
 name = "ST_RATE_LIMITER"
@@ -99,16 +90,16 @@ dataset = "mcp_servicetitan_metrics_dev"
 
 [[env.dev.d1_databases]]
 binding = "DB"
-database_name = "qsc-mcp-st-dev"
-database_id = "74007593-70cd-462c-9a4c-75cf0771b4ee"
+database_name = "mcp-servicetitan-dev"
+database_id = "00000000-0000-0000-0000-000000000000"
 
 [[env.dev.kv_namespaces]]
-binding = "TAI_STATE"
-id = "3eb6a8dc8afb463289962b3de0836508"
+binding = "PROXY_STATE"
+id = "00000000000000000000000000000000"
 
 [[env.dev.services]]
-binding = "TAYLOR_AI"
-service = "taylor-ai-dev"
+binding = "ST_PROXY"
+service = "your-servicetitan-proxy-dev"
 
 # Dev secrets (same command, add --env dev):
 # wrangler secret put MCP_SYNC_KEY --env dev

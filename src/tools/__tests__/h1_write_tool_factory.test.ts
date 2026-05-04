@@ -52,11 +52,11 @@ function makeStatefulDB() {
 
 function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>): any {
   return {
-    TAYLOR_AI: { fetch: vi.fn(fetchImpl) },
+    ST_PROXY: { fetch: vi.fn(fetchImpl) },
     MCP_SYNC_KEY: 'test-key',
     MCP_SERVICE_VERSION: '0.0.0-test',
     DB: makeStatefulDB(),
-    TAI_STATE: {},
+    PROXY_STATE: {},
   };
 }
 
@@ -72,7 +72,7 @@ const sampleTool = defineWriteTool<{
     customerId: z.number().int().positive(),
     note: z.string().min(1),
   },
-  endpoint: ({ customerId }) => `/crm/v2/tenant/431848990/customers/${customerId}/notes`,
+  endpoint: ({ customerId }) => `/crm/v2/tenant/000000000/customers/${customerId}/notes`,
   method: 'POST',
   payload: ({ note }) => ({ note }),
   businessArgs: ({ customerId, note }) => ({ customerId, note }),
@@ -92,16 +92,16 @@ describe('defineWriteTool', () => {
     expect(sampleTool.isWrite).toBe(true);
   });
 
-  it('dryRun branch returns dryRun envelope without calling TAYLOR_AI', async () => {
+  it('dryRun branch returns dryRun envelope without calling ST_PROXY', async () => {
     const env = makeEnv(async () => {
-      throw new Error('TAYLOR_AI should not be called on dryRun');
+      throw new Error('ST_PROXY should not be called on dryRun');
     });
     const result: any = await sampleTool.handler(env, { customerId: 1, note: 'x' }, CTX);
     expect(result.dryRun).toBe(true);
     expect(result.tool).toBe('sample_write_tool');
     expect(result.confirmation_token).toMatch(/^sample_write_tool\|/);
     expect(result.expires_in_seconds).toBe(900);
-    expect(env.TAYLOR_AI.fetch).not.toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
   });
 
   it('missing confirmation_token after dryRun=false rejects with validation_error', async () => {
@@ -115,7 +115,7 @@ describe('defineWriteTool', () => {
     const env = makeEnv(async () => new Response(JSON.stringify({ ok: true, id: 99 }), { status: 200 }));
 
     const dry: any = await sampleTool.handler(env, { customerId: 1, note: 'x' }, CTX);
-    expect(env.TAYLOR_AI.fetch).not.toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
 
     const live: any = await sampleTool.handler(
       env,
@@ -126,12 +126,12 @@ describe('defineWriteTool', () => {
     expect(live.tool).toBe('sample_write_tool');
     expect(live.result).toEqual({ ok: true, id: 99 });
 
-    expect(env.TAYLOR_AI.fetch).toHaveBeenCalledTimes(1);
-    const [url, init] = env.TAYLOR_AI.fetch.mock.calls[0];
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('/api/st/write');
     expect(init.method).toBe('POST');
     const body = JSON.parse(init.body);
-    expect(body.endpoint).toBe('/crm/v2/tenant/431848990/customers/1/notes');
+    expect(body.endpoint).toBe('/crm/v2/tenant/000000000/customers/1/notes');
     expect(body.method).toBe('POST');
     expect(body.payload).toEqual({ note: 'x' });
   });

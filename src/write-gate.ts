@@ -3,7 +3,7 @@
 //
 // Two-phase API:
 //   WriteGate.dryRun(tool, args, actor, correlation, payload, …, tokenTtlMs?)
-//     → issues token + calls taylor-ai /api/st/write?dryRun=1 for echo.
+//     → issues token + calls servicetitan-proxy /api/st/write?dryRun=1 for echo.
 //   WriteGate.verifyToken(tool, args, actor, confirmation_token)
 //     → throws on invalid/expired/consumed. Caller then executes the real write.
 //
@@ -16,6 +16,7 @@
 // ============================================================
 
 import type { Env } from './env';
+import { rewriteTenantPlaceholders } from './tenant';
 
 export const DEFAULT_TOKEN_TTL_MS = 15 * 60 * 1000;
 export const MAX_TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -64,7 +65,7 @@ export class WriteGate {
   constructor(private env: Env) {}
 
   // Phase 1: issue a dryRun response with confirmation token.
-  // taylor-ai /api/st/write does not support ?dryRun=1 (would call ST for real),
+  // servicetitan-proxy /api/st/write does not support ?dryRun=1 (would call ST for real),
   // so we echo the payload locally. Zod already validated inputs; no further
   // pre-flight needed.
   //
@@ -96,7 +97,15 @@ export class WriteGate {
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).bind(tokenHash, tool, argsHash, actor, issuedAt, issuedAt + ttlMs, correlation).run();
 
-    return { dryRun: true, tool, payload, st_endpoint: stEndpoint, st_method: stMethod, confirmation_token: token, expires_in_seconds: ttlMs / 1000 };
+    return {
+      dryRun: true,
+      tool,
+      payload,
+      st_endpoint: rewriteTenantPlaceholders(this.env, stEndpoint),
+      st_method: stMethod,
+      confirmation_token: token,
+      expires_in_seconds: ttlMs / 1000,
+    };
   }
 
   // Phase 2: verify + consume token. Throws if invalid/expired/consumed/args-changed.
@@ -138,8 +147,11 @@ export class WriteGate {
     // past their per-tool window even though they're still under MAX_TOKEN_TTL_MS.
     if (Date.now() > row.expires_at) throw new Error('confirmation_token expired (per-tool TTL)');
 
-    await this.env.DB.prepare(
-      'UPDATE confirmation_tokens SET consumed_at = ? WHERE token_hash = ?'
+    const consumed = await this.env.DB.prepare(
+      'UPDATE confirmation_tokens SET consumed_at = ? WHERE token_hash = ? AND consumed_at IS NULL'
     ).bind(Date.now(), tokenHash).run();
+    if (typeof consumed.meta?.changes === 'number' && consumed.meta.changes !== 1) {
+      throw new Error('confirmation_token already used');
+    }
   }
 }

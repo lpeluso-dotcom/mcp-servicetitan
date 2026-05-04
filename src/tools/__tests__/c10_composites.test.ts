@@ -1,6 +1,6 @@
 // ============================================================
 // C10-C12 tests — L5 Composite tools (10 total)
-// Strategy: mock taylor-ai fetch for each sub-call.
+// Strategy: mock servicetitan-proxy fetch for each sub-call.
 // Key invariants:
 // - customer_snapshot fires 7 sub-calls, uses single-flight DO
 // - pricebook_health_check_services is D1-only (services fresh)
@@ -45,11 +45,11 @@ function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Respons
     }),
   };
   return {
-    TAYLOR_AI: { fetch: vi.fn(fetchImpl) },
+    ST_PROXY: { fetch: vi.fn(fetchImpl) },
     MCP_SYNC_KEY: 'test-key',
     MCP_SERVICE_VERSION: '0.0.0-test',
     DB: makeDB(),
-    TAI_STATE: {},
+    PROXY_STATE: {},
     SIRO_API_TOKEN: '',
     CUSTOMER_SNAPSHOT_FLIGHT: singleflightDO,
   };

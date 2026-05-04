@@ -16,7 +16,7 @@ export const job_closeout_report: ToolDef<Args> = {
   async handler(env, args, { actor, correlation }) {
     const { jobId } = args;
     const h = authHeaders(env, correlation, actor);
-    const tenant = '431848990';
+    const tenant = '000000000';
 
     const fanout = await gatherFetches([
       { name: 'job',          promise: stRead(env, h, `/jpm/v2/tenant/${tenant}/jobs/${jobId}`) },

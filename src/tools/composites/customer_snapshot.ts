@@ -95,7 +95,7 @@ export const customer_snapshot: ToolDef<Args> = {
 
     // 3. Fire parallel fanout (lock-holder or degraded fallback).
     const h = authHeaders(env, correlation, actor);
-    const tenant = '431848990';
+    const tenant = '000000000';
     const signal = AbortSignal.timeout(15_000);
 
     const fanout = await gatherFetches([

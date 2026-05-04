@@ -1,6 +1,6 @@
 // ============================================================
 // mcp-servicetitan — Worker entrypoint
-// F2: D1 role lookup via resolveRole (own-DB mcp_roles).
+// F2: D1 role lookup via resolveAuth (own-DB mcp_roles).
 //
 // Routing:
 //   POST /mcp          → createMcpHandler (MCP protocol)
@@ -16,11 +16,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Env } from './env';
 import { TOOLS, toolsForRole } from './tools/index';
 import { registerTool, type RequestContext } from './tool-registry';
-import { resolveRole, safeActorHeader } from './auth';
+import { resolveAuth } from './auth';
 import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
 import { endpointsHandler } from './routes/admin-endpoints';
 import { handleWebhook } from './webhook-ingest';
+import { withTenantRewrite } from './tenant';
 
 // Durable Object classes must be exported from the worker entry point.
 export { StRateLimiter } from './durable/st-rate-limiter';
@@ -37,7 +38,7 @@ app.get('/health', (c) => {
     toolCount: TOOLS.length,
     tools: TOOLS.map((t) => t.name),
     transport: 'agents-sdk createMcpHandler (Streamable HTTP)',
-    taylorAi: 'service-binding',
+    stProxy: 'service-binding',
   });
 });
 
@@ -143,12 +144,31 @@ const CORS_OPTIONS = {
   maxAge: 86400,
 };
 
+function unauthorizedMcpResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      error: 'unauthorized',
+      message: 'POST /mcp requires Authorization: Bearer <JWT> or X-Sync-Key.',
+    }),
+    {
+      status: 401,
+      headers: {
+        'content-type': 'application/json',
+        'access-control-allow-origin': CORS_OPTIONS.origin,
+        'access-control-allow-methods': CORS_OPTIONS.methods,
+        'access-control-allow-headers': CORS_OPTIONS.headers,
+        'access-control-expose-headers': CORS_OPTIONS.exposeHeaders,
+      },
+    }
+  );
+}
+
 // ─── Per-request McpServer build ──────────────────────────────
 // Required per CF docs: post-SDK-1.26.0 a shared global McpServer is a
 // known security vuln (cross-request state bleed). Build one per request.
 function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: RequestContext): McpServer {
   const server = new McpServer({
-    name: 'qsc-mcp-servicetitan',
+    name: 'mcp-servicetitan',
     version: env.MCP_SERVICE_VERSION,
   });
   const visible = toolsForRole(reqCtx.role);
@@ -173,16 +193,26 @@ export default {
       return app.fetch(request, env, execCtx);
     }
 
-    // MCP dispatch: resolve role via D1 mcp_roles (F2), build per-request server.
-    const actor = safeActorHeader(request.headers.get('x-actor'));
-    const role = await resolveRole(request, env);
-    const reqCtx: RequestContext = { actor, role };
+    if (!url.pathname.startsWith('/mcp')) {
+      return app.fetch(request, env, execCtx);
+    }
 
-    const server = buildServer(env, execCtx, reqCtx);
+    // MCP dispatch: require a valid client credential, resolve role, and build
+    // a fresh per-request server. OPTIONS must pass through for CORS preflight.
+    const auth = request.method === 'OPTIONS'
+      ? { authenticated: true, role: 'default' as const, actor: 'preflight' }
+      : await resolveAuth(request, env);
+    if (!auth.authenticated) {
+      return unauthorizedMcpResponse();
+    }
+    const reqCtx: RequestContext = { actor: auth.actor, role: auth.role };
+    const runtimeEnv = withTenantRewrite(env);
+
+    const server = buildServer(runtimeEnv, execCtx, reqCtx);
     const handler = createMcpHandler(server, {
       route: '/mcp',
       corsOptions: CORS_OPTIONS,
     });
-    return handler(request, env, execCtx);
+    return handler(request, runtimeEnv, execCtx);
   },
 };

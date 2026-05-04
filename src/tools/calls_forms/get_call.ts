@@ -12,8 +12,8 @@ export const get_call: ToolDef<Args> = {
     callId: z.number().int().positive().describe('ST call ID'),
   },
   async handler(env, args, { actor, correlation }) {
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/telecom/v3/tenant/431848990/calls/${args.callId}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/telecom/v3/tenant/000000000/calls/${args.callId}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `get_call failed: ${resp.status}`, { correlation });

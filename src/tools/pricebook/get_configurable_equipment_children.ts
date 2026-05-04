@@ -19,8 +19,8 @@ export const get_configurable_equipment_children: ToolDef<Args> = {
     qs.set('parentEquipmentId', String(args.parentEquipmentId));
     if (args.active !== undefined) qs.set('active', String(args.active));
 
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/431848990/equipment?${qs}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/000000000/equipment?${qs}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `get_configurable_equipment_children failed: ${resp.status}`, { correlation });

@@ -21,7 +21,7 @@ export const create_call_with_campaign = defineWriteTool<Args>({
     campaignId: z.number().int().positive().describe('ST campaign ID to attribute the call to'),
     leadCallId: z.string().optional().describe('External call ID from your call tracking system (e.g. Lace)'),
   },
-  endpoint: () => `/telecom/v3/tenant/431848990/calls`,
+  endpoint: () => `/telecom/v3/tenant/000000000/calls`,
   method: 'POST',
   payload: ({ customerId, campaignId, leadCallId }) => {
     const body: Record<string, unknown> = { customerId, campaignId };

@@ -41,8 +41,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$ENV_NAME" in
-  dev)  URL="https://mcp-servicetitan-dev.lpeluso.workers.dev/mcp" ;;
-  prod) URL="https://mcp-servicetitan.lpeluso.workers.dev/mcp" ;;
+  dev)  URL="${MCP_URL:-https://mcp-servicetitan-dev.example.workers.dev/mcp}" ;;
+  prod) URL="${MCP_URL:-https://mcp-servicetitan.example.workers.dev/mcp}" ;;
 esac
 
 [[ -z "${MCP_SYNC_KEY:-}" ]] && { echo "❌ MCP_SYNC_KEY not set"; exit 2; }

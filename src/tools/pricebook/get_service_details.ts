@@ -12,8 +12,8 @@ export const get_service_details: ToolDef<Args> = {
     serviceId: z.number().int().positive().describe('ST pricebook service ID'),
   },
   async handler(env, args, { actor, correlation }) {
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/431848990/services/${args.serviceId}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/000000000/services/${args.serviceId}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `get_service_details failed: ${resp.status}`, { correlation });

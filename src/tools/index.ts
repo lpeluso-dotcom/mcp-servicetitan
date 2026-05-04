@@ -99,7 +99,7 @@ export interface ToolContext {
  * Used by /admin/endpoints to inventory ST coverage and detect gaps.
  *
  * source semantics:
- *   - 'live'     — every call hits live ST via taylor-ai /api/st/read|write
+ *   - 'live'     — every call hits live ST via servicetitan-proxy /api/st/read|write
  *   - 'd1'       — D1-first read via read-router (live ST only on miss)
  *   - 'mixed'    — composite/fanout that touches both D1 and live ST
  *   - 'computed' — synthetic/derived (no single canonical ST endpoint)

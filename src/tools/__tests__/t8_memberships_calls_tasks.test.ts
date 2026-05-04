@@ -31,11 +31,11 @@ function makeDB(firstResult: unknown = null) {
 
 function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>): any {
   return {
-    TAYLOR_AI: { fetch: vi.fn(fetchImpl) },
+    ST_PROXY: { fetch: vi.fn(fetchImpl) },
     MCP_SYNC_KEY: 'test-key',
     MCP_SERVICE_VERSION: '0.0.0-test',
     DB: makeDB(),
-    TAI_STATE: {},
+    PROXY_STATE: {},
     SIRO_API_TOKEN: '',
   };
 }
@@ -68,7 +68,7 @@ describe('list_memberships_active', () => {
   it('calls memberships endpoint with status=Active (singular, not statuses)', async () => {
     const env = makeEnv(liveOk([]));
     await list_memberships_active.handler(env, {}, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('membership');
     expect(url).toContain('status%3DActive');
   });
@@ -136,7 +136,7 @@ describe('list_memberships_expiring', () => {
   it('uses to field filter (not renewedById)', async () => {
     const env = makeEnv(liveOk([]));
     await list_memberships_expiring.handler(env, { windowDays: 30 }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     // Must use expirationDateBefore / activeThrough — NOT renewedById
     expect(url).not.toContain('renewedById');
     expect(url).toContain('membership');
@@ -190,7 +190,7 @@ describe('get_call', () => {
   it('calls telecom calls endpoint with ID', async () => {
     const env = makeEnv(liveOkDirect({ id: 88 }));
     await get_call.handler(env, { callId: 88 }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('88');
     expect(url).toContain('call');
   });
@@ -252,7 +252,7 @@ describe('list_open_tasks', () => {
   it('uses /taskmanagement/ path (no hyphen)', async () => {
     const env = makeEnv(liveOk([]));
     await list_open_tasks.handler(env, {}, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('taskmanagement');
     expect(url).not.toContain('task-management');
   });
@@ -260,7 +260,7 @@ describe('list_open_tasks', () => {
   it('filters to open tasks only', async () => {
     const env = makeEnv(liveOk([]));
     await list_open_tasks.handler(env, {}, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('task');
   });
 });

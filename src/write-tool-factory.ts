@@ -7,7 +7,7 @@
 //   2. Branch dryRun=true → gate.dryRun(...) envelope.
 //   3. Validate confirmation_token presence.
 //   4. gate.verifyToken(...) — HMAC + expiry + consume.
-//   5. POST /api/st/write via the TAYLOR_AI service binding.
+//   5. POST /api/st/write via the ST_PROXY service binding.
 //
 // The factory takes a small per-tool spec (endpoint, method, payload
 // shape, businessArgs key) and emits a ToolDef that does the rest.
@@ -42,7 +42,7 @@ export interface WriteToolSpec<TArgs> {
   validate?: (args: TArgs) => void;
   /** Build the ST endpoint path from the parsed args. */
   endpoint: (args: TArgs) => string;
-  /** HTTP method on the ST endpoint (passed through to taylor-ai write proxy). */
+  /** HTTP method on the ST endpoint (passed through to servicetitan-proxy write proxy). */
   method: StWriteMethod;
   /** Build the request body payload from the parsed args. */
   payload: (args: TArgs) => unknown;
@@ -132,7 +132,7 @@ export function defineWriteTool<TArgs extends BaseWriteArgs>(
       }
       await gate.verifyToken(spec.name, businessArgs, actor, confirmation_token);
 
-      const resp = await env.TAYLOR_AI.fetch('https://taylor-ai/api/st/write', {
+      const resp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',

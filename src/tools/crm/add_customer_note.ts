@@ -17,7 +17,7 @@ export const add_customer_note = defineWriteTool<Args>({
     customerId: z.number().int().positive().describe('ST customer ID'),
     note: z.string().min(1).describe('Note text to append'),
   },
-  endpoint: ({ customerId }) => `/crm/v2/tenant/431848990/customers/${customerId}/notes`,
+  endpoint: ({ customerId }) => `/crm/v2/tenant/000000000/customers/${customerId}/notes`,
   method: 'POST',
   payload: ({ note }) => ({ note }),
   businessArgs: ({ customerId, note }) => ({ customerId, note }),

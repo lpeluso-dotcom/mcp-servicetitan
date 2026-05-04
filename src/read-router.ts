@@ -1,8 +1,8 @@
 // ============================================================
 // read-router.ts — D1-first read dispatcher for mcp-servicetitan.
 //
-// The 25 nightly-synced tables live in taylor-ai's D1. This router
-// calls taylor-ai's queryD1 RPC (read-only, parameterized SELECT only)
+// The 25 nightly-synced tables live in servicetitan-proxy's D1. This router
+// calls servicetitan-proxy's queryD1 RPC (read-only, parameterized SELECT only)
 // for those tables, and falls back to live ST via /api/st/read when:
 //   (a) the table is not in the nightly-synced set, OR
 //   (b) the table's updated_at is stale by more than 48h.
@@ -15,7 +15,7 @@ import type { Env } from './env';
 import { authHeaders, newCorrelationId } from './auth';
 import { familyFromEndpoint, checkRateLimit, reportBackoff } from './rate-limit-guard';
 
-// Tables nightly-synced into taylor-ai D1 (verified 2026-04-22).
+// Tables nightly-synced into servicetitan-proxy D1 (verified 2026-04-22).
 // pb_services is FRESH. pb_materials (23d stale) + pb_equipment (37d stale)
 // are excluded until §13#1 sync fix ships — callers for those go live.
 export const D1_TABLES = new Set([
@@ -39,8 +39,8 @@ export interface ReadResult {
 export class ReadRouter {
   constructor(private env: Env) {}
 
-  // Query taylor-ai's queryD1 RPC for a nightly-synced table.
-  // taylor-ai exposes a read-only parameterized SELECT proxy; it rejects
+  // Query servicetitan-proxy's queryD1 RPC for a nightly-synced table.
+  // servicetitan-proxy exposes a read-only parameterized SELECT proxy; it rejects
   // INSERT/UPDATE/DELETE/DROP/ALTER on the provider side. We also enforce
   // SELECT-only here so a future caller can't ship a mutation across the
   // RPC boundary by accident — defense in depth.
@@ -48,7 +48,7 @@ export class ReadRouter {
     if (!/^\s*SELECT\b/i.test(sql)) {
       throw new Error('queryD1: only SELECT statements are permitted from this client');
     }
-    const resp = await this.env.TAYLOR_AI.fetch('https://taylor-ai/internal/query-d1', {
+    const resp = await this.env.ST_PROXY.fetch('https://servicetitan-proxy/internal/query-d1', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -64,7 +64,7 @@ export class ReadRouter {
     return resp.json<{ rows: unknown[]; updatedAt: number | null }>();
   }
 
-  // Query live ST via taylor-ai's /api/st/read proxy.
+  // Query live ST via servicetitan-proxy's /api/st/read proxy.
   async queryLive(endpoint: string, query: Record<string, unknown> = {}): Promise<{ rows: unknown[] }> {
     const family = familyFromEndpoint(endpoint);
     await checkRateLimit(this.env, family);
@@ -72,9 +72,9 @@ export class ReadRouter {
     const qs = new URLSearchParams(
       Object.fromEntries(Object.entries(query).map(([k, v]) => [k, String(v)]))
     ).toString();
-    const url = `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(endpoint)}${qs ? '&' + qs : ''}`;
+    const url = `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(endpoint)}${qs ? '&' + qs : ''}`;
 
-    const resp = await this.env.TAYLOR_AI.fetch(url, {
+    const resp = await this.env.ST_PROXY.fetch(url, {
       headers: authHeaders(this.env, newCorrelationId(), 'mcp-servicetitan-read-router'),
     });
 

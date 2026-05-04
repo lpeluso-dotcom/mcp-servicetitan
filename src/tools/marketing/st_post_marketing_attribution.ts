@@ -100,7 +100,7 @@ export const st_post_marketing_attribution = defineWriteTool<Args>({
         break;
     }
   },
-  endpoint: ({ kind }) => `/marketingads/v2/tenant/431848990/${KIND_PATH[kind]}`,
+  endpoint: ({ kind }) => `/marketingads/v2/tenant/000000000/${KIND_PATH[kind]}`,
   method: 'POST',
   payload: ({
     kind,

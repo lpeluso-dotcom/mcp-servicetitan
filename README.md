@@ -1,8 +1,10 @@
 # mcp-servicetitan
 
-QSC ServiceTitan MCP server — a Cloudflare Worker that exposes 66 ST tools (65 default-role + 1 admin-only gateway) to Claude Code via the Model Context Protocol. Tools span reads, write-gated mutations, L5 composites, and raw API access.
+ServiceTitan MCP server - a Cloudflare Worker that exposes 66 ST tools (65 default-role + 1 admin-only gateway) to Claude Code via the Model Context Protocol. Tools span reads, write-gated mutations, L5 composites, and raw API access.
 
-**Status:** v1.2.0 — see [CHANGELOG.md](CHANGELOG.md) for full history. 66 tools (65 default + 1 admin), 244 tests, CI auto-deploy on push to main. Partner brief at [qsc-infra/docs/mcp/ST-PARTNER-BRIEF.md](https://github.com/lpeluso-dotcom/qsc-infra/blob/main/docs/mcp/ST-PARTNER-BRIEF.md). Integration guide at [docs/INTEGRATION.md](docs/INTEGRATION.md).
+**Status:** v1.2.0 - see [CHANGELOG.md](CHANGELOG.md) for full history. 66 tools (65 default + 1 admin), CI validation for PRs/pushes, manual Cloudflare deploy workflow. Integration guide at [docs/INTEGRATION.md](docs/INTEGRATION.md).
+
+**Publication note:** this is a single-tenant ServiceTitan integration. Share the code for review, not a live production MCP endpoint or credentials. `POST /mcp` requires either `Authorization: Bearer <JWT>` or `X-Sync-Key`; `/health` is the only intentionally public runtime endpoint.
 
 ## Architecture
 
@@ -11,8 +13,8 @@ Claude Code  ──Streamable HTTP/MCP──▶  mcp-servicetitan (Cloudflare Wo
                                               │
                           ┌───────────────────┼─────────────────────┐
                           ▼                   ▼                     ▼
-                    own D1 qsc-mcp-st   service binding         Durable Objects:
-                    audit_log, error_log,    TAYLOR_AI       StRateLimiter (per ST family)
+                    own D1 mcp-servicetitan   service binding         Durable Objects:
+                    audit_log, error_log,    ST_PROXY       StRateLimiter (per ST family)
                     confirmation_tokens,        │            CustomerSnapshotSingleflight
                     mcp_roles, mcp_cache,       ▼            (per customerId fanout guard)
                     endpoint_registry,    /api/st/read
@@ -20,13 +22,13 @@ Claude Code  ──Streamable HTTP/MCP──▶  mcp-servicetitan (Cloudflare Wo
                                                 │
                                                 ▼
                                         ServiceTitan API
-                                        (OAuth from taylor-ai)
+                                        (OAuth from servicetitan-proxy)
 ```
 
 - **Transport:** Cloudflare Agents SDK `createMcpHandler` (Streamable HTTP) — replaces the v0.1 custom JSON-RPC handler.
 - **Per-request McpServer:** required post-SDK-1.26.0 — shared instances are a known cross-request state-bleed vuln.
-- **Auth at the boundary:** every tool call writes to `audit_log` (surface=`servicetitan`), errors to `error_log`. `/admin/*` routes guarded by `X-Sync-Key`.
-- **Read path:** `ReadRouter` is implemented as future infrastructure but not yet wired into individual tools — every read currently goes live via `/api/st/read` proxy on taylor-ai. D1-first migration is a v1.2 question.
+- **Auth at the boundary:** `POST /mcp` requires a valid JWT or `X-Sync-Key`; every tool call writes to `audit_log` (surface=`servicetitan`), errors to `error_log`. `/admin/*` routes are guarded by `X-Sync-Key`.
+- **Read path:** `ReadRouter` is implemented as future infrastructure but not yet wired into individual tools — every read currently goes live via `/api/st/read` proxy on servicetitan-proxy. D1-first migration is a v1.2 question.
 - **Write path:** two-phase `WriteGate` — `dryRun: true` returns a 15-min HMAC `confirmation_token`; `dryRun: false` + valid token executes via `/api/st/write` proxy. `confirmation_token` reuse, expiry, HMAC tampering, and tool-name forging are all enforced.
 - **Composites:** L5 fanout tools (`customer_snapshot`, `job_closeout_report`) use `gatherFetches` for explicit per-call partial-failure attribution. No silent empty arrays.
 
@@ -56,7 +58,7 @@ Claude Code  ──Streamable HTTP/MCP──▶  mcp-servicetitan (Cloudflare Wo
 Removed in v1.1 D4: `marketing_roas` (stub blocked on three external MCPs that don't exist; cleaner-stub > stub-that-lies).
 
 Deferred:
-- `pricebook_health_check_materials_equipment` — needs taylor-ai nightly sync of `pb_materials` + `pb_equipment` (cross-repo).
+- `pricebook_health_check_materials_equipment` — needs servicetitan-proxy nightly sync of `pb_materials` + `pb_equipment` (cross-repo).
 - `/webhooks/st` HMAC ingest — no producer yet.
 - D1-first read routing for the 25 single-fetch tools — v1.3 mechanical pass.
 - 3 D1-first ST endpoints from the 2026-04-28 gap audit — deferred to Phase 2 until corresponding D1 tables land.
@@ -65,7 +67,7 @@ Deferred:
 
 | Path | Auth | Purpose |
 |---|---|---|
-| `POST /mcp` | none | MCP Streamable HTTP — Inspector + Claude Code |
+| `POST /mcp` | JWT or `X-Sync-Key` | MCP Streamable HTTP — Inspector + Claude Code |
 | `GET /health` | none | Liveness + tool count + version |
 | `GET /admin/roles` | `X-Sync-Key` | List role assignments from `mcp_roles` |
 | `GET /admin/metrics` | `X-Sync-Key` | Multi-period call stats: `period_1h`, `period_24h`, `period_7d` with `error_rate_pct`; `by_actor_24h`; `write_gate_24h` dryRun/confirm/expired counts; top 10 tools + errors |
@@ -92,8 +94,10 @@ bash scripts/inspector-smoke.sh dev   # or prod
 ```
 
 Required wrangler secrets (set once via `wrangler secret put`):
-- `MCP_SYNC_KEY` — bearer for taylor-ai write proxy + `/admin/*` routes
+- `MCP_SYNC_KEY` — bearer for servicetitan-proxy write proxy + `/admin/*` routes
 - `SIRO_API_TOKEN` — Siro org API token
+- `ST_WEBHOOK_SECRET` — ServiceTitan webhook HMAC secret
+- `JWT_SECRET` — HS256 signing secret for JWT client auth; use at least 32 random bytes
 
 ## Verifying telemetry
 
@@ -101,10 +105,10 @@ After every cut, the operator should run:
 
 ```bash
 curl -H "X-Sync-Key: $MCP_SYNC_KEY" \
-     https://mcp-servicetitan.lpeluso.workers.dev/admin/health/audit | jq .
+     https://mcp-servicetitan.example.workers.dev/admin/health/audit | jq .
 ```
 
-Expected on a healthy worker: `is_silent: false`, `last_audit_age_ms` near zero. If `is_silent: true`, the `_hint` field points at the most likely cause — a stale URL in `~/.claude.json` is the v1.0 cutover trap. See [docs/mcp/v1.1/RUNBOOK.md](docs/mcp/v1.1/RUNBOOK.md) for the diagnostic procedure.
+Expected on a healthy worker: `is_silent: false`, `last_audit_age_ms` near zero. If `is_silent: true`, the `_hint` field points at the most likely cause, usually a stale client URL or an idle deployment.
 
 ## Observability
 
@@ -113,7 +117,7 @@ Every tool call writes a row to D1 `audit_log` via `ctx.waitUntil` (non-blocking
 **Admin metrics endpoint:**
 ```bash
 curl -s -H "X-Sync-Key: $MCP_SYNC_KEY" \
-  https://mcp-servicetitan.lpeluso.workers.dev/admin/metrics | jq '{
+  https://mcp-servicetitan.example.workers.dev/admin/metrics | jq '{
     "1h": .period_1h,
     "24h": .period_24h,
     "error_rate_pct": .period_24h.error_rate_pct,
@@ -139,36 +143,31 @@ User-level (`~/.claude.json`):
   "mcpServers": {
     "mcp-servicetitan": {
       "type": "http",
-      "url": "https://mcp-servicetitan.lpeluso.workers.dev/mcp",
+      "url": "https://mcp-servicetitan.example.workers.dev/mcp",
       "headers": { "X-Sync-Key": "<MCP_SYNC_KEY>" }
     }
   }
 }
 ```
 
-Workspace (`qsc-infra/.mcp.json`) takes precedence inside that workspace.
+Workspace-level MCP config takes precedence inside that workspace.
+
+JWT clients can send `Authorization: Bearer <JWT>` instead. The JWT must be signed with `JWT_SECRET`, include a non-empty `sub`, and may include `actor` plus `role: "default"` or `role: "admin"`.
 
 ## Environment
 
 | Binding | Type | Purpose |
 |---|---|---|
-| `DB` | D1 | own database `qsc-mcp-st` (prod `5380b37c-…`) / `qsc-mcp-st-dev` (`74007593-…`) |
-| `TAYLOR_AI` | service | taylor-ai worker, used for `/api/st/read`, `/api/st/write`, `queryD1` RPC |
-| `TAI_STATE` | KV | shared with taylor-ai for heartbeat keys |
+| `DB` | D1 | own database for audit logs, errors, confirmation tokens, roles, cache data, and endpoint registry |
+| `ST_PROXY` | service | upstream ServiceTitan proxy worker, used for `/api/st/read`, `/api/st/write`, and `queryD1` RPC |
+| `PROXY_STATE` | KV | optional shared heartbeat namespace |
 | `MCP_METRICS` | Analytics Engine | p50/p95/p99 + error-rate timeseries |
 | `ST_RATE_LIMITER` | Durable Object | per-ST-family adaptive rate limiter (Retry-After-aware) |
 | `CUSTOMER_SNAPSHOT_FLIGHT` | Durable Object | per-customerId fanout guard for `customer_snapshot` |
 
-## Source-of-truth design
+## Public Deployment Notes
 
-- Architecture: `qsc-infra/docs/mcp/ST-MCP-DESIGN.md`
-- v1.1 plan: `~/.claude/plans/bubbly-napping-muffin.md`
-- Runbook: [docs/mcp/v1.1/RUNBOOK.md](docs/mcp/v1.1/RUNBOOK.md)
-- Protected modules: `qsc-infra/.claude/rules/protected-modules.md`
-- Latest drift log: `qsc-infra/docs/audit/DRIFT-2026-04-23.md`
-
-## See also
-
-- `qsc-infra/docs/mcp/TEMPLATE.md`
-- `qsc-infra/docs/ST-API.md`
-- taylor-ai `src/gate-st.js` (OAuth, write proxy)
+- Replace placeholder Cloudflare resource IDs in `wrangler.toml`.
+- Set `ST_TENANT_ID` to your own ServiceTitan tenant ID before deploying.
+- Point the `ST_PROXY` service binding at your own upstream ServiceTitan proxy.
+- Keep production URLs and credentials out of public issues and pull requests.

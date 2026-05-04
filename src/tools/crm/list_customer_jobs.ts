@@ -19,8 +19,8 @@ export const list_customer_jobs: ToolDef<Args> = {
     if (args.status) qs.set('jobStatus', args.status);
     if (args.page) qs.set('page', String(args.page));
     if (args.pageSize) qs.set('pageSize', String(args.pageSize));
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/431848990/jobs?${qs}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/000000000/jobs?${qs}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `list_customer_jobs failed: ${resp.status}`, { correlation });

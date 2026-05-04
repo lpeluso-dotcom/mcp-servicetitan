@@ -12,8 +12,8 @@ export const get_estimate: ToolDef<Args> = {
     estimateId: z.number().int().positive().describe('ST estimate ID'),
   },
   async handler(env, args, { actor, correlation }) {
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/sales/v2/tenant/431848990/estimates/${args.estimateId}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/sales/v2/tenant/000000000/estimates/${args.estimateId}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `get_estimate failed: ${resp.status}`, { correlation });

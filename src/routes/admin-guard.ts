@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import type { Env } from '../env';
-import { timingSafeEqual } from '../auth';
+import { hasValidSyncKey } from '../auth';
 
 /**
  * Returns null if the request carries the correct X-Sync-Key, otherwise a
@@ -14,8 +14,7 @@ import { timingSafeEqual } from '../auth';
  * webhook ingest routes. Uses constant-time comparison to match auth.ts.
  */
 export async function requireAdminKey(c: Context<{ Bindings: Env }>): Promise<Response | null> {
-  const provided = c.req.header('x-sync-key') ?? '';
-  if (!(await timingSafeEqual(provided, c.env.MCP_SYNC_KEY))) {
+  if (!(await hasValidSyncKey(c.req.raw, c.env))) {
     return c.json({ error: 'unauthorized' }, 401);
   }
   return null;

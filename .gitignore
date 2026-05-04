@@ -1,9 +1,11 @@
 node_modules/
+.npm-cache/
 .worktrees/
 .wrangler/
 .dev.vars
 .env
 .env.*
+!.env.example
 dist/
 *.log
 .DS_Store

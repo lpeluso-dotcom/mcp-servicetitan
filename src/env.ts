@@ -5,15 +5,16 @@
 export interface Env {
   // Bindings
   DB: D1Database;
-  TAI_STATE: KVNamespace;
-  TAYLOR_AI: Fetcher; // Service binding — fetches against the taylor-ai worker
+  PROXY_STATE: KVNamespace;
+  ST_PROXY: Fetcher; // Service binding — fetches against the servicetitan-proxy worker
   MCP_METRICS: AnalyticsEngineDataset; // p50/p95/p99 + error-rate timeseries
 
   // Vars
   MCP_SERVICE_VERSION: string;
+  ST_TENANT_ID: string;
 
   // Secrets
-  MCP_SYNC_KEY: string; // For taylor-ai /api/st/read proxy
+  MCP_SYNC_KEY: string; // For servicetitan-proxy /api/st/read proxy
   SIRO_API_TOKEN: string; // Siro org API token (Bearer auth)
   ST_WEBHOOK_SECRET: string; // ServiceTitan webhook HMAC-SHA256 secret
   JWT_SECRET: string; // JWT signing secret for dual-mode auth

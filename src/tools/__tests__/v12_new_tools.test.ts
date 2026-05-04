@@ -69,22 +69,22 @@ function makeDB(firstResult: unknown = null) {
 
 function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>): any {
   return {
-    TAYLOR_AI: { fetch: vi.fn(fetchImpl) },
+    ST_PROXY: { fetch: vi.fn(fetchImpl) },
     MCP_SYNC_KEY: 'test-key',
     MCP_SERVICE_VERSION: '0.0.0-test',
     DB: makeDB(),
-    TAI_STATE: {},
+    PROXY_STATE: {},
     SIRO_API_TOKEN: '',
   };
 }
 
 function makeWriteEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>): any {
   return {
-    TAYLOR_AI: { fetch: vi.fn(fetchImpl) },
+    ST_PROXY: { fetch: vi.fn(fetchImpl) },
     MCP_SYNC_KEY: 'test-key',
     MCP_SERVICE_VERSION: '0.0.0-test',
     DB: makeStatefulDB(),
-    TAI_STATE: {},
+    PROXY_STATE: {},
     SIRO_API_TOKEN: '',
   };
 }
@@ -123,7 +123,7 @@ describe('st_get_capacity_slots', () => {
     );
     expect(result.slots).toBeDefined();
     expect(result._source).toBe('live');
-    const [url, init] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url, init] = env.ST_PROXY.fetch.mock.calls[0];
     expect(init.method).toBe('POST');
     // Must hit /capacity, NOT /capacity-planning (gotcha: T7 get_capacity is the planning one).
     expect(url).toContain('%2Fcapacity');
@@ -142,7 +142,7 @@ describe('st_get_capacity_slots', () => {
       },
       CTX
     );
-    const [, init] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [, init] = env.ST_PROXY.fetch.mock.calls[0];
     const body = JSON.parse(init.body);
     expect(body.businessUnitIds).toEqual([3, 7]);
     expect(body.skillBasedAvailability).toBe(true);
@@ -162,7 +162,7 @@ describe('st_run_report', () => {
     const env = makeEnv(liveOkWrapped([{ id: 'cat1' }]));
     const result: any = await st_run_report.handler(env, { mode: 'list_categories' }, CTX);
     expect(result.mode).toBe('list_categories');
-    const [url, init] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url, init] = env.ST_PROXY.fetch.mock.calls[0];
     // Default fetch (no init) is GET.
     expect(init === undefined || init.method === undefined || init.method === 'GET').toBe(true);
     expect(url).toContain('report-categories');
@@ -173,13 +173,13 @@ describe('st_run_report', () => {
     await expect(
       st_run_report.handler(env, { mode: 'list_reports' }, CTX)
     ).rejects.toMatchObject({ code: 'validation_error' });
-    expect(env.TAYLOR_AI.fetch).not.toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
   });
 
   it('mode=list_reports hits the per-category reports endpoint', async () => {
     const env = makeEnv(liveOkWrapped([{ id: 'r1' }]));
     await st_run_report.handler(env, { mode: 'list_reports', categoryId: 'cat1' }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('report-category%2Fcat1%2Freports');
   });
 
@@ -204,7 +204,7 @@ describe('st_run_report', () => {
       CTX
     );
     expect(result.mode).toBe('describe_report');
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('report-category%2Fcat1%2Freports%2Fr1');
   });
 
@@ -228,7 +228,7 @@ describe('st_run_report', () => {
       },
       CTX
     );
-    const [url, init] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url, init] = env.ST_PROXY.fetch.mock.calls[0];
     expect(init.method).toBe('POST');
     expect(url).toContain('reports%2Fr1%2Fdata');
     const body = JSON.parse(init.body);
@@ -304,7 +304,7 @@ describe('st_post_marketing_attribution', () => {
       CTX
     );
     expect(dry.dryRun).toBe(true);
-    expect(env.TAYLOR_AI.fetch).not.toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
 
     const live: any = await st_post_marketing_attribution.handler(
       env,
@@ -318,11 +318,11 @@ describe('st_post_marketing_attribution', () => {
       CTX
     );
     expect(live.dryRun).toBe(false);
-    expect(env.TAYLOR_AI.fetch).toHaveBeenCalledTimes(1);
-    const [url, init] = env.TAYLOR_AI.fetch.mock.calls[0];
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('/api/st/write');
     const body = JSON.parse(init.body);
-    expect(body.endpoint).toBe('/marketingads/v2/tenant/431848990/job-attributions');
+    expect(body.endpoint).toBe('/marketingads/v2/tenant/000000000/job-attributions');
     expect(body.method).toBe('POST');
     expect(body.payload.jobId).toBe(42);
     expect(body.payload.attributionData.utmCampaign).toBe('spring-2026');
@@ -346,9 +346,9 @@ describe('st_post_marketing_attribution', () => {
       },
       CTX
     );
-    const [, init] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [, init] = env.ST_PROXY.fetch.mock.calls[0];
     const body = JSON.parse(init.body);
-    expect(body.endpoint).toBe('/marketingads/v2/tenant/431848990/web-booking-attributions');
+    expect(body.endpoint).toBe('/marketingads/v2/tenant/000000000/web-booking-attributions');
     expect(body.payload.bookingId).toBe(9);
   });
 
@@ -370,9 +370,9 @@ describe('st_post_marketing_attribution', () => {
       },
       CTX
     );
-    const [, init] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [, init] = env.ST_PROXY.fetch.mock.calls[0];
     const body = JSON.parse(init.body);
-    expect(body.endpoint).toBe('/marketingads/v2/tenant/431848990/web-lead-form-attributions');
+    expect(body.endpoint).toBe('/marketingads/v2/tenant/000000000/web-lead-form-attributions');
     expect(body.payload.leadFormId).toBe(5);
   });
 
@@ -398,9 +398,9 @@ describe('st_post_marketing_attribution', () => {
       },
       CTX
     );
-    const [, init] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [, init] = env.ST_PROXY.fetch.mock.calls[0];
     const body = JSON.parse(init.body);
-    expect(body.endpoint).toBe('/marketingads/v2/tenant/431848990/external-call-attributions');
+    expect(body.endpoint).toBe('/marketingads/v2/tenant/000000000/external-call-attributions');
     expect(body.payload.externalCallId).toBe('lace-123');
   });
 });
