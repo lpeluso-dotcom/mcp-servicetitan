@@ -27,8 +27,8 @@ export const list_service_categories: ToolDef<Args> = {
       qs.set('page', String(page));
       qs.set('pageSize', String(pageSize));
 
-      const resp = await env.TAYLOR_AI.fetch(
-        `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/431848990/categories?${qs}`)}`,
+      const resp = await env.ST_PROXY.fetch(
+        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/000000000/categories?${qs}`)}`,
         { headers: authHeaders(env, correlation, actor) }
       );
       if (!resp.ok) throw new McpError('upstream_error', `list_service_categories failed: ${resp.status}`, { correlation });

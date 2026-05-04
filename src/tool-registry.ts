@@ -29,7 +29,7 @@ export interface RequestContext {
 // Field-name patterns that indicate values likely to contain PII or free-text
 // customer data. We redact at audit-log time (defense-in-depth), so a future
 // reader endpoint or D1 export can't surface raw customer phone/email/address
-// even though access to qsc-mcp-st is already gated behind MCP_SYNC_KEY.
+// even though access to mcp-servicetitan is already gated behind MCP_SYNC_KEY.
 // Keep this list in sync with src/__tests__/security_redact.test.ts.
 const REDACT_FIELD_PATTERNS: readonly RegExp[] = [
   /^phone/i, /Phone$/i,

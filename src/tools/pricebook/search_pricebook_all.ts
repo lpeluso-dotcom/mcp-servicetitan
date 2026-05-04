@@ -1,7 +1,7 @@
 // ============================================================
 // search_pricebook_all — Dawn-tier pricebook lookup
 //
-// Adapter for QSC's Miss Dawn (Retell agent). Replaces the
+// Adapter for a Retell agent. Replaces the
 // `validate_pricebook` HTTP tool on sentry-quinn that searches all
 // three pb_* D1 tables (services, materials, equipment) in one shot.
 //
@@ -9,7 +9,7 @@
 // search_materials tools: Dawn's flow expects a single merged result
 // across the three pricebook surfaces, ranked by price desc, with a
 // `type` discriminator on each row. The typed tools split per surface
-// and hit live ST. This tool reads D1 directly via taylor-ai's
+// and hit live ST. This tool reads D1 directly via servicetitan-proxy's
 // /api/sql/read proxy — much faster (sub-100ms typical) for voice.
 // ============================================================
 import { z } from 'zod';
@@ -76,7 +76,7 @@ export function codeVariants(raw: string): string[] {
 }
 
 async function queryD1(env: Env, sql: string, params: unknown[]): Promise<PricebookItem[]> {
-  const resp = await env.TAYLOR_AI.fetch('https://taylor-ai/api/sql/read', {
+  const resp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/sql/read', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Sync-Key': env.MCP_SYNC_KEY },
     body: JSON.stringify({ sql, params }),
@@ -90,7 +90,7 @@ async function queryD1(env: Env, sql: string, params: unknown[]): Promise<Priceb
 export const search_pricebook_all: ToolDef<Args> = {
   name: 'search_pricebook_all',
   description:
-    'Search QSC pricebook across services, materials, and equipment in one call. Use code for an exact lookup, or query for fuzzy name/description/category matching. Returns up to 8 items ranked by price descending, each with a type discriminator (service/material/equipment) and member_price where applicable. Source: D1 (pb_services / pb_materials / pb_equipment via taylor-ai). Tuned for QSC Miss Dawn (sub-100ms typical).',
+    'Search ServiceTitan pricebook across services, materials, and equipment in one call. Use code for an exact lookup, or query for fuzzy name/description/category matching. Returns up to 8 items ranked by price descending, each with a type discriminator (service/material/equipment) and member_price where applicable. Source: D1 (pb_services / pb_materials / pb_equipment via servicetitan-proxy). Tuned for voice-agent usage (sub-100ms typical).',
   zodSchema: {
     code: z.string().optional().describe('Exact pricebook code (e.g. "HUM-120"). Wins over query if both provided.'),
     query: z.string().min(1).max(100).optional().describe('Free-text term to fuzzy-match against name, description, or category. Tech slang should be translated by the caller (e.g. "Navien" → "tankless water heater").'),

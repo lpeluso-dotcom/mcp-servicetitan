@@ -26,7 +26,7 @@ export const update_estimate_status = defineWriteTool<Args>({
       throw new Error('soldBy technicianId is required when status=Sold');
     }
   },
-  endpoint: ({ estimateId }) => `/sales/v2/tenant/431848990/estimates/${estimateId}`,
+  endpoint: ({ estimateId }) => `/sales/v2/tenant/000000000/estimates/${estimateId}`,
   method: 'PATCH',
   payload: ({ status, soldBy }) => {
     const body: Record<string, unknown> = { status };

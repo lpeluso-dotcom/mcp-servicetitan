@@ -7,7 +7,7 @@
 //   dryRun=false: WriteGate.verifyToken → durableWrite.
 //
 // Unit tests:
-//   - dryRun path: mock DB.prepare (for INSERT) + TAYLOR_AI (for echo).
+//   - dryRun path: mock DB.prepare (for INSERT) + ST_PROXY (for echo).
 //   - Real-write path: use durableWrite directly (still exported).
 //   - Validation errors: no DB/fetch calls needed.
 // ============================================================
@@ -34,11 +34,11 @@ function makeDB(firstResult: unknown = null) {
 
 function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>, db = makeDB()): any {
   return {
-    TAYLOR_AI: { fetch: vi.fn(fetchImpl) },
+    ST_PROXY: { fetch: vi.fn(fetchImpl) },
     MCP_SYNC_KEY: 'test-sync-key',
     MCP_SERVICE_VERSION: '0.0.0-test',
     DB: db,
-    TAI_STATE: {},
+    PROXY_STATE: {},
     SIRO_API_TOKEN: '',
   };
 }
@@ -85,7 +85,7 @@ describe('st_patch_service', () => {
     const env = makeEnv(async () => new Response('', { status: 200 }));
     await expect(st_patch_service.handler(env, { id: 12345 }, CTX))
       .rejects.toMatchObject({ code: 'validation_error' });
-    expect(env.TAYLOR_AI.fetch).not.toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
   });
 
   it('throws validation_error when dryRun=false with no token', async () => {
@@ -103,8 +103,8 @@ describe('st_patch_service', () => {
       target: { id: '12345', type: 'service' }, payload: { cost: 75 }, correlation: CORRELATION,
     });
     expect(result).toEqual(output);
-    const [url, init] = env.TAYLOR_AI.fetch.mock.calls[0];
-    expect(url).toBe('https://taylor-ai/api/st/durable-write');
+    const [url, init] = env.ST_PROXY.fetch.mock.calls[0];
+    expect(url).toBe('https://servicetitan-proxy/api/st/durable-write');
     const body = JSON.parse(init.body);
     expect(body.operation).toBe('service.patch');
     expect(body.target).toEqual({ id: '12345', type: 'service' });
@@ -165,7 +165,7 @@ describe('st_create_service', () => {
       actor: CTX.actor, operation: 'service.create',
       target: { id: '0', type: 'service' }, payload: { name: 'New Service', categoryId: 5 }, correlation: CORRELATION,
     });
-    const body = JSON.parse(env.TAYLOR_AI.fetch.mock.calls[0][1].body);
+    const body = JSON.parse(env.ST_PROXY.fetch.mock.calls[0][1].body);
     expect(body.operation).toBe('service.create');
     expect(body.payload).toMatchObject({ name: 'New Service', categoryId: 5 });
     expect(body.target.id).toBe('0');
@@ -194,7 +194,7 @@ describe('st_patch_material', () => {
       actor: CTX.actor, operation: 'material.patch',
       target: { id: '777', type: 'material' }, payload: { cost: 12.5 }, correlation: CORRELATION,
     });
-    const body = JSON.parse(env.TAYLOR_AI.fetch.mock.calls[0][1].body);
+    const body = JSON.parse(env.ST_PROXY.fetch.mock.calls[0][1].body);
     expect(body.operation).toBe('material.patch');
     expect(body.target).toEqual({ id: '777', type: 'material' });
     expect(body.payload).toEqual({ cost: 12.5 });
@@ -217,7 +217,7 @@ describe('st_create_material', () => {
       actor: CTX.actor, operation: 'material.create',
       target: { id: '0', type: 'material' }, payload: { name: 'R-22', categoryId: 10 }, correlation: CORRELATION,
     });
-    const body = JSON.parse(env.TAYLOR_AI.fetch.mock.calls[0][1].body);
+    const body = JSON.parse(env.ST_PROXY.fetch.mock.calls[0][1].body);
     expect(body.operation).toBe('material.create');
     expect(body.payload).toMatchObject({ name: 'R-22', categoryId: 10 });
   });

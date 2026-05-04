@@ -1,6 +1,6 @@
 // ============================================================
 // T6 tests — Pricebook (5) + Invoicing (4)
-// Strategy: mock env.TAYLOR_AI.fetch + env.DB.
+// Strategy: mock env.ST_PROXY.fetch + env.DB.
 // Tests cover: schema validation, correct ST endpoint, dryRun
 // for writes, and T8/T9 catalog corrections.
 // ============================================================
@@ -31,11 +31,11 @@ function makeDB(firstResult: unknown = null) {
 
 function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>): any {
   return {
-    TAYLOR_AI: { fetch: vi.fn(fetchImpl) },
+    ST_PROXY: { fetch: vi.fn(fetchImpl) },
     MCP_SYNC_KEY: 'test-key',
     MCP_SERVICE_VERSION: '0.0.0-test',
     DB: makeDB(),
-    TAI_STATE: {},
+    PROXY_STATE: {},
     SIRO_API_TOKEN: '',
   };
 }
@@ -64,14 +64,14 @@ describe('search_pricebook_services', () => {
   it('passes name filter to endpoint', async () => {
     const env = makeEnv(liveOk([{ id: 1, name: 'AC Tune-Up' }]));
     await search_pricebook_services.handler(env, { name: 'AC' }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('AC');
   });
 
   it('passes categoryId filter', async () => {
     const env = makeEnv(liveOk([]));
     await search_pricebook_services.handler(env, { categoryId: 42 }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('42');
   });
 
@@ -103,7 +103,7 @@ describe('get_service_details', () => {
   it('calls pricebook services endpoint with correct ID', async () => {
     const env = makeEnv(liveOk({ id: 55 }));
     await get_service_details.handler(env, { serviceId: 55 }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('55');
   });
 });
@@ -118,7 +118,7 @@ describe('search_materials', () => {
   it('passes name filter', async () => {
     const env = makeEnv(liveOk([]));
     await search_materials.handler(env, { name: 'R-22' }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('R-22');
   });
 
@@ -144,7 +144,7 @@ describe('get_configurable_equipment_children', () => {
   it('calls equipment endpoint with correct parent ID', async () => {
     const env = makeEnv(liveOk([]));
     await get_configurable_equipment_children.handler(env, { parentEquipmentId: 99 }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('equipment');
   });
 });
@@ -159,7 +159,7 @@ describe('list_service_categories', () => {
   it('calls pricebook service categories endpoint (not materials categories)', async () => {
     const env = makeEnv(liveOk([]));
     await list_service_categories.handler(env, {}, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('pricebook');
     expect(url).toContain('categor');
     expect(url).not.toContain('materials');
@@ -183,7 +183,7 @@ describe('get_invoice', () => {
   it('calls accounting invoices endpoint with ID', async () => {
     const env = makeEnv(liveOk({ id: 200 }));
     await get_invoice.handler(env, { invoiceId: 200 }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('200');
     expect(url).toContain('invoice');
   });
@@ -205,7 +205,7 @@ describe('list_invoices_job', () => {
   it('calls invoices endpoint with jobId filter', async () => {
     const env = makeEnv(liveOk([]));
     await list_invoices_job.handler(env, { jobId: 123 }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('123');
   });
 });
@@ -229,7 +229,7 @@ describe('get_invoice_balance', () => {
   it('calls invoices endpoint (T9: not /payments/)', async () => {
     const env = makeEnv(liveOk({ id: 200, balance: 0 }));
     await get_invoice_balance.handler(env, { invoiceId: 200 }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('invoice');
     expect(url).not.toContain('payment');
   });
@@ -251,7 +251,7 @@ describe('list_unpaid_invoices', () => {
   it('filters to unpaid invoices only', async () => {
     const env = makeEnv(liveOk([]));
     await list_unpaid_invoices.handler(env, {}, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     // ST uses "outstanding" balance filter — endpoint must filter non-zero balance
     expect(url).toContain('invoice');
   });

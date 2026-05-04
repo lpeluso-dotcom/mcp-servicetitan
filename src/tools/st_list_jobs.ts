@@ -10,7 +10,7 @@ import { cacheGet } from '../cache';
 import { McpError, mapUpstreamStatus } from '../errors';
 import type { ToolDef } from './index';
 
-const TENANT_ID = '431848990';
+const TENANT_ID = '000000000';
 const NAMESPACE = 'servicetitan:jobs';
 const CACHE_TTL_SEC = 0;
 
@@ -49,8 +49,8 @@ export const st_list_jobs: ToolDef<Args> = {
     const cacheKey = qs.toString();
 
     return cacheGet(env, NAMESPACE, cacheKey, CACHE_TTL_SEC, async () => {
-      const url = `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
-      const resp = await env.TAYLOR_AI.fetch(url, { headers: authHeaders(env, correlation, actor) });
+      const url = `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
+      const resp = await env.ST_PROXY.fetch(url, { headers: authHeaders(env, correlation, actor) });
       if (!resp.ok) {
         const body = await resp.text().catch(() => '');
         throw new McpError(mapUpstreamStatus(resp.status), `ST list_jobs ${resp.status}: ${body.slice(0, 200)}`, { correlation });

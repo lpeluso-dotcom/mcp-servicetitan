@@ -13,8 +13,8 @@ export const get_job_appointments: ToolDef<Args> = {
   },
   async handler(env, args, { actor, correlation }) {
     const qs = new URLSearchParams({ jobId: String(args.jobId) });
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/431848990/appointments?${qs}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/000000000/appointments?${qs}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `get_job_appointments failed: ${resp.status}`, { correlation });

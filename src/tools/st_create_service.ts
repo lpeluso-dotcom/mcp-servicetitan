@@ -27,7 +27,7 @@ export const st_create_service: ToolDef<Args> = {
   description:
     'Create a new ServiceTitan pricebook service. ' +
     'dryRun=true (default) validates and returns a confirmation_token — call again with dryRun=false + token to write. ' +
-    'QSC uses dynamic pricing (useStaticPrice=false) — do NOT set price unless this is a static-price service.',
+    'This deployment uses dynamic pricing (useStaticPrice=false) — do NOT set price unless this is a static-price service.',
   isWrite: true,
   zodSchema: {
     name: z.string().min(1).describe('Display name for the service'),
@@ -36,7 +36,7 @@ export const st_create_service: ToolDef<Args> = {
     description: z.string().optional().describe('Service description shown on invoices'),
     cost: z.number().optional().describe('Internal cost'),
     price: z.number().optional().describe('Static price. Only set when useStaticPrice=true.'),
-    useStaticPrice: z.boolean().optional().describe('true = static price; false = dynamic markup (QSC default)'),
+    useStaticPrice: z.boolean().optional().describe('true = static price; false = dynamic markup (deployment default)'),
     active: z.boolean().optional().describe('Whether active in pricebook (default true)'),
     dryRun: z.boolean().default(true).describe('true (default) = preview + token; false = execute write'),
     confirmation_token: z.string().optional().describe('Token from prior dryRun=true call, required when dryRun=false'),
@@ -46,7 +46,7 @@ export const st_create_service: ToolDef<Args> = {
     const gate = new WriteGate(env);
 
     if (dryRun) {
-      return gate.dryRun('st_create_service', payload, actor, correlation, payload, '/pricebook/v2/tenant/431848990/services', 'POST', 5 * 60 * 1000);
+      return gate.dryRun('st_create_service', payload, actor, correlation, payload, '/pricebook/v2/tenant/000000000/services', 'POST', 5 * 60 * 1000);
     }
     if (!confirmation_token) {
       throw new McpError('validation_error', 'confirmation_token required when dryRun=false', { correlation });

@@ -2,16 +2,16 @@
 // st-path-builder.ts — Central ST API path + body normalizer.
 //
 // Applies all four memory-known corrections before any call reaches
-// taylor-ai. Used by BOTH L4 tool handlers and the st_call escape hatch.
+// servicetitan-proxy. Used by BOTH L4 tool handlers and the st_call escape hatch.
 //
 // Corrections:
 //   1. /task-management/ → /taskmanagement/  (ST uses no hyphen)
-//   2. Auto-inject /tenant/431848990/        (callers don't have to memorize the tenant ID)
+//   2. Auto-inject /tenant/000000000/        (public placeholder; runtime rewrites via ST_TENANT_ID)
 //   3. On equipment PATCH bodies: isConfigurable → isConfigurableEquipment
 //   4. On pricebook write bodies: useStaticPrice → useStaticPrices (plural)
 // ============================================================
 
-const TENANT_ID = '431848990';
+const TENANT_ID = '000000000';
 
 // Pattern matching the various ST API prefixes that precede the tenant segment.
 // Examples: /crm/v2/tenant/..., /jpm/v2/tenant/..., /pricebook/v2/tenant/...
@@ -33,7 +33,7 @@ export function normalizePath(rawPath: string): string {
   // Correction 2: inject tenant ID if missing.
   // Matches paths like /jpm/v2/ that are missing the tenant segment.
   if (!TENANT_RE.test(path)) {
-    // Find the API prefix (e.g. /jpm/v2/) and insert /tenant/431848990/ after it.
+    // Find the API prefix (e.g. /jpm/v2/) and insert the public tenant placeholder after it.
     path = path.replace(/^(\/[a-z]+\/v\d+\/)/, `$1tenant/${TENANT_ID}/`);
   }
 

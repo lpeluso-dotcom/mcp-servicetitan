@@ -144,7 +144,7 @@ describe('safeContext', () => {
 describe('safeActorHeader', () => {
   it('passes valid actors through unchanged', () => {
     expect(safeActorHeader('claude-code')).toBe('claude-code');
-    expect(safeActorHeader('lpeluso')).toBe('lpeluso');
+    expect(safeActorHeader('test_actor')).toBe('test_actor');
     expect(safeActorHeader('retell:agent_042204c3bac')).toBe('retell:agent_042204c3bac');
     expect(safeActorHeader('Service.Account_v2')).toBe('Service.Account_v2');
   });

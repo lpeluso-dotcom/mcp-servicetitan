@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { McpError } from '../errors';
 import { WriteGate } from '../write-gate';
 import { normalizePath, normalizeBody } from '../st-path-builder';
+import { rewriteTenantPlaceholders } from '../tenant';
 import type { ToolDef } from './index';
 
 // ── Tool ─────────────────────────────────────────────────────
@@ -56,8 +57,8 @@ export const st_call: ToolDef<Args> = {
         for (const [k, v] of Object.entries(query)) qs.set(k, String(v));
         endpointPath += `?${qs}`;
       }
-      const resp = await env.TAYLOR_AI.fetch(
-        `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(endpointPath)}`,
+      const resp = await env.ST_PROXY.fetch(
+        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(endpointPath)}`,
         {
           headers: {
             'x-sync-key': env.MCP_SYNC_KEY,
@@ -67,7 +68,7 @@ export const st_call: ToolDef<Args> = {
         }
       );
       if (!resp.ok) throw new McpError('upstream_error', `st_call GET failed: ${resp.status}`, { correlation });
-      return { result: await resp.json(), _path: path, method };
+      return { result: await resp.json(), _path: rewriteTenantPlaceholders(env, path), method };
     }
 
     // ── Non-GET: route through WriteGate ────────────────────
@@ -84,7 +85,7 @@ export const st_call: ToolDef<Args> = {
     }
     await gate.verifyToken('st_call', businessArgs, actor, confirmation_token);
 
-    const resp = await env.TAYLOR_AI.fetch('https://taylor-ai/api/st/write', {
+    const resp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

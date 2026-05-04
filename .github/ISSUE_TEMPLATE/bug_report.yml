@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a reproducible non-security bug.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include secrets, access tokens, raw customer PII, or live ServiceTitan payloads. If this is security-sensitive, use the private reporting path in SECURITY.md instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Use sanitized IDs and synthetic payloads.
+      placeholder: |
+        1. Configure a local/dev worker with placeholder secrets.
+        2. Call ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Node, Wrangler, client, and deployment target.
+    validations:
+      required: false

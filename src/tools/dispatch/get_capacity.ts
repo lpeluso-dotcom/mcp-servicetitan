@@ -34,8 +34,8 @@ export const get_capacity: ToolDef<Args> = {
       skillBasedAvailability: args.skillBasedAvailability ?? false,
     };
 
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent('/dispatch/v2/tenant/431848990/capacity-planning')}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent('/dispatch/v2/tenant/000000000/capacity-planning')}`,
       {
         method: 'POST',
         headers: { ...authHeaders(env, correlation, actor), 'content-type': 'application/json' },

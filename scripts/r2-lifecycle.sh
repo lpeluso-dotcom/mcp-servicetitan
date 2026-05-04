@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Idempotent applier for qsc-mcp-webhook-archive lifecycle rules.
+# Idempotent applier for mcp-servicetitan-webhook-archive lifecycle rules.
 # Run manually — lifecycle config cannot live in wrangler.toml.
 # Requires wrangler CLI with R2 permissions.
 set -euo pipefail
 
-BUCKET="qsc-mcp-webhook-archive"
+BUCKET="mcp-servicetitan-webhook-archive"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Applying R2 lifecycle rules to ${BUCKET}..."

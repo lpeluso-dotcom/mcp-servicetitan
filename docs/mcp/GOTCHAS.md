@@ -9,9 +9,7 @@ belong here.
 
 - Each gotcha is a tested-true correction or quirk that bit us.
 - Update when you discover a new one. **Date each entry** (YYYY-MM-DD).
-- For the canonical do/don't list, see `/home/taylor/qsc-infra/.claude/rules/servicetitan.md`.
-- For the rolling API reference (full endpoint catalog with QSC notes), see
-  `/home/taylor/qsc-infra/docs/ST-API.md`.
+- Keep deployment-specific API notes, operating rules, and endpoint catalogs outside this public repository.
 - The MCP server inventories its declared `stEndpoint` descriptors at
   `GET /admin/endpoints` (X-Sync-Key gated). Use that to confirm a tool is
   actually wired to the path you expect.
@@ -27,7 +25,7 @@ fifth correction that should be central.
 - `isConfigurable` → `isConfigurableEquipment` (equipment PATCH bodies).
 - `useStaticPrice` → `useStaticPrices` (pricebook write bodies — plural).
 - Tenant ID auto-injected for any `/<api>/v<n>/` path missing the
-  `/tenant/{id}/` segment. Callers don't have to memorize 431848990.
+  `/tenant/{id}/` segment. Callers do not provide tenant IDs; the public placeholder is rewritten at runtime from `ST_TENANT_ID`.
 
 ## Per-domain quirks
 
@@ -39,7 +37,7 @@ fifth correction that should be central.
   - `/capacity` returns bookable slots (used by `st_get_capacity_slots`).
   - Confusing them silently returns the wrong shape — there is no schema
     validation upstream. (audit 2026-04-28)
-- Both must use HTTP POST. `taylor-ai`'s `/api/st/read` accepts POST bodies
+- Both must use HTTP POST. `servicetitan-proxy`'s `/api/st/read` accepts POST bodies
   for exactly this kind of "read with a complex filter" endpoint.
 - `list_technicians_available` accepts an `availabilityDate` query — the
   field is named differently in the response (`technicianAvailability[]`).
@@ -112,7 +110,7 @@ fifth correction that should be central.
 
 - `pb_services`, `pb_materials`, `pb_equipment`, `pb_discounts_and_fees`,
   `pb_membership_types`, `pb_membership_discounts`, `pb_recurring_service_types`
-  are all D1-synced as of 2026-04-28 (taylor-ai nightly).
+  are all D1-synced as of 2026-04-28 (servicetitan-proxy nightly).
 - Bulk endpoints: `POST /pricebook/v2/.../pricebook` (literal name —
   yes, the path repeats `pricebook`) for create; `PATCH` same for update.
   Singular `/services/{id}` and `/materials/{id}` exist for per-record

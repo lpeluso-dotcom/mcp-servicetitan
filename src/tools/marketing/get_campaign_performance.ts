@@ -19,8 +19,8 @@ export const get_campaign_performance: ToolDef<Args> = {
     if (args.from) qs.set('from', args.from);
     if (args.to) qs.set('to', args.to);
 
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/marketing/v2/tenant/431848990/campaigns/${args.campaignId}/costs?${qs}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/marketing/v2/tenant/000000000/campaigns/${args.campaignId}/costs?${qs}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `get_campaign_performance failed: ${resp.status}`, { correlation });

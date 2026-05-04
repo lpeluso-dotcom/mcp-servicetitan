@@ -1,8 +1,8 @@
 // ============================================================
 // obs.ts — Observability helpers for mcp-servicetitan
-// Writes audit_log / error_log rows to env.DB (own-D1 qsc-mcp-st,
-// migrated off taylor-ai's shared DB in v1.0 F2). Heartbeat keys
-// land in TAI_STATE KV. Patterns ported from taylor-ai/src/obs.js.
+// Writes audit_log / error_log rows to env.DB (own-D1 mcp-servicetitan,
+// migrated off servicetitan-proxy's shared DB in v1.0 F2). Heartbeat keys
+// land in PROXY_STATE KV. Patterns ported from servicetitan-proxy/src/obs.js.
 //
 // Safety:
 //  - Never throws. Logger failures are swallowed and console.error'd
@@ -162,9 +162,9 @@ export async function heartbeat(
   state: HeartbeatState = {}
 ): Promise<void> {
   try {
-    if (!env.TAI_STATE) return;
+    if (!env.PROXY_STATE) return;
     const key = `heartbeat:${source}`;
-    const existingRaw = await env.TAI_STATE.get(key);
+    const existingRaw = await env.PROXY_STATE.get(key);
     const existing = existingRaw ? JSON.parse(existingRaw) : {};
     const now = Date.now();
     const ok = state.ok !== false;
@@ -174,7 +174,7 @@ export async function heartbeat(
       consecutive_errors: ok ? 0 : (existing.consecutive_errors ?? 0) + 1,
       extra: state.extra ?? existing.extra ?? null,
     };
-    await env.TAI_STATE.put(key, JSON.stringify(next));
+    await env.PROXY_STATE.put(key, JSON.stringify(next));
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error(`[obs.heartbeat] ${source} failed: ${(e as Error).message}`);

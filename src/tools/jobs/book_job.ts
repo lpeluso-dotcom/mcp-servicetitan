@@ -33,7 +33,7 @@ export const book_job = defineWriteTool<Args>({
     summary: z.string().optional().describe('Job summary / customer notes'),
     tagTypeIds: z.array(z.number().int().positive()).optional().describe('Tag type IDs to apply'),
   },
-  endpoint: () => `/jpm/v2/tenant/431848990/jobs`,
+  endpoint: () => `/jpm/v2/tenant/000000000/jobs`,
   method: 'POST',
   payload: (args) => {
     const { dryRun: _dr, confirmation_token: _ct, ...rest } = args;

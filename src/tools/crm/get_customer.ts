@@ -14,8 +14,8 @@ export const get_customer: ToolDef<Args> = {
   },
   async handler(env, args, { actor, correlation }) {
     return cacheGet(env, 'servicetitan:get_customer', String(args.customerId), 60, async () => {
-      const resp = await env.TAYLOR_AI.fetch(
-        `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/crm/v2/tenant/431848990/customers/${args.customerId}`)}`,
+      const resp = await env.ST_PROXY.fetch(
+        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/crm/v2/tenant/000000000/customers/${args.customerId}`)}`,
         { headers: authHeaders(env, correlation, actor) }
       );
       if (!resp.ok) throw new McpError('upstream_error', `get_customer failed: ${resp.status}`, { correlation });

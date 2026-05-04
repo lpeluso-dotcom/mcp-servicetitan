@@ -1,12 +1,12 @@
 # mcp-servicetitan v1.1 — Operator Runbook
 
-Quick-reference for the most common diagnostic and recovery procedures. Source code in `/home/taylor/work/mcp-servicetitan`. Prod URL: `https://mcp-servicetitan.lpeluso.workers.dev`. Dev URL: `https://mcp-servicetitan-dev.lpeluso.workers.dev`.
+Quick-reference for the most common diagnostic and recovery procedures. Source code in `<repo>`. Prod URL: `https://mcp-servicetitan.example.workers.dev`. Dev URL: `https://mcp-servicetitan-dev.example.workers.dev`.
 
 ## 1. "Is mcp-servicetitan healthy?"
 
 ```bash
 # Liveness + tool count
-curl https://mcp-servicetitan.lpeluso.workers.dev/health | jq '{ok, version, toolCount}'
+curl https://mcp-servicetitan.example.workers.dev/health | jq '{ok, version, toolCount}'
 ```
 
 Expected: `{ok: true, version: "1.0.0", toolCount: 62}`. If `toolCount` differs, registry has drifted.
@@ -20,13 +20,13 @@ The most common false alarm. **Before diagnosing the wiring**, check the active 
 jq '.mcpServers["mcp-servicetitan"].url' ~/.claude.json
 ```
 
-If it's `mcp-servicetitan-dev.lpeluso.workers.dev`, prod will look silent because nothing is calling it. Same key, different worker — flip the URL or accept that prod is intentionally idle.
+If it's `mcp-servicetitan-dev.example.workers.dev`, prod will look silent because nothing is calling it. Same key, different worker — flip the URL or accept that prod is intentionally idle.
 
 After the URL check, hit the probe:
 
 ```bash
 curl -H "X-Sync-Key: $MCP_SYNC_KEY" \
-  https://mcp-servicetitan.lpeluso.workers.dev/admin/health/audit | jq .
+  https://mcp-servicetitan.example.workers.dev/admin/health/audit | jq .
 ```
 
 The `_hint` field will repeat this advice when `is_silent: true`.
@@ -37,14 +37,14 @@ If the URL is correct **and** Claude Code has been making calls **and** the prob
 
 ```bash
 curl -H "X-Sync-Key: $MCP_SYNC_KEY" \
-  https://mcp-servicetitan.lpeluso.workers.dev/admin/metrics | jq .
+  https://mcp-servicetitan.example.workers.dev/admin/metrics | jq .
 ```
 
 Returns `{period_1h: {calls, errors, avg_latency_ms}, top_tools_24h, errors_1h}`. p50/p95/p99 lives in the Cloudflare Analytics Engine dashboard (`mcp_servicetitan_metrics` dataset).
 
 ## 4. "Inspect a specific failure"
 
-D1 query against `qsc-mcp-st` (prod id `5380b37c-132c-4f21-a294-d99b7e05e6cf`):
+D1 query against your configured `DB` binding:
 
 ```sql
 -- Latest 20 errors
@@ -71,7 +71,7 @@ Three checks: `tools/list >= 60`, `st_list_customers` round-trip, `add_customer_
 The wiring is in [src/tool-registry.ts:55-104](../../../src/tool-registry.ts#L55-L104). It writes one `audit_log` row per tool call (status `ok`/`error`/`partial`), one `error_log` row on error, one heartbeat per call. Every fire-and-forget via `execCtx.waitUntil`.
 
 Diagnostic order:
-1. **Bindings:** `npx wrangler deploy --env dev --dry-run` lists effective bindings — confirm `DB → qsc-mcp-st-dev` and `DB → qsc-mcp-st` for prod.
+1. **Bindings:** `npx wrangler deploy --env dev --dry-run` lists effective bindings — confirm `DB → mcp-servicetitan-dev` and `DB → mcp-servicetitan` for prod.
 2. **Force a synthetic call:** `bash scripts/inspector-smoke.sh dev`. Each smoke run produces 3 audit rows.
 3. **Query D1 for those rows** — see §4. If the smoke ran but no rows, either the binding is wrong or `obs.audit` is throwing silently (it swallows + console.errors). Check Cloudflare Workers Logs.
 
@@ -100,7 +100,7 @@ Per-cut version IDs were:
 
 ## 8. "I need to handle a Make-scenario regression"
 
-Make scenario `4670072` (`[DEPRECATED] ST API Writer`) was the legacy ST writer before mcp-servicetitan + taylor-ai `/api/st/write`. Per plan, it's marked for manual pause-and-rename in the Make UI but has not been deleted. If a regression in the new write path forces a fallback:
+Make scenario `4670072` (`[DEPRECATED] ST API Writer`) was the legacy ST writer before mcp-servicetitan + servicetitan-proxy `/api/st/write`. Per plan, it's marked for manual pause-and-rename in the Make UI but has not been deleted. If a regression in the new write path forces a fallback:
 
 1. Pause + verify the dryRun-token path is fully broken (run inspector-smoke.sh — test #3 confirms the dryRun envelope).
 2. Check `error_log` for the failing tool's recent entries (§4).
@@ -148,8 +148,4 @@ Don't inline the `c.req.header('x-sync-key') !== c.env.MCP_SYNC_KEY` check — t
 
 ## Reference
 
-- Source-of-truth design: [qsc-infra/docs/mcp/ST-MCP-DESIGN.md](../../../../qsc-infra/docs/mcp/ST-MCP-DESIGN.md)
-- v1.1 plan: `~/.claude/plans/bubbly-napping-muffin.md`
-- Latest drift log: [qsc-infra/docs/audit/DRIFT-2026-04-23.md](../../../../qsc-infra/docs/audit/DRIFT-2026-04-23.md)
-- Protected modules: [qsc-infra/.claude/rules/protected-modules.md](../../../../qsc-infra/.claude/rules/protected-modules.md)
-- ServiceTitan rules: [qsc-infra/.claude/rules/servicetitan.md](../../../../qsc-infra/.claude/rules/servicetitan.md)
+Keep deployment-specific runbooks, drift logs, and private ServiceTitan operating notes outside the public repository.

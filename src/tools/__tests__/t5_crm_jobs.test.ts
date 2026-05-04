@@ -1,6 +1,6 @@
 // ============================================================
 // T5 tests — CRM (6) + Jobs & Appointments (8)
-// Strategy: mock env.TAYLOR_AI.fetch + env.DB.
+// Strategy: mock env.ST_PROXY.fetch + env.DB.
 // Tests cover: schema validation, correct ST endpoint/method, dryRun
 // default for writes, and key catalog corrections (T1–T7 in plan).
 // ============================================================
@@ -35,11 +35,11 @@ function makeDB(firstResult: unknown = null) {
 
 function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>): any {
   return {
-    TAYLOR_AI: { fetch: vi.fn(fetchImpl) },
+    ST_PROXY: { fetch: vi.fn(fetchImpl) },
     MCP_SYNC_KEY: 'test-key',
     MCP_SERVICE_VERSION: '0.0.0-test',
     DB: makeDB(),
-    TAI_STATE: {},
+    PROXY_STATE: {},
     SIRO_API_TOKEN: '',
   };
 }
@@ -58,11 +58,11 @@ function dryRunFetch() {
 // ── CRM ──────────────────────────────────────────────────────
 
 describe('find_customer', () => {
-  it('calls taylor-ai with name param and returns data', async () => {
+  it('calls servicetitan-proxy with name param and returns data', async () => {
     const env = makeEnv(liveOk([{ id: 1, name: 'Alice' }]));
     const result: any = await find_customer.handler(env, { name: 'Alice' }, CTX);
     expect(result.customers).toBeDefined();
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('customers');
   });
 
@@ -77,7 +77,7 @@ describe('get_customer', () => {
     const env = makeEnv(liveOk({ id: 42 }));
     const result: any = await get_customer.handler(env, { customerId: 42 }, CTX);
     expect(result.customer).toBeDefined();
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('42');
   });
 });
@@ -103,7 +103,7 @@ describe('get_customer_membership', () => {
     const env = makeEnv(liveOk([{ id: 1, type: 'Gold' }]));
     const result: any = await get_customer_membership.handler(env, { customerId: 5 }, CTX);
     expect(result.memberships).toBeDefined();
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('memberships');
   });
 });
@@ -134,7 +134,7 @@ describe('get_job', () => {
     const env = makeEnv(liveOk({ id: 123, status: 'InProgress' }));
     const result: any = await get_job.handler(env, { jobId: 123 }, CTX);
     expect(result.job).toBeDefined();
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('123');
   });
 });

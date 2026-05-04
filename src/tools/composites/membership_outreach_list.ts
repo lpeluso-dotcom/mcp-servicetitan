@@ -18,7 +18,7 @@ export const membership_outreach_list: ToolDef<Args> = {
     const { segment, businessUnitId } = args;
     const now = new Date();
     const h = authHeaders(env, correlation, actor);
-    const tenant = '431848990';
+    const tenant = '000000000';
 
     const qs = new URLSearchParams();
     if (businessUnitId) qs.set('businessUnitIds', String(businessUnitId));
@@ -37,8 +37,8 @@ export const membership_outreach_list: ToolDef<Args> = {
       qs.set('activeThroughOnOrAfter', ninetyDaysAgo.toISOString());
     }
 
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/memberships/v2/tenant/${tenant}/memberships?${qs}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/memberships/v2/tenant/${tenant}/memberships?${qs}`)}`,
       { headers: h }
     );
     if (!resp.ok) throw new McpError('upstream_error', `membership_outreach_list failed: ${resp.status}`, { correlation });

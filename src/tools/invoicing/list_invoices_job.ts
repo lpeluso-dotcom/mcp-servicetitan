@@ -19,8 +19,8 @@ export const list_invoices_job: ToolDef<Args> = {
     qs.set('page', String(args.page ?? 1));
     qs.set('pageSize', String(args.pageSize ?? 50));
 
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/accounting/v2/tenant/431848990/invoices?${qs}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/accounting/v2/tenant/000000000/invoices?${qs}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `list_invoices_job failed: ${resp.status}`, { correlation });

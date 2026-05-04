@@ -14,8 +14,8 @@ export const get_form_submission: ToolDef<Args> = {
     formSubmissionId: z.number().int().positive().describe('ST form submission ID'),
   },
   async handler(env, args, { actor, correlation }) {
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/forms/v2/tenant/431848990/submissions/${args.formSubmissionId}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/forms/v2/tenant/000000000/submissions/${args.formSubmissionId}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `get_form_submission failed: ${resp.status}`, { correlation });

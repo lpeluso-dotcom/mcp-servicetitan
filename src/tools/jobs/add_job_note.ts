@@ -16,7 +16,7 @@ export const add_job_note = defineWriteTool<Args>({
     jobId: z.number().int().positive().describe('ST job ID'),
     note: z.string().min(1).describe('Note text to append'),
   },
-  endpoint: ({ jobId }) => `/jpm/v2/tenant/431848990/jobs/${jobId}/notes`,
+  endpoint: ({ jobId }) => `/jpm/v2/tenant/000000000/jobs/${jobId}/notes`,
   method: 'POST',
   payload: ({ note }) => ({ note }),
   businessArgs: ({ jobId, note }) => ({ jobId, note }),

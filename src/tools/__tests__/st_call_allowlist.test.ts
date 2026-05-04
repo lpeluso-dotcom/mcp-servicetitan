@@ -5,11 +5,11 @@ const CTX = { actor: 'test-actor', correlation: 'test-corr' };
 
 function makeEnv(): any {
   return {
-    TAYLOR_AI: { fetch: () => new Response(JSON.stringify({}), { status: 200 }) },
+    ST_PROXY: { fetch: () => new Response(JSON.stringify({}), { status: 200 }) },
     MCP_SYNC_KEY: 'test-key',
     MCP_SERVICE_VERSION: '0.0.0-test',
     DB: {},
-    TAI_STATE: {},
+    PROXY_STATE: {},
     SIRO_API_TOKEN: '',
   };
 }

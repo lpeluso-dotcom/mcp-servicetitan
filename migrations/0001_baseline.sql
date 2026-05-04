@@ -1,6 +1,6 @@
 -- ============================================================
 -- migrations/0001_baseline.sql
--- Baseline schema for qsc-mcp-st (own D1, split from taylor-ai shared DB).
+-- Baseline schema for mcp-servicetitan (own D1, split from servicetitan-proxy shared DB).
 -- F2 of the v1.0 super-MCP upgrade.
 --
 -- IMPORTANT: D1 does NOT wrap CREATE statements in a cross-statement
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   description TEXT
 );
 
--- ─── Observability (ported from taylor-ai shared DB) ────────
+-- ─── Observability (ported from servicetitan-proxy shared DB) ────────
 CREATE TABLE IF NOT EXISTS audit_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts INTEGER NOT NULL,

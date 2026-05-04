@@ -1,0 +1,30 @@
+name: Security review note
+description: Non-sensitive security hardening suggestions only.
+title: "[Security review]: "
+labels: ["security", "review"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this only for non-sensitive hardening suggestions. Do not disclose exploitable vulnerabilities, secrets, live endpoints with valid credentials, or private tenant data in a public issue. Send sensitive reports through the private reporting path in SECURITY.md.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Auth / RBAC
+        - Write-gate / mutation safety
+        - Logging / redaction
+        - Webhooks
+        - Dependencies
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: note
+    attributes:
+      label: Suggestion
+      description: Keep this actionable and non-sensitive.
+    validations:
+      required: true

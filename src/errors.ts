@@ -1,6 +1,6 @@
 // ============================================================
 // errors.ts — Standardized MCP error shapes
-// Per qsc-infra/docs/mcp/TEMPLATE.md § 2
+// Shared error shape used by all MCP tool handlers.
 // ============================================================
 
 export type McpErrorCode =
@@ -54,7 +54,7 @@ export class McpError extends Error {
 
 /**
  * Map an HTTP status code from an upstream call into an MCP error code.
- * Used by tools when calling taylor-ai's /api/st/read.
+ * Used by tools when calling servicetitan-proxy's /api/st/read.
  */
 export function mapUpstreamStatus(status: number): McpErrorCode {
   if (status === 401 || status === 403) return 'auth_failed';

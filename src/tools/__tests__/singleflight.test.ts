@@ -41,11 +41,11 @@ function makeDB(firstQueue: Array<unknown>) {
 function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>, firstQueue: Array<unknown> = [], doOverride?: ReturnType<typeof makeDO>): any {
   const singleflightDO = doOverride ?? makeDO({ acquired: true });
   return {
-    TAYLOR_AI: { fetch: vi.fn(fetchImpl) },
+    ST_PROXY: { fetch: vi.fn(fetchImpl) },
     MCP_SYNC_KEY: 'test-key',
     MCP_SERVICE_VERSION: '0.0.0-test',
     DB: makeDB(firstQueue),
-    TAI_STATE: {},
+    PROXY_STATE: {},
     SIRO_API_TOKEN: '',
     CUSTOMER_SNAPSHOT_FLIGHT: singleflightDO,
   };
@@ -90,7 +90,7 @@ describe('singleflight — D1 cache hit', () => {
     expect(result.customer).toEqual({ id: 42, name: 'Cached Alice' });
     // DO and fanout NOT touched
     expect(do_.idFromName).not.toHaveBeenCalled();
-    expect(env.TAYLOR_AI.fetch).not.toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -104,7 +104,7 @@ describe('singleflight — cache miss, lock acquired', () => {
     const result: any = await customer_snapshot.handler(env, { customerId: 42 }, CTX);
 
     // Fanout fired
-    expect(env.TAYLOR_AI.fetch).toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).toHaveBeenCalled();
     // Live result returned
     expect(result._source).toBe('mixed');
     expect(result.customerId).toBe(42);
@@ -166,11 +166,11 @@ describe('singleflight — cache miss, lock not acquired, poll succeeds', () => 
     // DO returns not-acquired with short waitMs so the test doesn't actually wait 500ms
     const do_ = makeDO({ acquired: false, waitMs: 1 });
     const env: any = {
-      TAYLOR_AI: { fetch: vi.fn(liveOk()) },
+      ST_PROXY: { fetch: vi.fn(liveOk()) },
       MCP_SYNC_KEY: 'test-key',
       MCP_SERVICE_VERSION: '0.0.0-test',
       DB: db,
-      TAI_STATE: {},
+      PROXY_STATE: {},
       SIRO_API_TOKEN: '',
       CUSTOMER_SNAPSHOT_FLIGHT: do_,
     };
@@ -182,7 +182,7 @@ describe('singleflight — cache miss, lock not acquired, poll succeeds', () => 
     // Correlation updated to current request
     expect(result.correlation).toBe('test-corr');
     // Fanout was NOT fired by this (waiting) caller
-    expect(env.TAYLOR_AI.fetch).not.toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -203,6 +203,6 @@ describe('singleflight — DO unreachable (degraded path)', () => {
     // Still returns a live result despite DO failure
     expect(result._source).toBe('mixed');
     expect(result.customerId).toBe(99);
-    expect(env.TAYLOR_AI.fetch).toHaveBeenCalled();
+    expect(env.ST_PROXY.fetch).toHaveBeenCalled();
   });
 });

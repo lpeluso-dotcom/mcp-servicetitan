@@ -21,7 +21,7 @@ export const create_task = defineWriteTool<Args>({
     dueDate: z.string().optional().describe('Due date (ISO 8601 date string)'),
     assignedToId: z.number().int().positive().optional().describe('Employee ID to assign the task to'),
   },
-  endpoint: () => `/taskmanagement/v2/tenant/431848990/tasks`,
+  endpoint: () => `/taskmanagement/v2/tenant/000000000/tasks`,
   method: 'POST',
   payload: ({ name, jobId, dueDate, assignedToId }) => {
     const body: Record<string, unknown> = { name, jobId };

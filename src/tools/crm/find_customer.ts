@@ -72,8 +72,8 @@ export const find_customer: ToolDef<Args> = {
       qs.set('page', String(page));
       qs.set('pageSize', String(pageSize));
 
-      const resp = await env.TAYLOR_AI.fetch(
-        `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/crm/v2/tenant/431848990/customers?${qs}`)}`,
+      const resp = await env.ST_PROXY.fetch(
+        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/crm/v2/tenant/000000000/customers?${qs}`)}`,
         { headers: authHeaders(env, correlation, actor) }
       );
       if (!resp.ok) throw new McpError('upstream_error', `find_customer failed: ${resp.status}`, { correlation });

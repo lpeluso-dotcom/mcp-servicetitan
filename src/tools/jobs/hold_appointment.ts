@@ -20,7 +20,7 @@ export const hold_appointment = defineWriteTool<Args>({
     reasonId: z.number().int().positive().describe('Hold reason ID'),
     memo: z.string().optional().describe('Optional memo text for the hold'),
   },
-  endpoint: ({ appointmentId }) => `/jpm/v2/tenant/431848990/appointments/${appointmentId}/hold`,
+  endpoint: ({ appointmentId }) => `/jpm/v2/tenant/000000000/appointments/${appointmentId}/hold`,
   method: 'POST',
   payload: ({ reasonId, memo }) => ({ reasonId, memo }),
   businessArgs: ({ appointmentId, reasonId, memo }) => ({ appointmentId, reasonId, memo }),

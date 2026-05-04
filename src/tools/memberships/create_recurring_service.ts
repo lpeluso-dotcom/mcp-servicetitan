@@ -19,7 +19,7 @@ export const create_recurring_service = defineWriteTool<Args>({
     serviceTypeId: z.number().int().positive().describe('ST service type ID for the recurring service'),
     locationId: z.number().int().positive().describe('ST location ID where the service will be performed'),
   },
-  endpoint: ({ serviceTypeId }) => `/memberships/v2/tenant/431848990/recurring-service-types/${serviceTypeId}/recurring-services`,
+  endpoint: ({ serviceTypeId }) => `/memberships/v2/tenant/000000000/recurring-service-types/${serviceTypeId}/recurring-services`,
   method: 'POST',
   payload: ({ membershipId, serviceTypeId, locationId }) => ({ membershipId, serviceTypeId, locationId }),
   businessArgs: ({ membershipId, serviceTypeId, locationId }) => ({ membershipId, serviceTypeId, locationId }),

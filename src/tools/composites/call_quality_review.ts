@@ -21,8 +21,8 @@ export const call_quality_review: ToolDef<Args> = {
     qs.set('createdBefore', to);
     qs.set('pageSize', '100');
 
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/telecom/v3/tenant/431848990/calls?${qs}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/telecom/v3/tenant/000000000/calls?${qs}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `call_quality_review: calls fetch failed: ${resp.status}`, { correlation });

@@ -32,11 +32,11 @@ function makeDB(firstResult: unknown = null) {
 
 function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>): any {
   return {
-    TAYLOR_AI: { fetch: vi.fn(fetchImpl) },
+    ST_PROXY: { fetch: vi.fn(fetchImpl) },
     MCP_SYNC_KEY: 'test-key',
     MCP_SERVICE_VERSION: '0.0.0-test',
     DB: makeDB(),
-    TAI_STATE: {},
+    PROXY_STATE: {},
     SIRO_API_TOKEN: '',
   };
 }
@@ -74,7 +74,7 @@ describe('list_estimates_job', () => {
   it('calls estimates endpoint with jobId filter', async () => {
     const env = makeEnv(liveOk([]));
     await list_estimates_job.handler(env, { jobId: 500 }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('500');
     expect(url).toContain('estimate');
   });
@@ -95,7 +95,7 @@ describe('get_estimate', () => {
   it('calls estimates endpoint with ID', async () => {
     const env = makeEnv(liveOkDirect({ id: 10 }));
     await get_estimate.handler(env, { estimateId: 10 }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('10');
     expect(url).toContain('estimate');
   });
@@ -145,7 +145,7 @@ describe('get_capacity', () => {
       endDate: '2026-05-07',
     }, CTX);
     expect(result.capacity).toBeDefined();
-    const [, init] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [, init] = env.ST_PROXY.fetch.mock.calls[0];
     expect(init.method).toBe('POST');
   });
 
@@ -157,7 +157,7 @@ describe('get_capacity', () => {
       endDate: '2026-05-07',
       skillBasedAvailability: true,
     }, CTX);
-    const [, init] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [, init] = env.ST_PROXY.fetch.mock.calls[0];
     const body = JSON.parse(init.body);
     expect(body.skillBasedAvailability).toBe(true);
   });
@@ -173,7 +173,7 @@ describe('list_technicians_available', () => {
   it('passes date filter', async () => {
     const env = makeEnv(liveOk([]));
     await list_technicians_available.handler(env, { date: '2026-05-01' }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('2026-05-01');
   });
 });
@@ -212,7 +212,7 @@ describe('list_campaigns', () => {
   it('passes active filter', async () => {
     const env = makeEnv(liveOk([]));
     await list_campaigns.handler(env, { active: true }, CTX);
-    const [url] = env.TAYLOR_AI.fetch.mock.calls[0];
+    const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('campaign');
   });
 });

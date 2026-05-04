@@ -19,7 +19,7 @@ function trim(m: Record<string, unknown>): Record<string, unknown> {
 }
 
 // Semantics pinned: 'to' BETWEEN now AND now+windowDays AND status='Active'.
-// Do NOT use renewedById — unreliable per QSC ops memory.
+// Do NOT use renewedById — unreliable per local operations notes.
 export const list_memberships_expiring: ToolDef<Args> = {
   name: 'list_memberships_expiring',
   description: 'List active memberships expiring within the next N days. Uses expirationDate range filter (NOT renewedById — unreliable). Response is trimmed to essential fields; client-side filtered to status=Active. Reads live from ST. D1-first migration tracked as v1.3 follow-up — Phase 1 D1 sync expansion landed 2026-04-28; `memberships` table is populated but tools haven\'t been flipped to D1-first reads yet.',
@@ -41,8 +41,8 @@ export const list_memberships_expiring: ToolDef<Args> = {
     qs.set('page', String(args.page ?? 1));
     qs.set('pageSize', String(args.pageSize ?? 50));
 
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/memberships/v2/tenant/431848990/memberships?${qs}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/memberships/v2/tenant/000000000/memberships?${qs}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `list_memberships_expiring failed: ${resp.status}`, { correlation });

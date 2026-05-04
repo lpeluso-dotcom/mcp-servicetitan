@@ -73,12 +73,12 @@ export const st_run_report: ToolDef<Args> = {
         throw new McpError('validation_error', msg, { correlation });
       }
     };
-    const tid = '431848990';
+    const tid = '000000000';
     const headers = authHeaders(env, correlation, actor);
 
     if (args.mode === 'list_categories') {
-      const resp = await env.TAYLOR_AI.fetch(
-        `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(
+      const resp = await env.ST_PROXY.fetch(
+        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(
           `/reporting/v2/tenant/${tid}/report-categories`
         )}`,
         { headers }
@@ -94,8 +94,8 @@ export const st_run_report: ToolDef<Args> = {
 
     if (args.mode === 'list_reports') {
       requireArg(args.categoryId !== undefined, 'categoryId required for mode=list_reports');
-      const resp = await env.TAYLOR_AI.fetch(
-        `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(
+      const resp = await env.ST_PROXY.fetch(
+        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(
           `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports`
         )}`,
         { headers }
@@ -117,8 +117,8 @@ export const st_run_report: ToolDef<Args> = {
     if (args.mode === 'describe_report') {
       requireArg(args.categoryId !== undefined, 'categoryId required for mode=describe_report');
       requireArg(args.reportId !== undefined, 'reportId required for mode=describe_report');
-      const resp = await env.TAYLOR_AI.fetch(
-        `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(
+      const resp = await env.ST_PROXY.fetch(
+        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(
           `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports/${args.reportId}`
         )}`,
         { headers }
@@ -154,8 +154,8 @@ export const st_run_report: ToolDef<Args> = {
       page: args.page ?? 1,
     };
 
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(
         `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports/${args.reportId}/data`
       )}`,
       {

@@ -22,8 +22,8 @@ export const commercial_plumbing_opportunities: ToolDef<Args> = {
     if (businessUnitId) qs.set('businessUnitIds', String(businessUnitId));
     qs.set('pageSize', '200');
 
-    const resp = await env.TAYLOR_AI.fetch(
-      `https://taylor-ai/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/431848990/jobs?${qs}`)}`,
+    const resp = await env.ST_PROXY.fetch(
+      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/000000000/jobs?${qs}`)}`,
       { headers: authHeaders(env, correlation, actor) }
     );
     if (!resp.ok) throw new McpError('upstream_error', `commercial_plumbing_opportunities failed: ${resp.status}`, { correlation });

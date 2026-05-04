@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # scripts/preflight.sh — pre-deploy integrity gate for mcp-servicetitan
-# Mirrors taylor-ai's preflight pattern (27-check gate).
+# Pre-deploy integrity gate for a configured ServiceTitan proxy deployment.
 # F1: minimal — covers build + test + binding presence.
 # F2/F3/H13 each add checks.
 #
@@ -28,22 +28,22 @@ echo "============================================================"
 echo "  mcp-servicetitan preflight — env=$ENV"
 echo "============================================================"
 
-# ── 0. Git alignment (sourced from qsc-infra) ────────────────
+# ── 0. Git alignment ─────────────────────────────────────────────
 echo ""
 echo "[0] Git alignment"
 
 # Shim: shared script uses `ok`, this script uses `pass`
 ok() { pass "$1"; }
 
-GIT_PREFLIGHT="$HOME/qsc-infra/scripts/preflight-git.sh"
+GIT_PREFLIGHT="${GIT_PREFLIGHT:-}"
 if [[ "${GITHUB_ACTIONS:-}" == "true" || "${CI:-}" == "true" ]]; then
   pass "git-alignment skipped (CI: post-merge commit is aligned with origin by definition)"
-elif [[ -f "$GIT_PREFLIGHT" ]]; then
+elif [[ -n "$GIT_PREFLIGHT" && -f "$GIT_PREFLIGHT" ]]; then
   # shellcheck source=/dev/null
   source "$GIT_PREFLIGHT"
   check_git_aligned "$ROOT"
 else
-  fail "git-alignment check missing: $GIT_PREFLIGHT — clone qsc-infra to ~/qsc-infra"
+  pass "git-alignment skipped (set GIT_PREFLIGHT to a local alignment script if desired)"
 fi
 
 # ── 1. Deps + lockfile ──────────────────────────────────────
@@ -69,18 +69,18 @@ grep -q 'compatibility_flags = \["nodejs_compat"\]' wrangler.toml && pass "nodej
 grep -q '\[observability\]' wrangler.toml && pass "observability block present" || fail "observability missing"
 grep -q 'binding = "MCP_METRICS"' wrangler.toml && pass "MCP_METRICS AE binding" || fail "MCP_METRICS AE binding missing"
 grep -q 'binding = "DB"' wrangler.toml && pass "D1 binding DB" || fail "D1 binding missing"
-grep -q 'binding = "TAYLOR_AI"' wrangler.toml && pass "service binding TAYLOR_AI" || fail "TAYLOR_AI service binding missing"
-grep -q 'binding = "TAI_STATE"' wrangler.toml && pass "KV binding TAI_STATE" || fail "TAI_STATE KV binding missing"
+grep -q 'binding = "ST_PROXY"' wrangler.toml && pass "service binding ST_PROXY" || fail "ST_PROXY service binding missing"
+grep -q 'binding = "PROXY_STATE"' wrangler.toml && pass "KV binding PROXY_STATE" || fail "PROXY_STATE KV binding missing"
 grep -q 'placement = { mode = "smart" }' wrangler.toml && pass "smart placement" || fail "smart placement missing"
 
 # F2: own D1 required
-grep -q 'database_name = "qsc-mcp-st"' wrangler.toml && pass "F2: own D1 qsc-mcp-st bound (prod)" || fail "own D1 qsc-mcp-st not bound in wrangler.toml"
-grep -q 'database_name = "qsc-mcp-st-dev"' wrangler.toml && pass "F2: own D1 qsc-mcp-st-dev bound (dev)" || fail "own D1 qsc-mcp-st-dev not bound in wrangler.toml"
-if grep -q 'PROD_DB_ID_PLACEHOLDER' wrangler.toml; then
+grep -q 'database_name = "mcp-servicetitan"' wrangler.toml && pass "own D1 mcp-servicetitan bound (prod)" || fail "own D1 mcp-servicetitan not bound in wrangler.toml"
+grep -q 'database_name = "mcp-servicetitan-dev"' wrangler.toml && pass "own D1 mcp-servicetitan-dev bound (dev)" || fail "own D1 mcp-servicetitan-dev not bound in wrangler.toml"
+if grep -q '00000000-0000-0000-0000-000000000000' wrangler.toml; then
   if [[ "$ENV" == "prod" ]]; then
-    fail "prod D1 database_id is PROD_DB_ID_PLACEHOLDER — create qsc-mcp-st before deploying to prod"
+    fail "prod D1 database_id is a placeholder - create and configure your D1 database before deploying to prod"
   else
-    echo "  ℹ  prod D1 database_id placeholder present (expected — qsc-mcp-st not yet created)"
+    echo "  i  D1 database_id placeholder present (expected until you configure Cloudflare resources)"
   fi
 else
   pass "prod D1 database_id is set"
@@ -101,7 +101,7 @@ fi
 # ── 4. Required secrets (names only; secret values are never echoed) ─
 echo ""
 echo "[4] Required secrets (via wrangler secret put --env $ENV)"
-SECRETS_REQUIRED=("MCP_SYNC_KEY" "SIRO_API_TOKEN")
+SECRETS_REQUIRED=("MCP_SYNC_KEY" "SIRO_API_TOKEN" "ST_WEBHOOK_SECRET" "JWT_SECRET")
 for s in "${SECRETS_REQUIRED[@]}"; do
   echo "  ℹ  Expect: $s (verify manually via 'wrangler secret list --env $ENV')"
 done

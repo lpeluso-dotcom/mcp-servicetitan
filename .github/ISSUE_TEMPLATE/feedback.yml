@@ -1,0 +1,23 @@
+name: Community feedback
+description: Share design, usability, documentation, or integration feedback.
+title: "[Feedback]: "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking a look. Please do not include real ServiceTitan customer data, credentials, tokens, tenant IDs beyond public examples, or screenshots containing private operational data.
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Feedback
+      description: What should change, and why?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What were you reviewing or trying to do?
+    validations:
+      required: false
