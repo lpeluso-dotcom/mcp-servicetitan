@@ -108,3 +108,8 @@ export async function gatherFetches(calls: NamedCall[]): Promise<FanoutResult> {
 
   return { results, partial: failures.length > 0, failures };
 }
+
+// Re-export the v1.4 paginated read helper so composite authors only need
+// to import from this module to get the full live-read toolkit.
+export { pagedStRead } from './paged-st-read';
+export type { PagedReadOptions, PagedReadResult, PagedReadFailure } from './paged-st-read';

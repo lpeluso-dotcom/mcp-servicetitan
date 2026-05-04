@@ -44,6 +44,14 @@ function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Respons
       fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ acquired: true }), { status: 200 })),
     }),
   };
+  const rateLimiterDO = {
+    idFromName: vi.fn().mockReturnValue('rl-id'),
+    get: vi.fn().mockReturnValue({
+      fetch: vi.fn().mockImplementation(
+        async () => new Response(JSON.stringify({ allowed: true }), { status: 200 })
+      ),
+    }),
+  };
   return {
     ST_PROXY: { fetch: vi.fn(fetchImpl) },
     MCP_SYNC_KEY: 'test-key',
@@ -52,6 +60,7 @@ function makeEnv(fetchImpl: (url: string, init?: RequestInit) => Promise<Respons
     PROXY_STATE: {},
     SIRO_API_TOKEN: '',
     CUSTOMER_SNAPSHOT_FLIGHT: singleflightDO,
+    ST_RATE_LIMITER: rateLimiterDO,
   };
 }
 
@@ -162,13 +171,14 @@ describe('job_closeout_report', () => {
 // ── C11 ──────────────────────────────────────────────────────
 
 describe('margin_audit', () => {
-  it('requires businessUnitId, from, and to', async () => {
+  it('requires from and to (BU optional at schema level; refined in handler)', async () => {
     const schema = z.object(margin_audit.zodSchema);
     expect(schema.safeParse({}).success).toBe(false);
     expect(schema.safeParse({ businessUnitId: 1, from: '2026-01-01' }).success).toBe(false);
+    expect(schema.safeParse({ businessUnitId: 1, from: '2026-01-01', to: '2026-03-31' }).success).toBe(true);
   });
 
-  it('returns audit with revenue, cost, margin keys', async () => {
+  it('returns audit with revenue, cost, margin keys for single-page result', async () => {
     const env = makeEnv(liveOk([]));
     const result: any = await margin_audit.handler(env, {
       businessUnitId: 3, from: '2026-01-01', to: '2026-03-31',
@@ -176,6 +186,81 @@ describe('margin_audit', () => {
     expect(result).toHaveProperty('revenue');
     expect(result).toHaveProperty('cost');
     expect(result).toHaveProperty('margin');
+    expect(result._truncated).toBe(false);
+    expect(result.pageCount).toBe(1);
+  });
+
+  it('rejects when neither businessUnitId nor businessUnitName is provided', async () => {
+    const env = makeEnv(liveOk([]));
+    await expect(
+      margin_audit.handler(env, { from: '2026-01-01', to: '2026-03-31' } as any, CTX)
+    ).rejects.toMatchObject({ code: 'validation_error' });
+  });
+
+  it('rejects when both businessUnitId and businessUnitName are provided', async () => {
+    const env = makeEnv(liveOk([]));
+    await expect(
+      margin_audit.handler(
+        env,
+        { businessUnitId: 1, businessUnitName: 'Service', from: '2026-01-01', to: '2026-03-31' },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'validation_error' });
+  });
+
+  it('paginates across multiple pages and sums revenue + cost across all pages', async () => {
+    let p = 0;
+    const env = makeEnv(async (url: string) => {
+      // Skip rate-limit DO calls — the handler routes those through env.ST_RATE_LIMITER.
+      if (!url.includes('/api/st/read')) return new Response('{}', { status: 200 });
+      p++;
+      if (p === 1) {
+        return new Response(
+          JSON.stringify({ data: Array(200).fill({ invoiceTotal: 100, totalCost: 60 }), hasMore: true }),
+          { status: 200 }
+        );
+      }
+      if (p === 2) {
+        return new Response(
+          JSON.stringify({ data: Array(200).fill({ invoiceTotal: 100, totalCost: 60 }), hasMore: true }),
+          { status: 200 }
+        );
+      }
+      return new Response(
+        JSON.stringify({ data: Array(50).fill({ invoiceTotal: 100, totalCost: 60 }), hasMore: false }),
+        { status: 200 }
+      );
+    });
+    const result: any = await margin_audit.handler(
+      env,
+      { businessUnitId: 3, from: '2026-01-01', to: '2026-03-31' },
+      CTX
+    );
+    expect(result.jobCount).toBe(450);
+    expect(result.pageCount).toBe(3);
+    expect(result.revenue).toBe(45000); // 450 × 100
+    expect(result.cost).toBe(27000);    // 450 × 60
+    expect(result._truncated).toBe(false);
+  });
+
+  it('surfaces _truncated and _warnings when maxPages is hit', async () => {
+    const env = makeEnv(async (url: string) => {
+      if (!url.includes('/api/st/read')) return new Response('{}', { status: 200 });
+      // Always return a full page with hasMore=true — should hit maxPages.
+      return new Response(
+        JSON.stringify({ data: Array(200).fill({ invoiceTotal: 1, totalCost: 1 }), hasMore: true }),
+        { status: 200 }
+      );
+    });
+    const result: any = await margin_audit.handler(
+      env,
+      { businessUnitId: 3, from: '2026-01-01', to: '2026-03-31' },
+      CTX
+    );
+    expect(result._truncated).toBe(true);
+    expect(result._warnings).toContain('truncated_at_max_pages');
+    expect(result.pageCount).toBe(20); // default maxPages
+    expect(result.jobCount).toBe(4000);
   });
 });
 
