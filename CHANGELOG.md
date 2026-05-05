@@ -1,6 +1,36 @@
 # Changelog
 
-## Unreleased
+## v1.4.0 — 2026-05-04
+
+### Bug fixes
+- `margin_audit` no longer silently truncates at one page. Previously fetched `pageSize=200` jobs and stopped, undercounting revenue/cost/margin for any business-unit/date-range with >200 jobs. Now paginates up to 4,000 jobs (20 pages × 200) via the new `pagedStRead` helper, with `_truncated: true` and `_warnings: ['truncated_at_max_pages']` surfaced honestly when the cap is hit.
+
+### New helpers
+- `src/paged-st-read.ts` — shared pagination helper for `/api/st/read` consumers. Loops on `hasMore`, defends against missing `hasMore` via `data.length < pageSize`, caps at `maxPages` (default 20), retries 429/502/503/504 with `Retry-After` parsing and exponential backoff, cooperates with the existing `StRateLimiter` Durable Object, and surfaces `partialFailures` / `warnings` instead of throwing on mid-paging errors.
+- `src/name-resolver.ts` — cached business-unit and technician name → ID resolution against the upstream proxy's nightly-synced D1 tables. Tier match (exact > prefix > contains). Asymmetric ambiguity: read mode returns the first match by ascending id with `ambiguous: true`; write mode throws `validation_error` so writes can never silently target the wrong record.
+
+### Tool ergonomics (additive — existing ID fields still work)
+- `margin_audit` accepts `businessUnitName` as an alternative to `businessUnitId`.
+- `dispatch_override_audit` accepts `businessUnitName` and `technicianName`.
+- `list_jobs_today` accepts `businessUnitName` and `technicianName`.
+- `list_technicians_available` accepts `businessUnitName`.
+
+### Tests
+- 11 unit tests for `pagedStRead` (loop, exit conditions, retry/backoff, abort, URL shaping).
+- 13 unit tests for `name-resolver` (numeric pass-through, exact/prefix/contains, read vs. write ambiguity, cache memoization).
+- 4 new integration tests for `margin_audit` (multi-page sum, maxPages truncation, validation refinements).
+
+### Docs
+- `docs/audit/margin-reporting-followup-2026-05-04.md` — verification path + acceptance criterion for the deferred ServiceTitan Reporting API migration of `margin_audit`. Tracked rather than guessed (no verified saved-report ID exists yet).
+
+### Deferred to v1.4.1
+- Mechanical migration of the other eight truncating composites (`dispatch_override_audit`, `job_closeout_report`, `customer_snapshot` fan-out sub-calls, `membership_jackpot_leaderboard`, `membership_outreach_list`, `commercial_plumbing_opportunities`, `pricebook_health_check_services`, `call_quality_review`) to `pagedStRead`. Helper soaks first.
+
+### Deferred to v1.5
+- `st_intel_revenue_summary` (and any Reporting-API migration of `margin_audit`) gated on the verification path in `docs/audit/margin-reporting-followup-2026-05-04.md`.
+
+
+## Unreleased (folded into v1.4.0)
 
 ### Security
 - Require credentials for `POST /mcp` (`Authorization: Bearer <JWT>` or `X-Sync-Key`) before registering tools.
@@ -8,7 +38,7 @@
 - Make confirmation-token consumption conditional on `consumed_at IS NULL` to close the replay race window.
 
 ### Repository readiness
-- Declare direct `jose` dependency and align `package-lock.json` root metadata with v1.2.0.
+- Declare direct `jose` dependency and align `package-lock.json` root metadata.
 - Add CI, Dependabot, issue templates, `.env.example`, `CONTRIBUTING.md`, and `docs/PUBLISHING_CHECKLIST.md` for public feedback.
 - Change Cloudflare deployment to manual dispatch so public-feedback changes are not automatically deployed from `main`.
 - Replace production tenant IDs, worker URLs, Cloudflare resource IDs, and raw audit artifacts with public-safe placeholders.
