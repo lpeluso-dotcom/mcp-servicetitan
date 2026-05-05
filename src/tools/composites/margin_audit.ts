@@ -63,6 +63,16 @@ export const margin_audit: ToolDef<Args> = {
       }
     );
 
+    if (paged.pageCount === 0 && paged.partialFailures.length > 0) {
+      const firstFailure = paged.partialFailures[0];
+      throw new McpError(
+        'upstream_error',
+        `margin_audit: jobs fetch failed before any page was read (page ${firstFailure.page}, ` +
+          `status ${firstFailure.status}): ${firstFailure.message}`,
+        { correlation, details: { failures: paged.partialFailures } }
+      );
+    }
+
     let revenue = 0;
     let cost = 0;
     for (const job of paged.items) {
