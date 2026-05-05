@@ -9,7 +9,7 @@
 //
 // Stops paging when:
 //   - response { hasMore: false }, or
-//   - data.length < pageSize (defensive — some endpoints omit hasMore)
+//   - data.length < pageSize (defensive — only when hasMore is omitted)
 //   - pageCount === maxPages (sets truncated=true + warning)
 //   - opts.signal is aborted (sets warning='aborted')
 //
@@ -172,7 +172,7 @@ export async function pagedStRead<T = unknown>(
     pageCount++;
 
     const hasMore = pageResult.hasMore;
-    const looksDone = hasMore === false || pageItems.length < pageSize;
+    const looksDone = hasMore === false || (hasMore === undefined && pageItems.length < pageSize);
     if (looksDone) break;
 
     if (pageCount === maxPages) {
