@@ -72,6 +72,19 @@ describe('pagedStRead', () => {
     expect(out.truncated).toBe(false);
   });
 
+  it('continues on a short page when hasMore=true', async () => {
+    let p = 0;
+    const env = makeEnv(async () => {
+      p++;
+      if (p === 1) return pageOk([{ id: 1 }], true);
+      return pageOk([{ id: 2 }], false);
+    });
+    const out = await pagedStRead(env, HEADERS, ENDPOINT, {}, { pageSize: 2 });
+    expect(out.items.map((i: any) => i.id)).toEqual([1, 2]);
+    expect(out.pageCount).toBe(2);
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(2);
+  });
+
   it('returns empty result when first page has no data', async () => {
     const env = makeEnv(async () => pageOk([], false));
     const out = await pagedStRead(env, HEADERS, ENDPOINT, {});
