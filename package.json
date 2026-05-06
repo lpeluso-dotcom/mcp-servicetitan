@@ -1,7 +1,7 @@
 {
   "name": "mcp-servicetitan",
-  "version": "1.4.0",
-  "description": "ServiceTitan MCP server — v1.4 (65 tools + shared paged-st-read helper + name-resolver). Streamable HTTP via Agents SDK; HMAC write-gate; D1 audit; Analytics Engine telemetry.",
+  "version": "1.4.1",
+  "description": "ServiceTitan MCP server — v1.4.1 (74 tools: 73 default + 1 admin gateway). Streamable HTTP via Agents SDK; HMAC write-gate; D1 audit; Analytics Engine telemetry; response shaper; webhook event-type allowlist.",
   "license": "MIT",
   "private": true,
   "scripts": {
