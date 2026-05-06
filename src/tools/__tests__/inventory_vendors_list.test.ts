@@ -17,7 +17,7 @@ function fakeEnv() {
           {
             id: 2,
             name: 'Bolt Co',
-            active: false,
+            // active intentionally omitted — exercises the `?? null` default
             phone: null,
             email: null,
           },
@@ -49,7 +49,7 @@ describe('inventory_vendors_list', () => {
     expect(out.vendors[1]).toEqual({
       id: 2,
       name: 'Bolt Co',
-      active: false,
+      active: null,        // changed: was `false`, now `null`
       phone: null,
       email: null,
     });
@@ -77,5 +77,32 @@ describe('inventory_vendors_list', () => {
     await expect(
       inventory_vendors_list.handler(env, {}, { actor: 'test', correlation: 'c1' }),
     ).rejects.toThrow(/inventory_vendors_list failed: 502/);
+  });
+
+  it('returns count=0 and vendors=[] when ST returns empty data', async () => {
+    const env = {
+      ST_TENANT_ID: '431848990',
+      ST_PROXY: { fetch: vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) },
+      MCP_SYNC_KEY: 'k',
+    } as any;
+    const out = (await inventory_vendors_list.handler(env, {}, { actor: 'test', correlation: 'c1' })) as any;
+    expect(out.count).toBe(0);
+    expect(out.vendors).toEqual([]);
+    expect(out.has_more).toBe(false);
+  });
+
+  it('forwards page and pageSize args into the URL', async () => {
+    const env = fakeEnv();
+    await inventory_vendors_list.handler(env, { page: 2, pageSize: 10 }, { actor: 'test', correlation: 'c1' });
+    const calledUrl = (env.ST_PROXY.fetch as any).mock.calls[0][0];
+    expect(calledUrl).toContain('page%3D2');
+    expect(calledUrl).toContain('pageSize%3D10');
+  });
+
+  it('passes active=false through to the URL (regression guard for truthy-check refactors)', async () => {
+    const env = fakeEnv();
+    await inventory_vendors_list.handler(env, { active: false }, { actor: 'test', correlation: 'c1' });
+    const calledUrl = (env.ST_PROXY.fetch as any).mock.calls[0][0];
+    expect(calledUrl).toContain('active%3Dfalse');
   });
 });

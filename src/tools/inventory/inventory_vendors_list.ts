@@ -21,7 +21,7 @@ interface RawVendor {
 interface SlimVendor {
   id: number;
   name: string;
-  active: boolean;
+  active: boolean | null;
   phone: string | null;
   email: string | null;
 }
@@ -30,12 +30,14 @@ function slim(v: RawVendor): SlimVendor {
   return {
     id: v.id,
     name: v.name ?? '',
-    active: v.active ?? true,
+    active: v.active ?? null,
     phone: v.phone ?? null,
     email: v.email ?? null,
   };
 }
 
+// Back-office tool (no voice consumer); pageSize tuned for PO/receipt
+// enumeration, not voice-tier readback. Compare find_customer's tighter caps.
 const DEFAULT_PAGESIZE = 25;
 const MAX_PAGESIZE = 100;
 
@@ -61,7 +63,7 @@ export const inventory_vendors_list: ToolDef<Args> = {
       { headers: authHeaders(env, correlation, actor) },
     );
     if (!resp.ok) {
-      throw new McpError('upstream_error', `inventory_vendors_list failed: ${resp.status}`, { correlation });
+      throw new McpError('upstream_error', `inventory_vendors_list failed: ${resp.status} ${path}`, { correlation });
     }
     const data = (await resp.json()) as { data?: RawVendor[]; hasMore?: boolean };
     return {
