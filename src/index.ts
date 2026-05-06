@@ -136,30 +136,64 @@ app.notFound((c) => c.json({ error: 'not found' }, 404));
 // ─── CORS for MCP Inspector + remote MCP clients ──────────────
 // Inspector at localhost:5173 requires mcp-session-id in both allowed
 // request headers AND exposeHeaders for session resumption.
-const CORS_OPTIONS = {
-  origin: '*', // F1 dev-friendly; tighten for prod in H13
-  methods: 'GET, POST, OPTIONS, DELETE',
-  headers: 'content-type, mcp-session-id, authorization, x-sync-key, x-mcp-role, x-actor, x-correlation-id',
-  exposeHeaders: 'mcp-session-id',
-  maxAge: 86400,
-};
+const CORS_METHODS = 'GET, POST, OPTIONS, DELETE';
+const CORS_HEADERS = 'content-type, mcp-session-id, authorization, x-sync-key, x-mcp-role, x-actor, x-correlation-id';
+const CORS_EXPOSE = 'mcp-session-id';
+const CORS_MAX_AGE = 86400;
 
-function unauthorizedMcpResponse(): Response {
+function isDevEnv(env: Env): boolean {
+  return typeof env.MCP_SERVICE_VERSION === 'string' && env.MCP_SERVICE_VERSION.endsWith('-dev');
+}
+
+// Origin allowlist — deny by default. Closes the DNS-rebinding gap noted in
+// the MCP Streamable HTTP spec. Auth (X-Sync-Key / JWT) gates traffic regardless,
+// but a browser context that already holds the bearer should still be limited
+// to known caller surfaces.
+function isAllowedOrigin(origin: string, env: Env): boolean {
+  if (origin === 'https://claude.ai' || origin.endsWith('.claude.ai')) return true;
+  if (origin.endsWith('.lpeluso.workers.dev')) return true;
+  if (isDevEnv(env) && /^https?:\/\/localhost(:\d+)?$/.test(origin)) return true;
+  return false;
+}
+
+// Resolve the request's Origin against the allowlist. Returns the matched
+// origin string for echoing in CORS headers, or null when the request has no
+// Origin (server-to-server), or the sentinel 'null' when the origin is denied
+// (no real browser origin will match this and the CORS check will fail).
+function resolveCorsOrigin(request: Request, env: Env): string | null {
+  const origin = request.headers.get('origin');
+  if (!origin) return null;
+  return isAllowedOrigin(origin, env) ? origin : 'null';
+}
+
+function buildCorsOptions(request: Request, env: Env) {
+  const resolved = resolveCorsOrigin(request, env);
+  return {
+    // SDK accepts a single string. For server-to-server (no Origin), we still
+    // pass a sentinel so the SDK's default fallback of '*' isn't reached.
+    origin: resolved ?? 'null',
+    methods: CORS_METHODS,
+    headers: CORS_HEADERS,
+    exposeHeaders: CORS_EXPOSE,
+    maxAge: CORS_MAX_AGE,
+  };
+}
+
+function unauthorizedMcpResponse(request: Request, env: Env): Response {
+  const allowOrigin = resolveCorsOrigin(request, env);
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'access-control-allow-methods': CORS_METHODS,
+    'access-control-allow-headers': CORS_HEADERS,
+    'access-control-expose-headers': CORS_EXPOSE,
+  };
+  if (allowOrigin) headers['access-control-allow-origin'] = allowOrigin;
   return new Response(
     JSON.stringify({
       error: 'unauthorized',
       message: 'POST /mcp requires Authorization: Bearer <JWT> or X-Sync-Key.',
     }),
-    {
-      status: 401,
-      headers: {
-        'content-type': 'application/json',
-        'access-control-allow-origin': CORS_OPTIONS.origin,
-        'access-control-allow-methods': CORS_OPTIONS.methods,
-        'access-control-allow-headers': CORS_OPTIONS.headers,
-        'access-control-expose-headers': CORS_OPTIONS.exposeHeaders,
-      },
-    }
+    { status: 401, headers }
   );
 }
 
@@ -203,7 +237,7 @@ export default {
       ? { authenticated: true, role: 'default' as const, actor: 'preflight' }
       : await resolveAuth(request, env);
     if (!auth.authenticated) {
-      return unauthorizedMcpResponse();
+      return unauthorizedMcpResponse(request, env);
     }
     const reqCtx: RequestContext = { actor: auth.actor, role: auth.role };
     const runtimeEnv = withTenantRewrite(env);
@@ -211,7 +245,7 @@ export default {
     const server = buildServer(runtimeEnv, execCtx, reqCtx);
     const handler = createMcpHandler(server, {
       route: '/mcp',
-      corsOptions: CORS_OPTIONS,
+      corsOptions: buildCorsOptions(request, runtimeEnv),
     });
     return handler(request, runtimeEnv, execCtx);
   },
