@@ -123,6 +123,12 @@ export interface ToolDef<Args = Record<string, unknown>> {
   /** Optional ST endpoint descriptor — populated for tools that map to a single ST API call. */
   stEndpoint?: StEndpointDescriptor;
   handler: (env: Env, args: Args, ctx: ToolContext) => Promise<unknown>;
+  /**
+   * Optional response shaper applied AFTER handler returns and BEFORE
+   * audit/serialize. Use it to strip ST noise (`paginationToken`, `_meta`),
+   * cap big arrays, or abbreviate verbose keys. See src/response-shape.ts.
+   */
+  transformResult?: (result: unknown) => unknown;
 }
 
 export const TOOLS: readonly ToolDef<any>[] = [
