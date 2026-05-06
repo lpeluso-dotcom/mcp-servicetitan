@@ -91,10 +91,11 @@ export function registerTool(
       const started = Date.now();
 
       try {
-        const result = await tool.handler(env, args, {
+        const rawResult = await tool.handler(env, args, {
           actor: reqCtx.actor,
           correlation,
         });
+        const result = tool.transformResult ? tool.transformResult(rawResult) : rawResult;
         const latency = Date.now() - started;
 
         // Composite handlers signal partial-failure via _partial=true on the

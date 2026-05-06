@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { authHeaders } from '../../auth';
 import { gatherFetches, stRead } from '../../composite-helpers';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { jobId: number }
 
@@ -40,4 +41,5 @@ export const job_closeout_report: ToolDef<Args> = {
       correlation,
     };
   },
+  transformResult: defaultShaper,
 };

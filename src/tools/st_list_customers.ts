@@ -9,6 +9,7 @@ import { authHeaders } from '../auth';
 import { cacheGet } from '../cache';
 import { McpError, mapUpstreamStatus } from '../errors';
 import type { ToolDef } from './index';
+import { defaultShaper } from '../response-shape';
 
 const TENANT_ID = '000000000';
 const NAMESPACE = 'servicetitan:customers';
@@ -51,4 +52,5 @@ export const st_list_customers: ToolDef<Args> = {
       return resp.json();
     });
   },
+  transformResult: defaultShaper,
 };

@@ -17,8 +17,8 @@ function schemaOf(name: string) {
 // ── Registry sanity ──────────────────────────────────────────
 
 describe('tool registry', () => {
-  it('exports 65 tools (v1.2 added st_get_capacity_slots, st_run_report, st_post_marketing_attribution)', () => {
-    expect(TOOLS.length).toBe(66);
+  it('exports 74 tools (v1.4 added 8 inventory + payroll tools)', () => {
+    expect(TOOLS.length).toBe(74);
   });
 
   it('every tool has name + description + zodSchema', () => {
@@ -59,8 +59,8 @@ describe('tool registry', () => {
   });
 
   it('toolsForRole("default") excludes st_call; admin includes it', () => {
-    expect(toolsForRole('default').length).toBe(65);
-    expect(toolsForRole('admin').length).toBe(66);
+    expect(toolsForRole('default').length).toBe(73);
+    expect(toolsForRole('admin').length).toBe(74);
     expect(toolsForRole('default').find((t) => t.name === 'st_call')).toBeUndefined();
     expect(toolsForRole('admin').find((t) => t.name === 'st_call')).toBeDefined();
   });
