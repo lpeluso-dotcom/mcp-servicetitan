@@ -3,6 +3,7 @@ import { authHeaders } from '../../auth';
 import { gatherFetches, stRead } from '../../composite-helpers';
 import type { ToolDef } from '../index';
 import type { Env } from '../../env';
+import { excludeFields, limitArrays } from '../../response-shape';
 
 interface Args { customerId: number }
 
@@ -142,4 +143,10 @@ export const customer_snapshot: ToolDef<Args> = {
 
     return result;
   },
+  transformResult: (r) => limitArrays(excludeFields(r as Record<string, unknown>), {
+    jobs: 25,
+    invoices: 25,
+    estimates: 25,
+    locations: 10,
+  }),
 };
