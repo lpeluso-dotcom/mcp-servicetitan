@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.4.1 — 2026-05-06
+
+PR #8 (`feat/shape-inventory-webhooks`): three independently-shippable tracks — response shaper, inventory + payroll pack, webhook hardening. Tool count **66 → 74**; test count **316 → 398** (+82).
+
+### Track 1 — Response shaper
+- New `src/response-shape.ts` exporting `excludeFields`, `limitArrays`, `abbreviateKeys`, `defaultShaper`, `DEFAULT_EXCLUDED_FIELDS`, `RESERVED_KEYS`. Strips ST envelope noise (`paginationToken`, `requestId`, `eTag`, `_links`, `_meta`) and caps top-level arrays before MCP serialize.
+- New optional `transformResult?: (result: unknown) => unknown` field on `ToolDef`; applied in `registerTool` between handler return and audit/serialize.
+- Adopted on 3 high-payload smoke-test tools: `customer_snapshot` (with `limitArrays {jobs:25, invoices:25, estimates:25, locations:10}`), `job_closeout_report`, `st_list_customers`. Mechanical rollout to the remaining ~63 tools deferred to a follow-up PR.
+
+### Track 2 — Inventory + payroll pack (8 new tools)
+| Tool | Endpoint |
+|---|---|
+| `inventory_vendors_list` | `/inventory/v2/tenant/{tid}/vendors` |
+| `inventory_warehouses_list` | `/inventory/v2/tenant/{tid}/warehouses` |
+| `inventory_receipts_list` | `/inventory/v2/tenant/{tid}/receipts` |
+| `inventory_transfers_list` | `/inventory/v2/tenant/{tid}/transfers` |
+| `payroll_payrolls_list` | `/payroll/v2/tenant/{tid}/payrolls` |
+| `payroll_non_job_timesheets_list` | `/payroll/v2/tenant/{tid}/non-job-timesheets` |
+| `payroll_location_rates_list` | `/payroll/v2/tenant/{tid}/locations/rates` |
+| `payroll_settings_get` | `/payroll/v2/tenant/{tid}/payroll-settings` |
+
+All use `transformResult: defaultShaper`. Slim transforms default `active`/`*_id` fields to `null` (not `true`). Endpoint paths verified against `MeltanoLabs/tap-service-titan` (Singer tap) — several plan paths corrected (e.g. `/timesheets` → `/payrolls`, `/settings` → `/payroll-settings`, `/purchase-orders` deferred as export-only).
+
+### Track 3 — Webhook hardening
+- `ACCEPTED_EVENT_TYPES` allowlist on `webhook-ingest.ts` limited to 4 events from the Velocity n8n trigger node (verified 2026-05-06): `appointmentScheduled`, `jobCompleted`, `paymentReceived`, `customerCreated`. Unknown types now return 400 with `{error: 'unknown_event_type', received: <type>}`.
+- Reads canonical `x-servicetitan-event` header before falling back to body fields.
+- Per-event metric emission via `env.MCP_METRICS.writeDataPoint({indexes: [eventType], blobs: ['webhook'], doubles: [1]})` — cardinality bounded at 4.
+- New migration `0003_webhook_event_index.sql` adds composite index `(event_type, received_at)` for type-filtered queries.
+
+### Tests
+- 316 → 398 tests (+82). `npm run check` clean.
+
+### Deferred to v1.5
+- Mechanical shaper rollout to the remaining ~63 tools.
+- Inventory PO list (export-pattern API, deferred until `from`-token argument shape is added).
+- Numeric slim fields default `0` → `null` for clearer "missing" semantics.
+- Webhook `x-servicetitan-event-id` header read (currently `eventId` still comes from body).
+
+
 ## v1.4.0 — 2026-05-04
 
 ### Bug fixes
