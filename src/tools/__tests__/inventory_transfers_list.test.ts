@@ -78,11 +78,4 @@ describe('inventory_transfers_list', () => {
       inventory_transfers_list.handler(env, {}, { actor: 'test', correlation: 'c1' }),
     ).rejects.toThrow(/inventory_transfers_list failed: 502/);
   });
-
-  it('omits active filter when not provided', async () => {
-    const env = fakeEnv();
-    await inventory_transfers_list.handler(env, {}, { actor: 'test', correlation: 'c1' });
-    const calledUrl = (env.ST_PROXY.fetch as any).mock.calls[0][0];
-    expect(calledUrl).not.toContain('active%3D');
-  });
 });

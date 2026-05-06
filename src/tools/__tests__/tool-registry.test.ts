@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { registerTool } from '../../tool-registry';
 import type { ToolDef } from '../index';
-
+import { TOOLS } from '../index';
 
 describe('registerTool — transformResult', () => {
   it('applies transformResult before serialize', async () => {
@@ -46,8 +46,7 @@ describe('registerTool — transformResult', () => {
 });
 
 describe('TOOLS catalog — v1.4 inventory + payroll', () => {
-  it('includes all 8 new inventory + payroll tools', async () => {
-    const { TOOLS } = await import('../index');
+  it('includes all 8 new inventory + payroll tools', () => {
     const names = TOOLS.map((t) => t.name);
     for (const expected of [
       'inventory_vendors_list',
@@ -63,8 +62,7 @@ describe('TOOLS catalog — v1.4 inventory + payroll', () => {
     }
   });
 
-  it('has unique tool names (no accidental duplicate registration)', async () => {
-    const { TOOLS } = await import('../index');
+  it('has unique tool names (no accidental duplicate registration)', () => {
     const names = TOOLS.map((t) => t.name);
     expect(new Set(names).size).toBe(names.length);
   });
