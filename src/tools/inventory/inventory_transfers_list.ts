@@ -5,7 +5,6 @@ import { defaultShaper } from '../../response-shape';
 import type { ToolDef } from '../index';
 
 interface Args {
-  active?: boolean;
   fromWarehouseId?: number;
   toWarehouseId?: number;
   page?: number;
@@ -51,7 +50,6 @@ export const inventory_transfers_list: ToolDef<Args> = {
   description:
     'List ServiceTitan inventory transfers between warehouses. Filter by from/to warehouse. Source: live ST.',
   zodSchema: {
-    active: z.boolean().optional().describe('Filter to active=true or active=false; omit for both'),
     fromWarehouseId: z.number().int().positive().optional().describe('Filter by source warehouse ID'),
     toWarehouseId: z.number().int().positive().optional().describe('Filter by destination warehouse ID'),
     page: z.number().int().positive().optional().describe('Page number, default 1'),
@@ -67,7 +65,6 @@ export const inventory_transfers_list: ToolDef<Args> = {
     const page = args.page ?? 1;
     const pageSize = Math.min(args.pageSize ?? DEFAULT_PAGESIZE, MAX_PAGESIZE);
     const qs = new URLSearchParams();
-    if (args.active !== undefined) qs.set('active', String(args.active));
     if (args.fromWarehouseId !== undefined) qs.set('fromWarehouseId', String(args.fromWarehouseId));
     if (args.toWarehouseId !== undefined) qs.set('toWarehouseId', String(args.toWarehouseId));
     qs.set('page', String(page));

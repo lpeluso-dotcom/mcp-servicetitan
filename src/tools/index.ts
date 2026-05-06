@@ -1,6 +1,7 @@
 // ============================================================
 // tools/index.ts — Tool registry
 // T5: CRM (6) + Jobs (8) tools added.
+// T10: Inventory (4) + T11: Payroll (4) tools added 2026-05-06.
 // ============================================================
 
 import type { z } from 'zod';
@@ -88,6 +89,16 @@ import { book_job } from './jobs/book_job';
 import { reschedule_appointment } from './jobs/reschedule_appointment';
 import { hold_appointment } from './jobs/hold_appointment';
 import { assign_technicians } from './jobs/assign_technicians';
+// T10 — Inventory (4)
+import { inventory_vendors_list } from './inventory/inventory_vendors_list';
+import { inventory_warehouses_list } from './inventory/inventory_warehouses_list';
+import { inventory_receipts_list } from './inventory/inventory_receipts_list';
+import { inventory_transfers_list } from './inventory/inventory_transfers_list';
+// T11 — Payroll (4)
+import { payroll_payrolls_list } from './payroll/payroll_payrolls_list';
+import { payroll_non_job_timesheets_list } from './payroll/payroll_non_job_timesheets_list';
+import { payroll_location_rates_list } from './payroll/payroll_location_rates_list';
+import { payroll_settings_get } from './payroll/payroll_settings_get';
 
 export interface ToolContext {
   actor: string;
@@ -172,6 +183,10 @@ export const TOOLS: readonly ToolDef<any>[] = [
   call_quality_review, commercial_plumbing_opportunities, membership_jackpot_leaderboard,
   // Siro
   siro_list_mobile_events, siro_get_recording_summary, siro_get_engagement,
+  // T10 Inventory
+  inventory_vendors_list, inventory_warehouses_list, inventory_receipts_list, inventory_transfers_list,
+  // T11 Payroll
+  payroll_payrolls_list, payroll_non_job_timesheets_list, payroll_location_rates_list, payroll_settings_get,
 ] as const;
 
 export function findTool(name: string): ToolDef<any> | undefined {

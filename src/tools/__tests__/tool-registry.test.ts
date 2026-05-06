@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { registerTool } from '../../tool-registry';
 import type { ToolDef } from '../index';
 
+
 describe('registerTool — transformResult', () => {
   it('applies transformResult before serialize', async () => {
     const tool: ToolDef<{ q: string }> = {
@@ -41,5 +42,30 @@ describe('registerTool — transformResult', () => {
     const parsed = JSON.parse(text);
     expect(parsed.paginationToken).toBeUndefined();
     expect(parsed.id).toBe(1);
+  });
+});
+
+describe('TOOLS catalog — v1.4 inventory + payroll', () => {
+  it('includes all 8 new inventory + payroll tools', async () => {
+    const { TOOLS } = await import('../index');
+    const names = TOOLS.map((t) => t.name);
+    for (const expected of [
+      'inventory_vendors_list',
+      'inventory_warehouses_list',
+      'inventory_receipts_list',
+      'inventory_transfers_list',
+      'payroll_payrolls_list',
+      'payroll_non_job_timesheets_list',
+      'payroll_location_rates_list',
+      'payroll_settings_get',
+    ]) {
+      expect(names).toContain(expected);
+    }
+  });
+
+  it('has unique tool names (no accidental duplicate registration)', async () => {
+    const { TOOLS } = await import('../index');
+    const names = TOOLS.map((t) => t.name);
+    expect(new Set(names).size).toBe(names.length);
   });
 });

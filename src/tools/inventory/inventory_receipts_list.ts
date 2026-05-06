@@ -5,7 +5,6 @@ import { defaultShaper } from '../../response-shape';
 import type { ToolDef } from '../index';
 
 interface Args {
-  active?: boolean;
   vendorId?: number;
   warehouseId?: number;
   page?: number;
@@ -54,7 +53,6 @@ export const inventory_receipts_list: ToolDef<Args> = {
   description:
     'List ServiceTitan inventory receipts (incoming items from POs). Filter by vendor or warehouse. Source: live ST.',
   zodSchema: {
-    active: z.boolean().optional().describe('Filter to active=true or active=false; omit for both'),
     vendorId: z.number().int().positive().optional().describe('Filter by vendor ID'),
     warehouseId: z.number().int().positive().optional().describe('Filter by warehouse ID'),
     page: z.number().int().positive().optional().describe('Page number, default 1'),
@@ -70,7 +68,6 @@ export const inventory_receipts_list: ToolDef<Args> = {
     const page = args.page ?? 1;
     const pageSize = Math.min(args.pageSize ?? DEFAULT_PAGESIZE, MAX_PAGESIZE);
     const qs = new URLSearchParams();
-    if (args.active !== undefined) qs.set('active', String(args.active));
     if (args.vendorId !== undefined) qs.set('vendorId', String(args.vendorId));
     if (args.warehouseId !== undefined) qs.set('warehouseId', String(args.warehouseId));
     qs.set('page', String(page));
