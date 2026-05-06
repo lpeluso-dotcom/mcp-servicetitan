@@ -7,7 +7,7 @@ import type { ToolDef } from '../index';
 interface Args {
   employeeId?: number;
   payrollPeriodId?: number;
-  status?: 'Pending' | 'Approved' | 'Posted';
+  status?: 'Pending' | 'Approved' | 'Paid' | 'Locked' | 'Expired';
   page?: number;
   pageSize?: number;
 }
@@ -60,9 +60,9 @@ export const payroll_payrolls_list: ToolDef<Args> = {
     employeeId: z.number().int().positive().optional().describe('Filter by employee ID'),
     payrollPeriodId: z.number().int().positive().optional().describe('Filter by payroll period ID'),
     status: z
-      .enum(['Pending', 'Approved', 'Posted'])
+      .enum(['Pending', 'Approved', 'Paid', 'Locked', 'Expired'])
       .optional()
-      .describe('Filter by payroll status'),
+      .describe('Filter by payroll status (Pending, Approved, Paid, Locked, Expired)'),
     page: z.number().int().positive().optional().describe('Page number, default 1'),
     pageSize: z
       .number()

@@ -60,7 +60,9 @@ export const payroll_location_rates_list: ToolDef<Args> = {
     const pageSize = Math.min(args.pageSize ?? DEFAULT_PAGESIZE, MAX_PAGESIZE);
     const qs = new URLSearchParams();
     if (args.active !== undefined) qs.set('active', String(args.active));
-    if (args.locationId !== undefined) qs.set('locationId', String(args.locationId));
+    // ST endpoint expects `locationIds` (plural) per ServiceTitan API spec — even
+    // when filtering by a single ID. Friendly arg name stays singular.
+    if (args.locationId !== undefined) qs.set('locationIds', String(args.locationId));
     qs.set('page', String(page));
     qs.set('pageSize', String(pageSize));
 

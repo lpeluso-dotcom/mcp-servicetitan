@@ -51,7 +51,7 @@ describe('payroll_location_rates_list', () => {
     const calledUrl = (env.ST_PROXY.fetch as any).mock.calls[0][0];
     expect(calledUrl).toContain('%2Fpayroll%2Fv2%2Ftenant%2F431848990%2Flocations%2Frates');
     expect(calledUrl).toContain('active%3Dtrue');
-    expect(calledUrl).toContain('locationId%3D20');
+    expect(calledUrl).toContain('locationIds%3D20');
     expect(out.has_more).toBe(false);
     expect(out._source).toBe('live');
   });
