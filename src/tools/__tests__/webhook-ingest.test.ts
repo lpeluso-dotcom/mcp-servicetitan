@@ -39,7 +39,7 @@ describe('webhook-ingest', () => {
 
   it('rejects invalid signature', async () => {
     const secret = 'test-secret';
-    const payload = JSON.stringify({ eventId: 'evt-123', eventType: 'customer.created' });
+    const payload = JSON.stringify({ eventId: 'evt-123', eventType: 'customerCreated' });
     const env = makeEnv(secret) as any;
 
     const req = new Request('http://localhost/webhooks/st', {
@@ -89,7 +89,7 @@ describe('webhook-ingest', () => {
 
   it('rejects missing eventId', async () => {
     const secret = 'test-secret';
-    const payload = JSON.stringify({ eventType: 'customer.created' });
+    const payload = JSON.stringify({ eventType: 'customerCreated' });
     const sig = await sign(secret, payload);
     const env = makeEnv(secret) as any;
 
