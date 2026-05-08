@@ -11,7 +11,7 @@ import { WriteGate } from '../write-gate';
 import type { ToolDef } from './index';
 
 export const POLL_INTERVAL_MS = 1000;
-export const POLL_MAX_ATTEMPTS = 20;
+export const POLL_MAX_ATTEMPTS = 60;
 
 interface Args {
   id: number;

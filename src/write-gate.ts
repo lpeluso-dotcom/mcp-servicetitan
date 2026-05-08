@@ -43,8 +43,26 @@ async function hmacVerify(key: string, message: string, expected: string): Promi
   return diff === 0;
 }
 
+// JSON.stringify(value, replacerArray) treats the array as a recursive
+// allowlist, not a sort instruction — nested keys not in the top-level
+// allowlist get dropped entirely. Canonicalize recursively instead so
+// dryRun and confirm hashes agree for args with nested objects.
+function canonicalize(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(canonicalize);
+  const obj = value as Record<string, unknown>;
+  return Object.keys(obj)
+    .sort()
+    .reduce<Record<string, unknown>>((acc, key) => {
+      const v = obj[key];
+      if (v === undefined) return acc;
+      acc[key] = canonicalize(v);
+      return acc;
+    }, {});
+}
+
 export async function hashArgs(args: Record<string, unknown>): Promise<string> {
-  const json = JSON.stringify(args, Object.keys(args).sort());
+  const json = JSON.stringify(canonicalize(args));
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(json));
   return Array.from(new Uint8Array(buf))
     .map((b) => b.toString(16).padStart(2, '0'))
