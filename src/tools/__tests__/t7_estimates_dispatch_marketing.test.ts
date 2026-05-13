@@ -1,7 +1,7 @@
 // ============================================================
-// T7 tests — Estimates (3) + Dispatch (4) + Marketing (3)
+// T7 tests — Estimates (3 read + 3 write) + Dispatch (4) + Marketing (3)
 // Key catalog corrections: get_capacity is POST (not GET),
-// update_estimate_status requires soldBy when status=Sold,
+// sell_estimate requires soldBy (was update_estimate_status pre-2026-05-13),
 // create_call_with_campaign uses telecom stitch pattern.
 // ============================================================
 
@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { list_estimates_job } from '../estimates/list_estimates_job';
 import { get_estimate } from '../estimates/get_estimate';
-import { update_estimate_status } from '../estimates/update_estimate_status';
+import { dismiss_estimate, sell_estimate, unsell_estimate } from '../estimates/update_estimate_status';
 import { get_capacity } from '../dispatch/get_capacity';
 import { list_technicians_available } from '../dispatch/list_technicians_available';
 import { get_technician_shifts } from '../dispatch/get_technician_shifts';
@@ -101,28 +101,38 @@ describe('get_estimate', () => {
   });
 });
 
-describe('update_estimate_status', () => {
-  it('is a write tool', () => expect(update_estimate_status.isWrite).toBe(true));
+describe('dismiss_estimate', () => {
+  it('is a write tool', () => expect(dismiss_estimate.isWrite).toBe(true));
 
   it('defaults to dryRun=true', async () => {
     const env = makeEnv(dryRunFetch());
-    const result: any = await update_estimate_status.handler(env, {
-      estimateId: 10, status: 'Presented',
-    }, CTX);
+    const result: any = await dismiss_estimate.handler(env, { estimateId: 10 }, CTX);
     expect(result.dryRun).toBe(true);
   });
 
-  it('requires soldBy when status=Sold (T7 precondition)', async () => {
-    const env = makeEnv(dryRunFetch());
-    // Handler applies the refine — status=Sold without soldBy must throw
-    await expect(update_estimate_status.handler(env, { estimateId: 10, status: 'Sold' }, CTX))
-      .rejects.toMatchObject({ code: 'validation_error' });
+  it('targets the /dismiss action endpoint', () => {
+    expect(dismiss_estimate.stEndpoint?.path).toBe('/sales/v2/tenant/{tid}/estimates/{estimateId}/dismiss');
+    expect(dismiss_estimate.stEndpoint?.method).toBe('PUT');
+  });
+});
+
+describe('sell_estimate', () => {
+  it('requires soldBy in schema', () => {
+    const schema = z.object(sell_estimate.zodSchema);
+    expect(schema.safeParse({ estimateId: 10 }).success).toBe(false);
+    expect(schema.safeParse({ estimateId: 10, soldBy: 33277431 }).success).toBe(true);
   });
 
-  it('accepts non-Sold statuses without soldBy', async () => {
-    const schema = z.object(update_estimate_status.zodSchema);
-    expect(schema.safeParse({ estimateId: 10, status: 'Presented' }).success).toBe(true);
-    expect(schema.safeParse({ estimateId: 10, status: 'Dismissed' }).success).toBe(true);
+  it('targets the /sell action endpoint with soldBy payload', () => {
+    expect(sell_estimate.stEndpoint?.path).toBe('/sales/v2/tenant/{tid}/estimates/{estimateId}/sell');
+    expect(sell_estimate.stEndpoint?.method).toBe('PUT');
+  });
+});
+
+describe('unsell_estimate', () => {
+  it('targets the /unsell action endpoint', () => {
+    expect(unsell_estimate.stEndpoint?.path).toBe('/sales/v2/tenant/{tid}/estimates/{estimateId}/unsell');
+    expect(unsell_estimate.stEndpoint?.method).toBe('PUT');
   });
 });
 

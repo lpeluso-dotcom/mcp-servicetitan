@@ -59,7 +59,7 @@ import { list_open_tasks } from './tasks/list_open_tasks';
 // T7 — Estimates
 import { list_estimates_job } from './estimates/list_estimates_job';
 import { get_estimate } from './estimates/get_estimate';
-import { update_estimate_status } from './estimates/update_estimate_status';
+import { dismiss_estimate, sell_estimate, unsell_estimate } from './estimates/update_estimate_status';
 // T7 — Dispatch
 import { get_capacity } from './dispatch/get_capacity';
 import { list_technicians_available } from './dispatch/list_technicians_available';
@@ -159,7 +159,7 @@ export const TOOLS: readonly ToolDef<any>[] = [
   // T6 Invoicing
   get_invoice, list_invoices_job, get_invoice_balance, list_unpaid_invoices,
   // T7 Estimates
-  list_estimates_job, get_estimate, update_estimate_status,
+  list_estimates_job, get_estimate, dismiss_estimate, sell_estimate, unsell_estimate,
   // T7 Dispatch
   get_capacity, list_technicians_available, get_technician_shifts, list_non_job_events,
   st_get_capacity_slots,
