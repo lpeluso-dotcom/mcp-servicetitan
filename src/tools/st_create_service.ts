@@ -8,6 +8,7 @@ import { McpError } from '../errors';
 import { WriteGate } from '../write-gate';
 import type { ToolDef } from './index';
 import { durableWrite } from './st_patch_service';
+import { toStPricebookPayload } from './pricebook-payload';
 
 interface Args {
   name: string;
@@ -43,15 +44,19 @@ export const st_create_service: ToolDef<Args> = {
   },
   async handler(env, args, { actor, correlation }) {
     const { dryRun = true, confirmation_token, ...payload } = args;
+    // Rewrite name→displayName and categoryId→categories[N] before submit;
+    // see toStPricebookPayload for rationale. businessArgs (hash input) keeps
+    // the user-facing shape so the dryRun→confirm token matches.
+    const stPayload = toStPricebookPayload(payload);
     const gate = new WriteGate(env);
 
     if (dryRun) {
-      return gate.dryRun('st_create_service', payload, actor, correlation, payload, '/pricebook/v2/tenant/000000000/services', 'POST', 5 * 60 * 1000);
+      return gate.dryRun('st_create_service', payload, actor, correlation, stPayload, '/pricebook/v2/tenant/000000000/services', 'POST', 5 * 60 * 1000);
     }
     if (!confirmation_token) {
       throw new McpError('validation_error', 'confirmation_token required when dryRun=false', { correlation });
     }
     await gate.verifyToken('st_create_service', payload, actor, confirmation_token);
-    return durableWrite(env, { actor, operation: 'service.create', target: { id: '0', type: 'service' }, payload, correlation });
+    return durableWrite(env, { actor, operation: 'service.create', target: { id: '0', type: 'service' }, payload: stPayload, correlation });
   },
 };
