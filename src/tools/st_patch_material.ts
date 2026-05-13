@@ -8,6 +8,7 @@ import { McpError } from '../errors';
 import { WriteGate } from '../write-gate';
 import type { ToolDef } from './index';
 import { durableWrite } from './st_patch_service';
+import { toStPricebookPayload } from './pricebook-payload';
 
 interface Args {
   id: number;
@@ -49,16 +50,17 @@ export const st_patch_material: ToolDef<Args> = {
       throw new McpError('validation_error', 'st_patch_material requires at least one field to update besides id', { correlation });
     }
     const businessArgs = { id, ...payload };
+    const stPayload = toStPricebookPayload(payload);
     const gate = new WriteGate(env);
     const endpoint = `/pricebook/v2/tenant/000000000/materials/${id}`;
 
     if (dryRun) {
-      return gate.dryRun('st_patch_material', businessArgs, actor, correlation, payload, endpoint, 'PATCH', 5 * 60 * 1000);
+      return gate.dryRun('st_patch_material', businessArgs, actor, correlation, stPayload, endpoint, 'PATCH', 5 * 60 * 1000);
     }
     if (!confirmation_token) {
       throw new McpError('validation_error', 'confirmation_token required when dryRun=false', { correlation });
     }
     await gate.verifyToken('st_patch_material', businessArgs, actor, confirmation_token);
-    return durableWrite(env, { actor, operation: 'material.patch', target: { id: String(id), type: 'material' }, payload, correlation });
+    return durableWrite(env, { actor, operation: 'material.patch', target: { id: String(id), type: 'material' }, payload: stPayload, correlation });
   },
 };

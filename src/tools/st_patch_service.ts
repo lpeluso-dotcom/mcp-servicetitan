@@ -9,9 +9,15 @@ import { authHeaders } from '../auth';
 import { McpError, mapUpstreamStatus } from '../errors';
 import { WriteGate } from '../write-gate';
 import type { ToolDef } from './index';
+import { toStPricebookPayload } from './pricebook-payload';
 
-export const POLL_INTERVAL_MS = 1000;
-export const POLL_MAX_ATTEMPTS = 20;
+// Polling budget for upstream durable workflow status. The workflow has 5 steps
+// (precheck/gate/write/verify/commit-log) with their own retries; median ~5–15s
+// but cold start + step scheduling regularly push past 60s. 90 × 2s = 180s covers
+// the realistic ceiling; if we still time out the write probably DID land — GET
+// the resource by code to confirm before retrying.
+export const POLL_INTERVAL_MS = 2000;
+export const POLL_MAX_ATTEMPTS = 90;
 
 interface Args {
   id: number;
@@ -53,17 +59,18 @@ export const st_patch_service: ToolDef<Args> = {
       throw new McpError('validation_error', 'st_patch_service requires at least one field to update besides id', { correlation });
     }
     const businessArgs = { id, ...payload };
+    const stPayload = toStPricebookPayload(payload);
     const gate = new WriteGate(env);
     const endpoint = `/pricebook/v2/tenant/000000000/services/${id}`;
 
     if (dryRun) {
-      return gate.dryRun('st_patch_service', businessArgs, actor, correlation, payload, endpoint, 'PATCH', 5 * 60 * 1000);
+      return gate.dryRun('st_patch_service', businessArgs, actor, correlation, stPayload, endpoint, 'PATCH', 5 * 60 * 1000);
     }
     if (!confirmation_token) {
       throw new McpError('validation_error', 'confirmation_token required when dryRun=false', { correlation });
     }
     await gate.verifyToken('st_patch_service', businessArgs, actor, confirmation_token);
-    return durableWrite(env, { actor, operation: 'service.patch', target: { id: String(id), type: 'service' }, payload, correlation });
+    return durableWrite(env, { actor, operation: 'service.patch', target: { id: String(id), type: 'service' }, payload: stPayload, correlation });
   },
 };
 
@@ -122,5 +129,10 @@ export async function durableWrite(env: Env, opts: DurableWriteOpts): Promise<un
     }
   }
 
-  throw new McpError('timeout', `durable write ${instance_id} did not complete within ${_pollMaxAttempts}s`, { correlation });
+  const elapsedSeconds = Math.round((_pollMaxAttempts * _pollIntervalMs) / 1000);
+  throw new McpError(
+    'timeout',
+    `durable write ${instance_id} did not complete within ${elapsedSeconds}s — the write may still have landed; GET the resource to verify before retrying`,
+    { correlation },
+  );
 }
