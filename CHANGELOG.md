@@ -1,8 +1,8 @@
 # Changelog
 
-## v1.5.1 — 2026-05-19 (UNRELEASED — ST-77 hardening, depends on v1.5)
+## v1.5.1 — 2026-05-19 (ST-77 hardening)
 
-Branch `feat/v1.5.1-st77-hardening` stacks on top of `feat/v1.5-payroll-opportunities-dispatch-pro` (PR #17). Scope follows the external QA reviewer's pick: **sharp**, not a sweep. Tool count **86 → 87** (+1); test count **437 → 451** (+14).
+Stacks on top of v1.5 (PR #17). Scope follows the external QA reviewer's pick: **sharp**, not a sweep. Tool count **86 → 87** (+1); test count **437 → 451** (+14).
 
 ### Infra
 - New `src/st.ts` — `readST(env, ctx, endpoint, query?)` and `readSTPaged(env, ctx, endpoint, query?, options?)`. Centralizes the `env.ST_PROXY.fetch` + `URLSearchParams` + envelope-parse pattern that 30+ tools were hand-rolling. Built-in `hasMore` drain with a `maxPages` cap (default 50) so a runaway loop can't trigger.
@@ -31,7 +31,7 @@ Branch `feat/v1.5.1-st77-hardening` stacks on top of `feat/v1.5-payroll-opportun
 - `settings_intacct_business_unit_mappings_get` — only useful for shops on Sage Intacct.
 - Tool-pack splitting (default / payroll / dispatch / accounting / pricebook / admin views) — context-pressure mitigation; separate design discussion.
 
-## v1.5.0 — 2026-05-19 (UNRELEASED — awaiting Luke review)
+## v1.5.0 — 2026-05-19
 
 PR (`feat/v1.5-payroll-opportunities-dispatch-pro`): payroll + opportunities + dispatch-pro D1-first reads and four costing composites driven by today's ST Payroll API findings. Tool count **75 → 86** (+9 readers added; +2 composites in opportunities/dispatch_pro count is actually 9 new tools); test count **416 → 430** (+14).
 
