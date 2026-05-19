@@ -94,9 +94,10 @@ import { inventory_vendors_list } from './inventory/inventory_vendors_list';
 import { inventory_warehouses_list } from './inventory/inventory_warehouses_list';
 import { inventory_receipts_list } from './inventory/inventory_receipts_list';
 import { inventory_transfers_list } from './inventory/inventory_transfers_list';
-// T13 — Payroll (4)
+// T13 — Payroll (5)
 import { payroll_payrolls_list } from './payroll/payroll_payrolls_list';
 import { payroll_non_job_timesheets_list } from './payroll/payroll_non_job_timesheets_list';
+import { payroll_job_timesheets_list } from './payroll/payroll_job_timesheets_list';
 import { payroll_location_rates_list } from './payroll/payroll_location_rates_list';
 import { payroll_settings_get } from './payroll/payroll_settings_get';
 
@@ -186,7 +187,7 @@ export const TOOLS: readonly ToolDef<any>[] = [
   // T12 Inventory
   inventory_vendors_list, inventory_warehouses_list, inventory_receipts_list, inventory_transfers_list,
   // T13 Payroll
-  payroll_payrolls_list, payroll_non_job_timesheets_list, payroll_location_rates_list, payroll_settings_get,
+  payroll_payrolls_list, payroll_non_job_timesheets_list, payroll_job_timesheets_list, payroll_location_rates_list, payroll_settings_get,
 ] as const;
 
 export function findTool(name: string): ToolDef<any> | undefined {
