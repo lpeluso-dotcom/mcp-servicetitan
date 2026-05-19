@@ -38,6 +38,12 @@ All five use `transformResult: defaultShaper` and read via the shared `src/d1.ts
 - `D1_TABLES` set in `src/read-router.ts` extended with: `job_timesheets`, `opportunities`, `opportunity_statuses`, `dispatch_pro_utilization`, `dispatch_pro_ratio`, `dispatch_pro_alerts`.
 - Pre-deploy follow-up: migration `0003_webhook_event_index.sql` still needs to be applied to prod (`wrangler d1 execute qsc-mcp-st --remote --file migrations/0003_webhook_event_index.sql`).
 
+### QA round 1 — auto-fallback filter-honoring (PR #17 review)
+- `payroll_job_timesheets_list` auto-fallback to live ST now requires `jobId` AND no filter the live endpoint can't honor. Previously the condition included `appointmentId`, but `liveRead`'s batch path only forwards page/pageSize/active=Any/modifiedOnOrAfter — so `{ appointmentId, source: 'auto' }` on empty/stale D1 silently returned a wide-net superset labeled `_source: 'live'`. Same class of bug for `technicianId`, `arrivedOnOrAfter`, `arrivedOnOrBefore`, `active`.
+- `source: 'live'` with any of `technicianId`, `appointmentId`, `arrivedOnOrAfter`, `arrivedOnOrBefore`, `active` now throws `validation_error` instead of silently dropping them.
+- `source: 'auto'` with an unsupported filter still returns the D1 result (no fallback) and includes `_fallback_skipped: 'unsupported_live_filter:<names>'` for transparency.
+- 7 new regression tests cover: appointmentId/technicianId/arrived-window-don't-fallback, mixed-filter jobId+technicianId stays D1, live-rejects on each unsupported filter, jobId+modifiedOnOrAfter passes through cleanly. Test count 430 → 437.
+
 ## v1.4.1 — 2026-05-06
 
 PR #8 (`feat/shape-inventory-webhooks`): three independently-shippable tracks — response shaper, inventory + payroll pack, webhook hardening. Tool count **66 → 74**; test count **316 → 398** (+82).

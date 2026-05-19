@@ -164,8 +164,27 @@ export const payroll_job_timesheets_list: ToolDef<Args> = {
     const page = args.page ?? 1;
     const pageSize = Math.min(args.pageSize ?? DEFAULT_PAGESIZE, MAX_PAGESIZE);
 
-    // Live mode (explicit) — hit ST and return the live shape.
+    // The ST `/payroll/v2/.../jobs/timesheets` endpoint accepts only
+    // page/pageSize/active/modifiedOnOrAfter — and the per-job variant
+    // (`/jobs/{jobId}/timesheets`) takes no filters at all. Any other
+    // arg in `Args` only narrows the D1 read. Block them on the live
+    // path so we never return a superset of unrelated rows masquerading
+    // as a filtered result. `jobId` is allowed because it switches to
+    // the per-job endpoint.
+    const unsupportedOnLive = unsupportedLiveFilters(args);
+
+    // Live mode (explicit) — hit ST and return the live shape, but only
+    // if the caller didn't pass a filter the live endpoint can't honor.
     if (source === 'live') {
+      if (unsupportedOnLive.length > 0) {
+        throw new McpError(
+          'validation_error',
+          `payroll_job_timesheets_list source='live' cannot honor filter(s): ${unsupportedOnLive.join(', ')}. ` +
+            `The live ST endpoint accepts only page/pageSize/active/modifiedOnOrAfter (or jobId for the per-job variant). ` +
+            `Use source='d1' (or 'auto' with jobId) for finer-grained filtering.`,
+          { correlation },
+        );
+      }
       return liveRead(env, args, tenant, page, pageSize, actor, correlation);
     }
 
@@ -227,13 +246,21 @@ export const payroll_job_timesheets_list: ToolDef<Args> = {
       }, 0);
       const staleHours = maxSynced ? (Date.now() - maxSynced) / 3_600_000 : null;
 
-      // Auto-mode: if rows are all-stale or empty AND a jobId/appointmentId
-      // filter is set (cheap to fetch live), fall back to live.
-      if (
+      // Auto-mode: if rows are all-stale or empty AND a jobId is set (the
+      // only filter the live `/jobs/{id}/timesheets` endpoint can honor),
+      // fall back to live. We deliberately do NOT trigger fallback on
+      // appointmentId/technicianId/arrived-window/active — the live batch
+      // path can't express those, so falling back would return a
+      // wide-net superset masquerading as the filtered result. When such
+      // a filter is set, return the D1 result with a _fallback_skipped
+      // hint so the caller knows why we didn't go live.
+      const fallbackEligible =
         source === 'auto' &&
-        (slim.length === 0 || (staleHours !== null && staleHours > STALE_THRESHOLD_HOURS)) &&
-        (args.jobId !== undefined || args.appointmentId !== undefined)
-      ) {
+        args.jobId !== undefined &&
+        unsupportedOnLive.length === 0 &&
+        (slim.length === 0 || (staleHours !== null && staleHours > STALE_THRESHOLD_HOURS));
+
+      if (fallbackEligible) {
         const live = await liveRead(env, args, tenant, page, pageSize, actor, correlation);
         return {
           ...live,
@@ -247,10 +274,14 @@ export const payroll_job_timesheets_list: ToolDef<Args> = {
         has_more: hasMore,
         _source: 'd1',
         _stale_hours: staleHours !== null ? Number(staleHours.toFixed(1)) : null,
+        ...(source === 'auto' && unsupportedOnLive.length > 0
+          ? { _fallback_skipped: `unsupported_live_filter:${unsupportedOnLive.join(',')}` }
+          : {}),
       };
     } catch (err) {
-      // D1 unavailable / unexpected — fall back to live only if auto.
-      if (source === 'auto') {
+      // D1 unavailable / unexpected — fall back to live only if auto AND
+      // the caller didn't set a filter the live endpoint can't honor.
+      if (source === 'auto' && unsupportedOnLive.length === 0 && args.jobId !== undefined) {
         const live = await liveRead(env, args, tenant, page, pageSize, actor, correlation);
         return { ...live, _fallback_reason: `d1_error: ${(err as Error).message}` };
       }
@@ -263,6 +294,20 @@ export const payroll_job_timesheets_list: ToolDef<Args> = {
   },
   transformResult: defaultShaper,
 };
+
+// Filters this tool exposes via Zod that the live ST endpoints can NOT
+// honor. Falling back to live with one of these set would return a
+// superset of rows; surface them so the handler can reject (source='live')
+// or skip-fallback (source='auto').
+function unsupportedLiveFilters(args: Args): string[] {
+  const out: string[] = [];
+  if (args.technicianId !== undefined) out.push('technicianId');
+  if (args.appointmentId !== undefined) out.push('appointmentId');
+  if (args.arrivedOnOrAfter !== undefined) out.push('arrivedOnOrAfter');
+  if (args.arrivedOnOrBefore !== undefined) out.push('arrivedOnOrBefore');
+  if (args.active !== undefined) out.push('active');
+  return out;
+}
 
 async function liveRead(
   env: Env,

@@ -115,6 +115,69 @@ describe('payroll_job_timesheets_list', () => {
       const calls = (env.ST_PROXY.fetch as any).mock.calls;
       expect(calls.every((c: any[]) => !String(c[0]).includes('/api/st/read'))).toBe(true);
     });
+
+    // QA regression — without this guard, appointmentId+source:'auto' on empty
+    // D1 fell through to the live BATCH endpoint, which only forwards
+    // page/pageSize/active/modifiedOnOrAfter. That dropped appointmentId and
+    // returned unrelated timesheets labeled _source: 'live'. Same bug class
+    // applies to technicianId, active, arrived-window filters.
+    it('appointmentId on empty D1 does NOT fall back to live (cannot honor filter)', async () => {
+      const env = envWith([
+        { urlContains: '/api/sql/read', body: { success: true, results: [] } },
+      ]);
+      const out = (await payroll_job_timesheets_list.handler(
+        env,
+        { appointmentId: 5555 },
+        { actor: 'test', correlation: 'c1' },
+      )) as any;
+      expect(out._source).toBe('d1');
+      expect(out.count).toBe(0);
+      expect(out._fallback_skipped).toBe('unsupported_live_filter:appointmentId');
+      const calls = (env.ST_PROXY.fetch as any).mock.calls;
+      expect(calls.every((c: any[]) => !String(c[0]).includes('/api/st/read'))).toBe(true);
+    });
+
+    it('technicianId on empty D1 does NOT fall back to live', async () => {
+      const env = envWith([
+        { urlContains: '/api/sql/read', body: { success: true, results: [] } },
+      ]);
+      const out = (await payroll_job_timesheets_list.handler(
+        env,
+        { technicianId: 999 },
+        { actor: 'test', correlation: 'c1' },
+      )) as any;
+      expect(out._source).toBe('d1');
+      expect(out._fallback_skipped).toBe('unsupported_live_filter:technicianId');
+    });
+
+    it('arrived-window on empty D1 does NOT fall back to live', async () => {
+      const env = envWith([
+        { urlContains: '/api/sql/read', body: { success: true, results: [] } },
+      ]);
+      const out = (await payroll_job_timesheets_list.handler(
+        env,
+        { arrivedOnOrAfter: '2026-01-01', arrivedOnOrBefore: '2026-01-31' },
+        { actor: 'test', correlation: 'c1' },
+      )) as any;
+      expect(out._source).toBe('d1');
+      expect(out._fallback_skipped).toContain('arrivedOnOrAfter');
+      expect(out._fallback_skipped).toContain('arrivedOnOrBefore');
+    });
+
+    it('jobId + unsupported filter on empty D1 still does NOT fall back (mixed-filter case)', async () => {
+      const env = envWith([
+        { urlContains: '/api/sql/read', body: { success: true, results: [] } },
+      ]);
+      const out = (await payroll_job_timesheets_list.handler(
+        env,
+        { jobId: 77423990, technicianId: 999 },
+        { actor: 'test', correlation: 'c1' },
+      )) as any;
+      // jobId would normally trigger fallback, but technicianId can't be
+      // honored — falling back would silently widen the result. Stay D1.
+      expect(out._source).toBe('d1');
+      expect(out._fallback_skipped).toBe('unsupported_live_filter:technicianId');
+    });
   });
 
   describe("live mode (source: 'live')", () => {
@@ -204,6 +267,50 @@ describe('payroll_job_timesheets_list', () => {
           { actor: 'test', correlation: 'c1' },
         ),
       ).rejects.toThrow(/payroll_job_timesheets_list live failed: 503/);
+    });
+
+    // QA regression — explicit 'live' with a filter the live endpoint cannot
+    // honor must fail loud, not silently widen the result set.
+    it("rejects source: 'live' + appointmentId (live endpoint cannot filter by appointmentId)", async () => {
+      const env = envWith([
+        { urlContains: '/api/st/read', body: { data: [] } },
+      ]);
+      await expect(
+        payroll_job_timesheets_list.handler(
+          env,
+          { appointmentId: 5555, source: 'live' },
+          { actor: 'test', correlation: 'c1' },
+        ),
+      ).rejects.toThrow(/cannot honor filter\(s\): appointmentId/);
+      // Live ST must NOT have been called.
+      const calls = (env.ST_PROXY.fetch as any).mock.calls;
+      expect(calls.every((c: any[]) => !String(c[0]).includes('/api/st/read'))).toBe(true);
+    });
+
+    it("rejects source: 'live' + technicianId / active / arrived-window", async () => {
+      const env = envWith([
+        { urlContains: '/api/st/read', body: { data: [] } },
+      ]);
+      await expect(
+        payroll_job_timesheets_list.handler(
+          env,
+          { technicianId: 999, active: true, source: 'live' },
+          { actor: 'test', correlation: 'c1' },
+        ),
+      ).rejects.toThrow(/cannot honor filter\(s\): technicianId, active/);
+    });
+
+    it("source: 'live' + jobId + modifiedOnOrAfter passes through (both are honored)", async () => {
+      const env = envWith([
+        { urlContains: '/api/st/read', body: { data: [PROBE_ROW] } },
+      ]);
+      const out = (await payroll_job_timesheets_list.handler(
+        env,
+        { jobId: 77423990, modifiedOnOrAfter: '2026-01-01T00:00:00Z', source: 'live' },
+        { actor: 'test', correlation: 'c1' },
+      )) as any;
+      expect(out._source).toBe('live');
+      expect(out.count).toBe(1);
     });
   });
 });
