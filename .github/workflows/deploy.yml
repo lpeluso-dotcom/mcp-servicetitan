@@ -3,11 +3,27 @@ name: Deploy to Cloudflare
 # Manual deploy only. CI validates pushes and pull requests; deployment is kept
 # explicit so public-feedback changes are not coupled directly to the live worker.
 #
+# wrangler.toml is committed with placeholder IDs so the repo stays
+# fork-friendly. Real Cloudflare resource IDs are injected at deploy time
+# from GitHub Actions secrets via the "Inject deploy config" step below.
+#
 # Setup (one-time, on your-org/mcp-servicetitan):
-#   gh secret set CLOUDFLARE_API_TOKEN --body "<token>"
+#   gh secret set CLOUDFLARE_API_TOKEN     --body "<api-token>"
+#   gh secret set ST_TENANT_ID             --body "<tenant-id>"
+#   gh secret set D1_DATABASE_ID_PROD      --body "<uuid>"
+#   gh secret set D1_DATABASE_ID_DEV       --body "<uuid>"
+#   gh secret set KV_NAMESPACE_ID_PROD     --body "<32-char-id>"
+#   gh secret set KV_NAMESPACE_ID_DEV      --body "<32-char-id>"
+#   gh secret set ST_PROXY_SERVICE_PROD    --body "<worker-name>"  # e.g. taylor-ai
+#   gh secret set ST_PROXY_SERVICE_DEV     --body "<worker-name>"  # e.g. taylor-ai-dev
+#
+# All eight are required for a clean deploy. If any of the resource-ID
+# secrets are missing, the "Inject deploy config" step will leave the
+# placeholder in place and the subsequent wrangler deploy will fail with
+# a clear "namespace not found" / "database not found" error.
 #
 # Manual trigger:
-#   gh workflow run deploy.yml
+#   gh workflow run deploy.yml -f env=prod
 
 on:
   workflow_dispatch:
@@ -46,6 +62,24 @@ jobs:
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/${VERSION}/gitleaks_${VERSION#v}_linux_x64.tar.gz" \
             | tar -xz -C /usr/local/bin gitleaks
           gitleaks version
+
+      # Substitute placeholder IDs in wrangler.toml with real values from
+      # GH Actions secrets. The committed wrangler.toml uses all-zero
+      # placeholders so the repo stays fork-friendly; this step runs in
+      # CI only and never writes back to git.
+      #
+      # Implementation in scripts/inject-deploy-config.py — see that file
+      # for the section-aware substitution logic.
+      - name: Inject deploy config from secrets
+        env:
+          ST_TENANT_ID:          ${{ secrets.ST_TENANT_ID }}
+          D1_DATABASE_ID_PROD:   ${{ secrets.D1_DATABASE_ID_PROD }}
+          D1_DATABASE_ID_DEV:    ${{ secrets.D1_DATABASE_ID_DEV }}
+          KV_NAMESPACE_ID_PROD:  ${{ secrets.KV_NAMESPACE_ID_PROD }}
+          KV_NAMESPACE_ID_DEV:   ${{ secrets.KV_NAMESPACE_ID_DEV }}
+          ST_PROXY_SERVICE_PROD: ${{ secrets.ST_PROXY_SERVICE_PROD }}
+          ST_PROXY_SERVICE_DEV:  ${{ secrets.ST_PROXY_SERVICE_DEV }}
+        run: python3 scripts/inject-deploy-config.py
 
       # Preflight runs the full pre-deploy gate: file presence, bindings,
       # secrets, and local repository hygiene.
