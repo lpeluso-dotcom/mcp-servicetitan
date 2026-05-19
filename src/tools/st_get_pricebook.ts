@@ -4,10 +4,9 @@
 // ============================================================
 
 import { z } from 'zod';
-import type { Env } from '../env';
-import { authHeaders } from '../auth';
 import { cacheGet } from '../cache';
-import { McpError, mapUpstreamStatus } from '../errors';
+import { McpError } from '../errors';
+import { readST } from '../st';
 import type { ToolDef } from './index';
 
 const TENANT_ID = '000000000';
@@ -28,6 +27,7 @@ export const st_get_pricebook: ToolDef<Args> = {
   name: 'st_get_pricebook',
   description:
     'List ServiceTitan pricebook items by asset type (services, materials, or equipment). Read-only. Cached 10 min. The primary source for pricebook data is the pb_services / pb_materials / pb_equipment D1 tables synced nightly — use this tool for live-state verification.',
+  stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/{assetType}', source: 'live' },
   zodSchema: {
     assetType: z
       .enum(['services', 'materials', 'equipment'])
@@ -43,22 +43,14 @@ export const st_get_pricebook: ToolDef<Args> = {
     }
     const page = args.page ?? 1;
     const pageSize = Math.min(args.pageSize ?? 50, 200);
-    const qs = new URLSearchParams();
-    qs.set('page', String(page));
-    qs.set('pageSize', String(pageSize));
-    if (args.active !== undefined) qs.set('active', String(args.active));
-    if (args.search) qs.set('search', args.search);
-    const endpoint = `/pricebook/v2/tenant/${TENANT_ID}/${args.assetType}?${qs.toString()}`;
-    const cacheKey = `${args.assetType}?${qs.toString()}`;
+    const query: Record<string, unknown> = { page, pageSize };
+    if (args.active !== undefined) query.active = args.active;
+    if (args.search) query.search = args.search;
+    const endpoint = `/pricebook/v2/tenant/${TENANT_ID}/${args.assetType}`;
+    const cacheKey = `${args.assetType}:${JSON.stringify(query)}`;
 
-    return cacheGet(env, NAMESPACE, cacheKey, CACHE_TTL_SEC, async () => {
-      const url = `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
-      const resp = await env.ST_PROXY.fetch(url, { headers: authHeaders(env, correlation, actor) });
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => '');
-        throw new McpError(mapUpstreamStatus(resp.status), `ST pricebook ${args.assetType} ${resp.status}: ${body.slice(0, 200)}`, { correlation });
-      }
-      return resp.json();
-    });
+    return cacheGet(env, NAMESPACE, cacheKey, CACHE_TTL_SEC, async () =>
+      readST(env, { actor, correlation }, endpoint, query),
+    );
   },
 };

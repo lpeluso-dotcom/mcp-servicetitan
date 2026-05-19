@@ -1,8 +1,9 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
 import { cacheGet } from '../../cache';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
+
+const TENANT_ID = '000000000';
 
 interface Args { active?: boolean; page?: number; pageSize?: number }
 
@@ -22,17 +23,17 @@ export const list_service_categories: ToolDef<Args> = {
     const cacheKey = JSON.stringify({ active: args.active ?? null, page, pageSize });
 
     return cacheGet(env, 'servicetitan:list_service_categories', cacheKey, 600, async () => {
-      const qs = new URLSearchParams();
-      if (args.active !== undefined) qs.set('active', String(args.active));
-      qs.set('page', String(page));
-      qs.set('pageSize', String(pageSize));
-
-      const resp = await env.ST_PROXY.fetch(
-        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/000000000/categories?${qs}`)}`,
-        { headers: authHeaders(env, correlation, actor) }
+      const query: Record<string, unknown> = {
+        active: args.active,
+        page,
+        pageSize,
+      };
+      const data = await readST<{ data?: unknown[] }>(
+        env,
+        { actor, correlation },
+        `/pricebook/v2/tenant/${TENANT_ID}/categories`,
+        query,
       );
-      if (!resp.ok) throw new McpError('upstream_error', `list_service_categories failed: ${resp.status}`, { correlation });
-      const data = await resp.json<{ data?: unknown[] }>();
       return { categories: data.data ?? [], _source: 'live' };
     });
   },

@@ -100,6 +100,20 @@ import { payroll_non_job_timesheets_list } from './payroll/payroll_non_job_times
 import { payroll_job_timesheets_list } from './payroll/payroll_job_timesheets_list';
 import { payroll_location_rates_list } from './payroll/payroll_location_rates_list';
 import { payroll_settings_get } from './payroll/payroll_settings_get';
+// v1.5 — Opportunities (2)
+import { opportunities_list } from './opportunities/opportunities_list';
+import { opportunity_get } from './opportunities/opportunity_get';
+// v1.5 — Dispatch Pro (3)
+import { dispatch_pro_utilization_list } from './dispatch-pro/dispatch_pro_utilization_list';
+import { dispatch_pro_ratio_list } from './dispatch-pro/dispatch_pro_ratio_list';
+import { dispatch_pro_alerts_list } from './dispatch-pro/dispatch_pro_alerts_list';
+// v1.5 — Composites (4)
+import { job_cost_actuals } from './composites/job_cost_actuals';
+import { tech_drive_time_summary } from './composites/tech_drive_time_summary';
+import { assigned_vs_sold_estimate_audit } from './composites/assigned_vs_sold_estimate_audit';
+import { open_opportunities_pulitzer_feed } from './composites/open_opportunities_pulitzer_feed';
+// v1.5.1 ST-77 — Job hold reasons
+import { jobs_hold_reasons_list } from './jobs/jobs_hold_reasons_list';
 
 export interface ToolContext {
   actor: string;
@@ -188,6 +202,14 @@ export const TOOLS: readonly ToolDef<any>[] = [
   inventory_vendors_list, inventory_warehouses_list, inventory_receipts_list, inventory_transfers_list,
   // T13 Payroll
   payroll_payrolls_list, payroll_non_job_timesheets_list, payroll_job_timesheets_list, payroll_location_rates_list, payroll_settings_get,
+  // v1.5 Opportunities
+  opportunities_list, opportunity_get,
+  // v1.5 Dispatch Pro (D1 mirrors of native ST reports)
+  dispatch_pro_utilization_list, dispatch_pro_ratio_list, dispatch_pro_alerts_list,
+  // v1.5 Composites
+  job_cost_actuals, tech_drive_time_summary, assigned_vs_sold_estimate_audit, open_opportunities_pulitzer_feed,
+  // v1.5.1 ST-77
+  jobs_hold_reasons_list,
 ] as const;
 
 export function findTool(name: string): ToolDef<any> | undefined {

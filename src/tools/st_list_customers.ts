@@ -4,10 +4,8 @@
 // ============================================================
 
 import { z } from 'zod';
-import type { Env } from '../env';
-import { authHeaders } from '../auth';
 import { cacheGet } from '../cache';
-import { McpError, mapUpstreamStatus } from '../errors';
+import { readST } from '../st';
 import type { ToolDef } from './index';
 import { defaultShaper } from '../response-shape';
 
@@ -33,24 +31,17 @@ export const st_list_customers: ToolDef<Args> = {
       .optional()
       .describe('ISO 8601 timestamp, returns customers modified on or after this time'),
   },
+  stEndpoint: { method: 'GET', path: '/crm/v2/tenant/{tid}/customers', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     const page = args.page ?? 1;
     const pageSize = Math.min(args.pageSize ?? 50, 200);
-    const modifiedFilter = args.modifiedOnOrAfter
-      ? `&modifiedOnOrAfter=${encodeURIComponent(args.modifiedOnOrAfter)}`
-      : '';
-    const endpoint = `/crm/v2/tenant/${TENANT_ID}/customers?page=${page}&pageSize=${pageSize}${modifiedFilter}`;
-    const cacheKey = `page=${page}&pageSize=${pageSize}&mod=${args.modifiedOnOrAfter ?? ''}`;
+    const query: Record<string, unknown> = { page, pageSize };
+    if (args.modifiedOnOrAfter) query.modifiedOnOrAfter = args.modifiedOnOrAfter;
+    const cacheKey = JSON.stringify(query);
 
-    return cacheGet(env, NAMESPACE, cacheKey, CACHE_TTL_SEC, async () => {
-      const url = `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
-      const resp = await env.ST_PROXY.fetch(url, { headers: authHeaders(env, correlation, actor) });
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => '');
-        throw new McpError(mapUpstreamStatus(resp.status), `ST list_customers ${resp.status}: ${body.slice(0, 200)}`, { correlation });
-      }
-      return resp.json();
-    });
+    return cacheGet(env, NAMESPACE, cacheKey, CACHE_TTL_SEC, async () =>
+      readST(env, { actor, correlation }, `/crm/v2/tenant/${TENANT_ID}/customers`, query),
+    );
   },
   transformResult: defaultShaper,
 };

@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args { jobId: number; page?: number; pageSize?: number }
@@ -13,18 +12,19 @@ export const list_invoices_job: ToolDef<Args> = {
     page: z.number().int().positive().default(1).describe('Page number'),
     pageSize: z.number().int().positive().max(200).default(50).describe('Page size, max 200'),
   },
+  stEndpoint: { method: 'GET', path: '/accounting/v2/tenant/{tid}/invoices', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    const qs = new URLSearchParams();
-    qs.set('jobId', String(args.jobId));
-    qs.set('page', String(args.page ?? 1));
-    qs.set('pageSize', String(args.pageSize ?? 50));
-
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/accounting/v2/tenant/000000000/invoices?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const query: Record<string, unknown> = {
+      jobId: args.jobId,
+      page: args.page ?? 1,
+      pageSize: args.pageSize ?? 50,
+    };
+    const data = await readST<{ data?: unknown[] }>(
+      env,
+      { actor, correlation },
+      '/accounting/v2/tenant/000000000/invoices',
+      query,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `list_invoices_job failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: unknown[] }>();
     return { invoices: data.data ?? [], _source: 'live' };
   },
 };

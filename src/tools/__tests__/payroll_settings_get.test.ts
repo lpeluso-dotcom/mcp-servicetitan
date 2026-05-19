@@ -34,6 +34,6 @@ describe('payroll_settings_get', () => {
     } as any;
     await expect(
       payroll_settings_get.handler(env, {}, { actor: 'test', correlation: 'c1' }),
-    ).rejects.toThrow(/payroll_settings_get failed: 500/);
+    ).rejects.toThrow(/readST 500 on \/payroll\/v2\/tenant\/431848990\/payroll-settings/);
   });
 });

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import { resolveBusinessUnit } from '../../name-resolver';
 import type { ToolDef } from '../index';
 
@@ -36,18 +36,19 @@ export const list_technicians_available: ToolDef<Args> = {
       if (r.ambiguous) warnings.push(`businessUnit_name_ambiguous: chose ${r.id} for "${args.businessUnitName}"`);
     }
 
-    const qs = new URLSearchParams();
-    if (args.date) qs.set('requestedOn', args.date);
-    if (buId !== undefined) qs.set('businessUnitId', String(buId));
-    qs.set('page', String(args.page ?? 1));
-    qs.set('pageSize', String(args.pageSize ?? 50));
+    const query: Record<string, unknown> = {
+      page: args.page ?? 1,
+      pageSize: args.pageSize ?? 50,
+    };
+    if (args.date) query.requestedOn = args.date;
+    if (buId !== undefined) query.businessUnitId = buId;
 
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/dispatch/v2/tenant/000000000/technicians?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const data = await readST<{ data?: unknown[] }>(
+      env,
+      { actor, correlation },
+      '/dispatch/v2/tenant/000000000/technicians',
+      query,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `list_technicians_available failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: unknown[] }>();
     return {
       technicians: data.data ?? [],
       _source: 'live',

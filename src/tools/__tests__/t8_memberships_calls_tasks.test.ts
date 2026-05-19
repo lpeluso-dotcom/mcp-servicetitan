@@ -219,23 +219,37 @@ describe('get_form_submission', () => {
 // ── Tasks ─────────────────────────────────────────────────────
 
 describe('create_task', () => {
+  // v1.5: schema now requires 8 ST-mandatory fields (name, jobId, body, reportedById,
+  // businessUnitId, employeeTaskTypeId, employeeTaskSourceId, plus the existing 4).
+  const VALID_ARGS: any = {
+    name: 'Follow up',
+    jobId: 100,
+    body: 'Customer requested follow-up on quote.',
+    reportedById: 5001,
+    businessUnitId: 7001,
+    employeeTaskTypeId: 11,
+    employeeTaskSourceId: 22,
+  };
+
   it('is a write tool', () => expect(create_task.isWrite).toBe(true));
 
-  it('requires name and jobId', async () => {
+  it('requires all 7 mandatory fields (v1.5)', async () => {
     const schema = z.object(create_task.zodSchema);
     expect(schema.safeParse({}).success).toBe(false);
     expect(schema.safeParse({ name: 'Follow up' }).success).toBe(false);
+    expect(schema.safeParse({ name: 'Follow up', jobId: 100 }).success).toBe(false);
+    expect(schema.safeParse(VALID_ARGS).success).toBe(true);
   });
 
   it('defaults to dryRun=true', async () => {
     const env = makeEnv(dryRunFetch());
-    const result: any = await create_task.handler(env, { name: 'Follow up', jobId: 100 }, CTX);
+    const result: any = await create_task.handler(env, VALID_ARGS, CTX);
     expect(result.dryRun).toBe(true);
   });
 
   it('uses /taskmanagement/ path (no hyphen — T8 correction)', async () => {
     const env = makeEnv(dryRunFetch());
-    const result: any = await create_task.handler(env, { name: 'Follow up', jobId: 100 }, CTX);
+    const result: any = await create_task.handler(env, VALID_ARGS, CTX);
     expect(result.st_endpoint).toContain('taskmanagement');
     expect(result.st_endpoint).not.toContain('task-management');
   });

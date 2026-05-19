@@ -79,7 +79,7 @@ describe('inventory_receipts_list', () => {
     } as any;
     await expect(
       inventory_receipts_list.handler(env, {}, { actor: 'test', correlation: 'c1' }),
-    ).rejects.toThrow(/inventory_receipts_list failed: 500/);
+    ).rejects.toThrow(/readST 500 on \/inventory\/v2\/tenant\/431848990\/receipts/);
   });
 
   it('returns count=0 and receipts=[] when ST returns empty data', async () => {

@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args { activeOnly?: boolean }
@@ -13,17 +12,17 @@ export const pricebook_health_check_services: ToolDef<Args> = {
   zodSchema: {
     activeOnly: z.boolean().default(true).describe('Only check active services (default: true)'),
   },
+  stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/services', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    const qs = new URLSearchParams();
-    if (args.activeOnly !== false) qs.set('active', 'true');
-    qs.set('pageSize', '200');
+    const query: Record<string, unknown> = { pageSize: 200 };
+    if (args.activeOnly !== false) query.active = 'true';
 
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/000000000/services?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const data = await readST<{ data?: any[] }>(
+      env,
+      { actor, correlation },
+      `/pricebook/v2/tenant/000000000/services`,
+      query,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `pricebook_health_check_services failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: any[] }>();
     const services = data.data ?? [];
 
     const zeroCost = services.filter((s) => (s.cost ?? 0) === 0);

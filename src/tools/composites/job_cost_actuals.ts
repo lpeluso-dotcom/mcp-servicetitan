@@ -1,0 +1,258 @@
+// ============================================================
+// job_cost_actuals — L5 composite for per-job labor-burden diagnostics.
+//
+// Returns the data shape the Q1 job-costing analysis needed in one call:
+//   - job (D1)
+//   - timesheets (D1 job_timesheets — drive_minutes + working_minutes per tech)
+//   - appointments + assignments (D1 — for the labor split)
+//   - invoice (live ST — single record, freshest)
+//   - estimates (D1 — by job_id)
+//   - computed labor_burden_$ = (sum_drive + sum_work) × burdenRate / 60
+//
+// Reconciliation reference (2026-05-19 probe): job 77423990 / Brooks
+// returned drive=24m + work=152m → burden ≈ $132 at $45/hr, matching
+// the invoice Splits block exactly.
+// ============================================================
+import { z } from 'zod';
+import { authHeaders } from '../../auth';
+import { gatherFetches, stRead } from '../../composite-helpers';
+import { defaultShaper } from '../../response-shape';
+import { readD1 } from '../../d1';
+import type { ToolDef } from '../index';
+
+interface Args {
+  jobId: number;
+  burdenRate?: number;
+}
+
+interface JobRow {
+  job_id: number;
+  job_number: string | null;
+  customer_id: number | null;
+  business_unit: string | null;
+  job_type: string | null;
+  job_status: string | null;
+  completed_date: string | null;
+  revenue: number | null;
+  project_id: number | null;
+  modified_at: string | null;
+}
+
+interface TimesheetRow {
+  timesheet_id: number;
+  job_id: number;
+  appointment_id: number | null;
+  technician_id: number;
+  dispatched_on: string | null;
+  arrived_on: string | null;
+  canceled_on: string | null;
+  done_on: string | null;
+  drive_minutes: number | null;
+  working_minutes: number | null;
+  active: number;
+}
+
+interface AppointmentRow {
+  appointment_id: number;
+  job_id: number;
+  appointment_number: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  status: string | null;
+}
+
+interface AssignmentRow {
+  assignment_id: number;
+  appointment_id: number;
+  job_id: number;
+  technician_id: number;
+  technician_name: string | null;
+  status: string | null;
+}
+
+interface EstimateRow {
+  estimate_id: number;
+  job_id: number | null;
+  name: string | null;
+  status: string | null;
+  total: number | null;
+  sold_by: string | null;
+  active: number;
+  modified_at: string | null;
+}
+
+interface TechnicianRow {
+  technician_id: number;
+  name: string | null;
+  business_unit: string | null;
+}
+
+const DEFAULT_BURDEN_RATE = 45;
+
+export const job_cost_actuals: ToolDef<Args> = {
+  name: 'job_cost_actuals',
+  description:
+    'L5 composite for per-job labor-burden diagnostics. Returns the job, its timesheets (with ' +
+    'drive_minutes + working_minutes per tech), appointments + assignments, estimates, and the ' +
+    'live invoice, plus a computed labor_burden_$ summary (sum_drive + sum_work) × burdenRate / 60. ' +
+    'Defaults burdenRate to $45/hr (QSC standard; matches the 2026-05-19 probe reconciliation). ' +
+    'Source: mixed (D1 job_timesheets + jobs + appointments + assignments + estimates + live ST invoice).',
+  zodSchema: {
+    jobId: z.number().int().positive().describe('ST job ID'),
+    burdenRate: z
+      .number()
+      .positive()
+      .optional()
+      .describe(`Loaded labor cost per hour (default $${DEFAULT_BURDEN_RATE}).`),
+  },
+  stEndpoint: { method: 'GET', path: '/jpm/v2/tenant/{tid}/jobs/{id}', source: 'mixed' },
+  async handler(env, args, { actor, correlation }) {
+    const { jobId } = args;
+    const burdenRate = args.burdenRate ?? DEFAULT_BURDEN_RATE;
+    const headers = authHeaders(env, correlation, actor);
+    const tenant = env.ST_TENANT_ID;
+
+    // Parallel D1 reads + one live invoice fanout.
+    const [jobRows, tsRows, apptRows, asgRows, estRows] = await Promise.all([
+      readD1<JobRow>(
+        env,
+        `SELECT job_id, job_number, customer_id, business_unit, job_type, job_status,
+                completed_date, revenue, project_id, modified_at
+         FROM jobs WHERE job_id = ? LIMIT 1`,
+        [jobId],
+      ),
+      readD1<TimesheetRow>(
+        env,
+        `SELECT timesheet_id, job_id, appointment_id, technician_id,
+                dispatched_on, arrived_on, canceled_on, done_on,
+                drive_minutes, working_minutes, active
+         FROM job_timesheets WHERE job_id = ? ORDER BY arrived_on ASC`,
+        [jobId],
+      ),
+      readD1<AppointmentRow>(
+        env,
+        `SELECT appointment_id, job_id, appointment_number, start_date, end_date, status
+         FROM appointments WHERE job_id = ? ORDER BY start_date ASC`,
+        [jobId],
+      ),
+      readD1<AssignmentRow>(
+        env,
+        `SELECT assignment_id, appointment_id, job_id, technician_id, technician_name, status
+         FROM appointment_assignments WHERE job_id = ?`,
+        [jobId],
+      ),
+      readD1<EstimateRow>(
+        env,
+        `SELECT estimate_id, job_id, name, status, total, sold_by, active, modified_at
+         FROM estimates WHERE job_id = ? ORDER BY modified_at DESC`,
+        [jobId],
+      ),
+    ]);
+
+    const job = jobRows.rows[0] ?? null;
+
+    // Live invoice fetch — D1 invoice_items don't carry the labor_burden column
+    // ST renders on the invoice UI; the live invoice does. Fanout-style for the
+    // typical "this job's invoice" join.
+    const invoiceFanout = await gatherFetches([
+      {
+        name: 'invoice',
+        promise: stRead(env, headers, `/accounting/v2/tenant/${tenant}/invoices?jobId=${jobId}`),
+      },
+    ]);
+    const invoiceData = invoiceFanout.results.invoice;
+    const firstInvoice = Array.isArray(invoiceData)
+      ? invoiceData[0]
+      : invoiceData != null && typeof invoiceData === 'object' && 'data' in invoiceData
+        ? (invoiceData as { data?: unknown[] }).data?.[0] ?? null
+        : invoiceData;
+
+    // Per-tech rollup of drive + work.
+    const perTech = new Map<
+      number,
+      {
+        technician_id: number;
+        technician_name: string | null;
+        drive_minutes: number;
+        working_minutes: number;
+        timesheet_count: number;
+      }
+    >();
+    let sumDrive = 0;
+    let sumWork = 0;
+    for (const t of tsRows.rows) {
+      if (t.active === 0) continue;
+      const drive = t.drive_minutes ?? 0;
+      const work = t.working_minutes ?? 0;
+      sumDrive += drive;
+      sumWork += work;
+      const existing = perTech.get(t.technician_id);
+      const techName = asgRows.rows.find((a) => a.technician_id === t.technician_id)?.technician_name ?? null;
+      if (existing) {
+        existing.drive_minutes += drive;
+        existing.working_minutes += work;
+        existing.timesheet_count += 1;
+      } else {
+        perTech.set(t.technician_id, {
+          technician_id: t.technician_id,
+          technician_name: techName,
+          drive_minutes: drive,
+          working_minutes: work,
+          timesheet_count: 1,
+        });
+      }
+    }
+
+    const totalMinutes = sumDrive + sumWork;
+    const laborBurden$ = Number(((totalMinutes / 60) * burdenRate).toFixed(2));
+    const revenue = job?.revenue ?? null;
+
+    // Pull technician names for any per-tech row missing one (assignments may
+    // miss a tech that's on a timesheet but not on appointment_assignments).
+    const missingTechIds = [...perTech.values()].filter((p) => p.technician_name === null).map((p) => p.technician_id);
+    if (missingTechIds.length > 0) {
+      const placeholders = missingTechIds.map(() => '?').join(',');
+      const { rows: techRows } = await readD1<TechnicianRow>(
+        env,
+        `SELECT technician_id, name, business_unit FROM technicians WHERE technician_id IN (${placeholders})`,
+        missingTechIds,
+      );
+      for (const t of techRows) {
+        const row = perTech.get(t.technician_id);
+        if (row) row.technician_name = t.name;
+      }
+    }
+
+    return {
+      jobId,
+      job,
+      summary: {
+        total_drive_minutes: sumDrive,
+        total_working_minutes: sumWork,
+        total_minutes: totalMinutes,
+        burden_rate_per_hour: burdenRate,
+        labor_burden_$: laborBurden$,
+        revenue,
+        gross_profit_$: revenue !== null ? Number((revenue - laborBurden$).toFixed(2)) : null,
+        gross_margin_pct:
+          revenue !== null && revenue > 0
+            ? Number((((revenue - laborBurden$) / revenue) * 100).toFixed(1))
+            : null,
+      },
+      per_technician: [...perTech.values()].sort(
+        (a, b) => b.working_minutes - a.working_minutes,
+      ),
+      timesheets: tsRows.rows.map((t) => ({ ...t, active: t.active !== 0 })),
+      appointments: apptRows.rows,
+      assignments: asgRows.rows,
+      estimates: estRows.rows.map((e) => ({ ...e, active: e.active !== 0 })),
+      invoice: firstInvoice ?? null,
+      _partial: invoiceFanout.partial,
+      _failures: invoiceFanout.failures,
+      _composite: 'job_cost_actuals',
+      _source: 'mixed',
+      correlation,
+    };
+  },
+  transformResult: defaultShaper,
+};

@@ -91,6 +91,7 @@ export const search_pricebook_all: ToolDef<Args> = {
   name: 'search_pricebook_all',
   description:
     'Search ServiceTitan pricebook across services, materials, and equipment in one call. Use code for an exact lookup, or query for fuzzy name/description/category matching. Returns up to 8 items ranked by price descending, each with a type discriminator (service/material/equipment) and member_price where applicable. Source: D1 (pb_services / pb_materials / pb_equipment via servicetitan-proxy). Tuned for voice-agent usage (sub-100ms typical).',
+  stEndpoint: { method: 'GET', path: 'd1://pb_services+pb_materials+pb_equipment', source: 'd1' },
   zodSchema: {
     code: z.string().optional().describe('Exact pricebook code (e.g. "HUM-120"). Wins over query if both provided.'),
     query: z.string().min(1).max(100).optional().describe('Free-text term to fuzzy-match against name, description, or category. Tech slang should be translated by the caller (e.g. "Navien" → "tankless water heater").'),

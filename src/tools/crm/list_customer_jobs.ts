@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args { customerId: number; status?: string; page?: number; pageSize?: number }
@@ -14,17 +13,18 @@ export const list_customer_jobs: ToolDef<Args> = {
     page: z.number().int().positive().optional(),
     pageSize: z.number().int().positive().max(200).optional(),
   },
+  stEndpoint: { method: 'GET', path: '/jpm/v2/tenant/{tid}/jobs', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    const qs = new URLSearchParams({ customerId: String(args.customerId) });
-    if (args.status) qs.set('jobStatus', args.status);
-    if (args.page) qs.set('page', String(args.page));
-    if (args.pageSize) qs.set('pageSize', String(args.pageSize));
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/000000000/jobs?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const query: Record<string, unknown> = { customerId: args.customerId };
+    if (args.status) query.jobStatus = args.status;
+    if (args.page) query.page = args.page;
+    if (args.pageSize) query.pageSize = args.pageSize;
+    const data = await readST<{ data?: unknown[] }>(
+      env,
+      { actor, correlation },
+      `/jpm/v2/tenant/000000000/jobs`,
+      query,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `list_customer_jobs failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: unknown[] }>();
     return { jobs: data.data ?? [], _source: 'live' };
   },
 };

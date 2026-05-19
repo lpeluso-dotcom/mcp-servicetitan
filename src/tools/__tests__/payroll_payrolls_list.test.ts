@@ -82,7 +82,7 @@ describe('payroll_payrolls_list', () => {
     } as any;
     await expect(
       payroll_payrolls_list.handler(env, {}, { actor: 'test', correlation: 'c1' }),
-    ).rejects.toThrow(/payroll_payrolls_list failed: 503/);
+    ).rejects.toThrow(/readST 503 on \/payroll\/v2\/tenant\/.+\/payrolls/);
   });
 
   it('returns count=0 and payrolls=[] when ST returns empty data', async () => {

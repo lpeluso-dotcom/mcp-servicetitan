@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args { customerId: number; active?: boolean }
@@ -12,15 +11,16 @@ export const get_customer_membership: ToolDef<Args> = {
     customerId: z.number().int().positive().describe('ST customer ID'),
     active: z.boolean().optional().describe('Filter to active memberships only'),
   },
+  stEndpoint: { method: 'GET', path: '/memberships/v2/tenant/{tid}/memberships', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    const qs = new URLSearchParams({ customerId: String(args.customerId) });
-    if (args.active !== undefined) qs.set('active', String(args.active));
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/memberships/v2/tenant/000000000/memberships?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const query: Record<string, unknown> = { customerId: args.customerId };
+    if (args.active !== undefined) query.active = args.active;
+    const data = await readST<{ data?: unknown[] }>(
+      env,
+      { actor, correlation },
+      `/memberships/v2/tenant/000000000/memberships`,
+      query,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `get_customer_membership failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: unknown[] }>();
     return { memberships: data.data ?? [], _source: 'live' };
   },
 };

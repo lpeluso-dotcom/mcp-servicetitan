@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import { resolveBusinessUnit, resolveTechnician } from '../../name-resolver';
 import type { ToolDef } from '../index';
 
@@ -11,11 +11,15 @@ interface Args {
   technicianName?: string;
   businessUnitId?: number;
   businessUnitName?: string;
+  includeAutoDispatchedFlag?: boolean;
 }
 
 export const dispatch_override_audit: ToolDef<Args> = {
   name: 'dispatch_override_audit',
-  description: 'L5 composite: audit of dispatch assignment overrides (technician reassignments) in a date range. Joins appointment_assignments + appointments + technicians. v1.4 accepts technicianName / businessUnitName as alternatives to numeric IDs.',
+  description:
+    'L5 composite: audit of dispatch assignment overrides (technician reassignments) in a date range. ' +
+    'Joins appointment_assignments + appointments + technicians. v1.4 accepts technicianName / businessUnitName as alternatives to numeric IDs. ' +
+    'v1.5.1 (ST-77): pass `includeAutoDispatchedFlag: true` to annotate each row with `isAutoDispatched` (boolean) by batch-fetching the parent jobs.',
   zodSchema: {
     from: z.string().describe('Start date (ISO 8601)'),
     to: z.string().describe('End date (ISO 8601)'),
@@ -23,9 +27,11 @@ export const dispatch_override_audit: ToolDef<Args> = {
     technicianName: z.string().min(1).optional().describe('Filter by technician name (resolved against technicians D1 — exact > prefix > contains).'),
     businessUnitId: z.number().int().positive().optional().describe('Filter by business unit ID'),
     businessUnitName: z.string().min(1).optional().describe('Filter by business unit name (resolved against business_units D1).'),
+    includeAutoDispatchedFlag: z.boolean().optional().describe('When true, batch-fetches parent jobs and annotates each row with `isAutoDispatched`. Adds one extra ST call.'),
   },
+  stEndpoint: { method: 'GET', path: '/jpm/v2/tenant/{tid}/appointments', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    const { from, to, technicianId, technicianName, businessUnitId, businessUnitName } = args;
+    const { from, to, technicianId, technicianName, businessUnitId, businessUnitName, includeAutoDispatchedFlag } = args;
     if (technicianId !== undefined && technicianName !== undefined) {
       throw new McpError('validation_error', 'pass at most one of technicianId or technicianName', { correlation });
     }
@@ -47,27 +53,45 @@ export const dispatch_override_audit: ToolDef<Args> = {
       if (r.ambiguous) warnings.push(`businessUnit_name_ambiguous: chose ${r.id} for "${businessUnitName}"`);
     }
 
-    const qs = new URLSearchParams();
-    qs.set('startsOnOrAfter', from);
-    qs.set('startsBefore', to);
-    if (resolvedTechId !== undefined) qs.set('technicianIds', String(resolvedTechId));
-    if (resolvedBuId !== undefined) qs.set('businessUnitIds', String(resolvedBuId));
-    qs.set('pageSize', '200');
+    const query: Record<string, unknown> = { startsOnOrAfter: from, startsBefore: to, pageSize: 200 };
+    if (resolvedTechId !== undefined) query.technicianIds = resolvedTechId;
+    if (resolvedBuId !== undefined) query.businessUnitIds = resolvedBuId;
 
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/000000000/appointments?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const data = await readST<{ data?: any[] }>(
+      env,
+      { actor, correlation },
+      `/jpm/v2/tenant/000000000/appointments`,
+      query,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `dispatch_override_audit failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: any[] }>();
     const appointments = data.data ?? [];
 
-    const overrides = appointments.map((appt) => ({
-      appointmentId: appt.id,
-      jobId: appt.jobId,
-      start: appt.start,
-      technicians: appt.technicians ?? [],
-    }));
+    // ST-77 optional join: batch-fetch parent jobs to get isAutoDispatched.
+    let autoDispatchedByJobId: Map<number, boolean> | null = null;
+    if (includeAutoDispatchedFlag && appointments.length > 0) {
+      const jobIds = Array.from(new Set(appointments.map((a) => a.jobId).filter((id) => typeof id === 'number')));
+      if (jobIds.length > 0) {
+        const jobsResp = await readST<{ data?: any[] }>(
+          env,
+          { actor, correlation },
+          `/jpm/v2/tenant/000000000/jobs`,
+          { ids: jobIds.join(','), pageSize: Math.min(jobIds.length, 200) },
+        );
+        autoDispatchedByJobId = new Map((jobsResp.data ?? []).map((j) => [j.id, !!j.isAutoDispatched]));
+      }
+    }
+
+    const overrides = appointments.map((appt) => {
+      const row: Record<string, unknown> = {
+        appointmentId: appt.id,
+        jobId: appt.jobId,
+        start: appt.start,
+        technicians: appt.technicians ?? [],
+      };
+      if (autoDispatchedByJobId) {
+        row.isAutoDispatched = autoDispatchedByJobId.get(appt.jobId) ?? null;
+      }
+      return row;
+    });
 
     return {
       period: { from, to },
@@ -75,6 +99,7 @@ export const dispatch_override_audit: ToolDef<Args> = {
       overrideCount: overrides.length,
       _composite: 'dispatch_override_audit',
       _source: 'live',
+      ...(includeAutoDispatchedFlag ? { _autoDispatchedJoin: autoDispatchedByJobId ? 'applied' : 'no_appointments' } : {}),
       ...(warnings.length > 0 ? { _warnings: warnings } : {}),
     };
   },

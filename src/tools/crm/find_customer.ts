@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
 import { cacheGet } from '../../cache';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args { name?: string; phone?: string; email?: string; page?: number; pageSize?: number }
@@ -56,6 +56,7 @@ export const find_customer: ToolDef<Args> = {
     page: z.number().int().positive().optional().describe('Page number, default 1'),
     pageSize: z.number().int().positive().max(VOICE_MAX_PAGESIZE).optional().describe(`Page size, default ${VOICE_DEFAULT_PAGESIZE}, max ${VOICE_MAX_PAGESIZE}`),
   },
+  stEndpoint: { method: 'GET', path: '/crm/v2/tenant/{tid}/customers', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     if (!args.name && !args.phone && !args.email) {
       throw new McpError('validation_error', 'find_customer requires at least one of: name, phone, email', { correlation });
@@ -65,19 +66,17 @@ export const find_customer: ToolDef<Args> = {
     const cacheKey = JSON.stringify({ name: args.name ?? '', phone: args.phone ?? '', email: args.email ?? '', page, pageSize });
 
     return cacheGet(env, 'servicetitan:find_customer', cacheKey, 30, async () => {
-      const qs = new URLSearchParams();
-      if (args.name) qs.set('name', args.name);
-      if (args.phone) qs.set('phoneNumber', args.phone);
-      if (args.email) qs.set('email', args.email);
-      qs.set('page', String(page));
-      qs.set('pageSize', String(pageSize));
+      const query: Record<string, unknown> = { page, pageSize };
+      if (args.name) query.name = args.name;
+      if (args.phone) query.phoneNumber = args.phone;
+      if (args.email) query.email = args.email;
 
-      const resp = await env.ST_PROXY.fetch(
-        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/crm/v2/tenant/000000000/customers?${qs}`)}`,
-        { headers: authHeaders(env, correlation, actor) }
+      const data = await readST<{ data?: RawCustomer[] }>(
+        env,
+        { actor, correlation },
+        `/crm/v2/tenant/000000000/customers`,
+        query,
       );
-      if (!resp.ok) throw new McpError('upstream_error', `find_customer failed: ${resp.status}`, { correlation });
-      const data = (await resp.json()) as { data?: RawCustomer[] };
       const rows = (data.data ?? []).map(slim);
       return { count: rows.length, customers: rows, _source: 'live' };
     });

@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args { estimateId: number }
@@ -11,13 +10,13 @@ export const get_estimate: ToolDef<Args> = {
   zodSchema: {
     estimateId: z.number().int().positive().describe('ST estimate ID'),
   },
+  stEndpoint: { method: 'GET', path: '/sales/v2/tenant/{tid}/estimates/{estimateId}', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/sales/v2/tenant/000000000/estimates/${args.estimateId}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const data = await readST<unknown>(
+      env,
+      { actor, correlation },
+      `/sales/v2/tenant/000000000/estimates/${args.estimateId}`,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `get_estimate failed: ${resp.status}`, { correlation });
-    const data = await resp.json<unknown>();
     return { estimate: data, _source: 'live' };
   },
 };

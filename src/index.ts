@@ -19,7 +19,7 @@ import { registerTool, type RequestContext } from './tool-registry';
 import { resolveAuth } from './auth';
 import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
-import { endpointsHandler } from './routes/admin-endpoints';
+import { endpointsHandler, endpointsCoverageHandler } from './routes/admin-endpoints';
 import { handleWebhook } from './webhook-ingest';
 import { withTenantRewrite } from './tenant';
 
@@ -127,6 +127,11 @@ app.get('/admin/health/audit', auditHealthHandler);
 
 // /admin/endpoints — ST endpoint inventory: per-tool stEndpoint descriptors + undeclared list.
 app.get('/admin/endpoints', endpointsHandler);
+
+// /admin/endpoints/coverage — pass/fail gate. 200 when every non-exempt tool
+// declares stEndpoint; 422 when any non-exempt tool is missing one. Wired
+// into scripts/preflight.sh so a new tool can't ship without a descriptor.
+app.get('/admin/endpoints/coverage', endpointsCoverageHandler);
 
 // /webhooks/st — HMAC-verified ST webhook ingest.
 app.post('/webhooks/st', (c) => handleWebhook(c.env, c.req.raw));

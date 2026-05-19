@@ -16,6 +16,7 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
 import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 const ReportMode = z.enum(['list_categories', 'list_reports', 'describe_report', 'run']);
@@ -77,35 +78,21 @@ export const st_run_report: ToolDef<Args> = {
     const headers = authHeaders(env, correlation, actor);
 
     if (args.mode === 'list_categories') {
-      const resp = await env.ST_PROXY.fetch(
-        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(
-          `/reporting/v2/tenant/${tid}/report-categories`
-        )}`,
-        { headers }
+      const data = await readST<{ data?: unknown[] }>(
+        env,
+        { actor, correlation },
+        `/reporting/v2/tenant/${tid}/report-categories`,
       );
-      if (!resp.ok) {
-        throw new McpError('upstream_error', `st_run_report list_categories failed: ${resp.status}`, {
-          correlation,
-        });
-      }
-      const data = await resp.json<{ data?: unknown[] }>();
       return { mode: 'list_categories', categories: data.data ?? data, _source: 'live' };
     }
 
     if (args.mode === 'list_reports') {
       requireArg(args.categoryId !== undefined, 'categoryId required for mode=list_reports');
-      const resp = await env.ST_PROXY.fetch(
-        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(
-          `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports`
-        )}`,
-        { headers }
+      const data = await readST<{ data?: unknown[] }>(
+        env,
+        { actor, correlation },
+        `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports`,
       );
-      if (!resp.ok) {
-        throw new McpError('upstream_error', `st_run_report list_reports failed: ${resp.status}`, {
-          correlation,
-        });
-      }
-      const data = await resp.json<{ data?: unknown[] }>();
       return {
         mode: 'list_reports',
         categoryId: args.categoryId,
@@ -117,20 +104,11 @@ export const st_run_report: ToolDef<Args> = {
     if (args.mode === 'describe_report') {
       requireArg(args.categoryId !== undefined, 'categoryId required for mode=describe_report');
       requireArg(args.reportId !== undefined, 'reportId required for mode=describe_report');
-      const resp = await env.ST_PROXY.fetch(
-        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(
-          `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports/${args.reportId}`
-        )}`,
-        { headers }
+      const data = await readST<unknown>(
+        env,
+        { actor, correlation },
+        `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports/${args.reportId}`,
       );
-      if (!resp.ok) {
-        throw new McpError(
-          'upstream_error',
-          `st_run_report describe_report failed: ${resp.status}`,
-          { correlation }
-        );
-      }
-      const data = await resp.json<unknown>();
       return {
         mode: 'describe_report',
         categoryId: args.categoryId,
