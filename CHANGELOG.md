@@ -28,7 +28,7 @@ Branch `feat/v1.5.1-st77-hardening` stacks on top of `feat/v1.5-payroll-opportun
 ### Out of scope (deferred per reviewer's note)
 - Full filter-preservation coverage of all ~80 tools — harness is in place; each tool adopts via a one-test-per-tool addition.
 - ST-77.2/77.3 product probes (Equipment auto-attach, Dispatch Pro multi-appointment, FTK dispatch links, Contact Center Pro, Inventory landed costs) — separate v1.6 candidates.
-- `settings_intacct_business_unit_mappings_get` — only useful if QSC adopts Sage Intacct.
+- `settings_intacct_business_unit_mappings_get` — only useful for shops on Sage Intacct.
 - Tool-pack splitting (default / payroll / dispatch / accounting / pricebook / admin views) — context-pressure mitigation; separate design discussion.
 
 ## v1.5.0 — 2026-05-19 (UNRELEASED — awaiting Luke review)
@@ -67,7 +67,7 @@ All five use `transformResult: defaultShaper` and read via the shared `src/d1.ts
 ### Infra
 - New `src/d1.ts` shared helper (`readD1(env, sql, params)`) — SELECT/WITH gate + typed result.
 - `D1_TABLES` set in `src/read-router.ts` extended with: `job_timesheets`, `opportunities`, `opportunity_statuses`, `dispatch_pro_utilization`, `dispatch_pro_ratio`, `dispatch_pro_alerts`.
-- Pre-deploy follow-up: migration `0003_webhook_event_index.sql` still needs to be applied to prod (`wrangler d1 execute qsc-mcp-st --remote --file migrations/0003_webhook_event_index.sql`).
+- Pre-deploy follow-up: migration `0003_webhook_event_index.sql` still needs to be applied to prod (`wrangler d1 execute <your-d1-database> --remote --file migrations/0003_webhook_event_index.sql`).
 
 ### QA round 1 — auto-fallback filter-honoring (PR #17 review)
 - `payroll_job_timesheets_list` auto-fallback to live ST now requires `jobId` AND no filter the live endpoint can't honor. Previously the condition included `appointmentId`, but `liveRead`'s batch path only forwards page/pageSize/active=Any/modifiedOnOrAfter — so `{ appointmentId, source: 'auto' }` on empty/stale D1 silently returned a wide-net superset labeled `_source: 'live'`. Same class of bug for `technicianId`, `arrivedOnOrAfter`, `arrivedOnOrBefore`, `active`.
