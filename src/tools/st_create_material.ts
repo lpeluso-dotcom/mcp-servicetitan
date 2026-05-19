@@ -30,6 +30,7 @@ export const st_create_material: ToolDef<Args> = {
     'dryRun=true (default) validates and returns a confirmation_token — call again with dryRun=false + token to write. ' +
     'Requires name and categoryId at minimum.',
   isWrite: true,
+  stEndpoint: { method: 'POST', path: '/pricebook/v2/tenant/{tid}/materials', source: 'live' },
   zodSchema: {
     name: z.string().min(1).describe('Display name for the material'),
     categoryId: z.number().int().positive().describe('Pricebook category ID (required by ST)'),

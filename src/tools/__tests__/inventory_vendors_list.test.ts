@@ -76,7 +76,7 @@ describe('inventory_vendors_list', () => {
     } as any;
     await expect(
       inventory_vendors_list.handler(env, {}, { actor: 'test', correlation: 'c1' }),
-    ).rejects.toThrow(/inventory_vendors_list failed: 502/);
+    ).rejects.toThrow(/readST 502 on \/inventory\/v2\/tenant\/431848990\/vendors/);
   });
 
   it('returns count=0 and vendors=[] when ST returns empty data', async () => {

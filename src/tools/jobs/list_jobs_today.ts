@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
 import { cacheGet } from '../../cache';
 import { resolveBusinessUnit, resolveTechnician } from '../../name-resolver';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -27,6 +27,7 @@ export const list_jobs_today: ToolDef<Args> = {
     page: z.number().int().positive().optional(),
     pageSize: z.number().int().positive().max(200).optional(),
   },
+  stEndpoint: { method: 'GET', path: '/jpm/v2/tenant/{tid}/jobs', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     if (args.businessUnitId !== undefined && args.businessUnitName !== undefined) {
       throw new McpError('validation_error', 'pass at most one of businessUnitId or businessUnitName', { correlation });
@@ -53,19 +54,22 @@ export const list_jobs_today: ToolDef<Args> = {
     const cacheKey = JSON.stringify({ today, status: args.status ?? '', bu: buId ?? 0, tech: techId ?? 0, page: args.page ?? 0, pageSize: args.pageSize ?? 0 });
 
     const result = await cacheGet(env, 'servicetitan:list_jobs_today', cacheKey, 60, async () => {
-      const qs = new URLSearchParams({ scheduledOnOrAfter: `${today}T00:00:00`, scheduledOnOrBefore: `${today}T23:59:59` });
-      if (args.status) qs.set('jobStatus', args.status);
-      if (buId !== undefined) qs.set('businessUnitId', String(buId));
-      if (techId !== undefined) qs.set('technicianId', String(techId));
-      if (args.page) qs.set('page', String(args.page));
-      if (args.pageSize) qs.set('pageSize', String(args.pageSize));
+      const query: Record<string, unknown> = {
+        scheduledOnOrAfter: `${today}T00:00:00`,
+        scheduledOnOrBefore: `${today}T23:59:59`,
+        jobStatus: args.status,
+        businessUnitId: buId,
+        technicianId: techId,
+        page: args.page,
+        pageSize: args.pageSize,
+      };
 
-      const resp = await env.ST_PROXY.fetch(
-        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/000000000/jobs?${qs}`)}`,
-        { headers: authHeaders(env, correlation, actor) }
+      const data = await readST<{ data?: unknown[] }>(
+        env,
+        { actor, correlation },
+        `/jpm/v2/tenant/000000000/jobs`,
+        query,
       );
-      if (!resp.ok) throw new McpError('upstream_error', `list_jobs_today failed: ${resp.status}`, { correlation });
-      const data = await resp.json<{ data?: unknown[] }>();
       return { jobs: data.data ?? [], date: today, _source: 'live' };
     });
 

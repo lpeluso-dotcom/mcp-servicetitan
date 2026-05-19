@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args { campaignId: number; from?: string; to?: string }
@@ -13,18 +12,18 @@ export const get_campaign_performance: ToolDef<Args> = {
     from: z.string().optional().describe('Start date for the period (YYYY-MM-DD)'),
     to: z.string().optional().describe('End date for the period (YYYY-MM-DD)'),
   },
+  stEndpoint: { method: 'GET', path: '/marketing/v2/tenant/{tid}/campaigns/{campaignId}/costs', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    const qs = new URLSearchParams();
-    qs.set('campaignIds', String(args.campaignId));
-    if (args.from) qs.set('from', args.from);
-    if (args.to) qs.set('to', args.to);
+    const query: Record<string, unknown> = { campaignIds: args.campaignId };
+    if (args.from) query.from = args.from;
+    if (args.to) query.to = args.to;
 
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/marketing/v2/tenant/000000000/campaigns/${args.campaignId}/costs?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const data = await readST(
+      env,
+      { actor, correlation },
+      `/marketing/v2/tenant/000000000/campaigns/${args.campaignId}/costs`,
+      query,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `get_campaign_performance failed: ${resp.status}`, { correlation });
-    const data = await resp.json<unknown>();
     return { performance: data, _source: 'live' };
   },
 };

@@ -82,7 +82,7 @@ describe('payroll_non_job_timesheets_list', () => {
     } as any;
     await expect(
       payroll_non_job_timesheets_list.handler(env, {}, { actor: 'test', correlation: 'c1' }),
-    ).rejects.toThrow(/payroll_non_job_timesheets_list failed: 502/);
+    ).rejects.toThrow(/readST 502 on \/payroll\/v2\/tenant\/.+\/non-job-timesheets/);
   });
 
   it('returns count=0 and timesheets=[] when ST returns empty data', async () => {

@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
+
+const TENANT_ID = '000000000';
 
 interface Args { name?: string; categoryId?: number; active?: boolean; page?: number; pageSize?: number }
 
@@ -15,20 +16,21 @@ export const search_pricebook_services: ToolDef<Args> = {
     page: z.number().int().positive().default(1).describe('Page number'),
     pageSize: z.number().int().positive().max(200).default(50).describe('Page size, max 200'),
   },
+  stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/services', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    const qs = new URLSearchParams();
-    if (args.name) qs.set('name', args.name);
-    if (args.categoryId) qs.set('categoryId', String(args.categoryId));
-    if (args.active !== undefined) qs.set('active', String(args.active));
-    qs.set('page', String(args.page ?? 1));
-    qs.set('pageSize', String(args.pageSize ?? 50));
-
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/000000000/services?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const query: Record<string, unknown> = {
+      name: args.name,
+      categoryId: args.categoryId,
+      active: args.active,
+      page: args.page ?? 1,
+      pageSize: args.pageSize ?? 50,
+    };
+    const data = await readST<{ data?: unknown[] }>(
+      env,
+      { actor, correlation },
+      `/pricebook/v2/tenant/${TENANT_ID}/services`,
+      query,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `search_pricebook_services failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: unknown[] }>();
     return { services: data.data ?? [], _source: 'live' };
   },
 };

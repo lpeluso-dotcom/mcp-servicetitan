@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
 import { defaultShaper } from '../../response-shape';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -55,26 +54,23 @@ export const payroll_location_rates_list: ToolDef<Args> = {
       .optional()
       .describe(`Page size, default ${DEFAULT_PAGESIZE}, max ${MAX_PAGESIZE}`),
   },
+  stEndpoint: { method: 'GET', path: '/payroll/v2/tenant/{tid}/locations/rates', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     const page = args.page ?? 1;
     const pageSize = Math.min(args.pageSize ?? DEFAULT_PAGESIZE, MAX_PAGESIZE);
-    const qs = new URLSearchParams();
-    if (args.active !== undefined) qs.set('active', String(args.active));
-    if (args.locationId !== undefined) qs.set('locationId', String(args.locationId));
-    qs.set('page', String(page));
-    qs.set('pageSize', String(pageSize));
+    const query: Record<string, unknown> = {
+      active: args.active,
+      locationId: args.locationId,
+      page,
+      pageSize,
+    };
 
-    const path = `/payroll/v2/tenant/${env.ST_TENANT_ID}/locations/rates?${qs}`;
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(path)}`,
-      { headers: authHeaders(env, correlation, actor) },
+    const data = await readST<{ data?: RawLocationRate[]; hasMore?: boolean }>(
+      env,
+      { actor, correlation },
+      `/payroll/v2/tenant/${env.ST_TENANT_ID}/locations/rates`,
+      query,
     );
-    if (!resp.ok) {
-      throw new McpError('upstream_error', `payroll_location_rates_list failed: ${resp.status} ${path}`, {
-        correlation,
-      });
-    }
-    const data = (await resp.json()) as { data?: RawLocationRate[]; hasMore?: boolean };
     return {
       count: (data.data ?? []).length,
       rates: (data.data ?? []).map(slim),

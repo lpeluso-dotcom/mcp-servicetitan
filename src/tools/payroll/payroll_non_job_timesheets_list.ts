@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
 import { defaultShaper } from '../../response-shape';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -65,28 +64,25 @@ export const payroll_non_job_timesheets_list: ToolDef<Args> = {
       .optional()
       .describe(`Page size, default ${DEFAULT_PAGESIZE}, max ${MAX_PAGESIZE}`),
   },
+  stEndpoint: { method: 'GET', path: '/payroll/v2/tenant/{tid}/non-job-timesheets', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     const page = args.page ?? 1;
     const pageSize = Math.min(args.pageSize ?? DEFAULT_PAGESIZE, MAX_PAGESIZE);
-    const qs = new URLSearchParams();
-    if (args.employeeId !== undefined) qs.set('employeeId', String(args.employeeId));
-    if (args.activityCodeId !== undefined) qs.set('activityCodeId', String(args.activityCodeId));
-    if (args.fromDate !== undefined) qs.set('startsOnOrAfter', args.fromDate);
-    if (args.toDate !== undefined) qs.set('endsOnOrBefore', args.toDate);
-    qs.set('page', String(page));
-    qs.set('pageSize', String(pageSize));
+    const query: Record<string, unknown> = {
+      employeeId: args.employeeId,
+      activityCodeId: args.activityCodeId,
+      startsOnOrAfter: args.fromDate,
+      endsOnOrBefore: args.toDate,
+      page,
+      pageSize,
+    };
 
-    const path = `/payroll/v2/tenant/${env.ST_TENANT_ID}/non-job-timesheets?${qs}`;
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(path)}`,
-      { headers: authHeaders(env, correlation, actor) },
+    const data = await readST<{ data?: RawTimesheet[]; hasMore?: boolean }>(
+      env,
+      { actor, correlation },
+      `/payroll/v2/tenant/${env.ST_TENANT_ID}/non-job-timesheets`,
+      query,
     );
-    if (!resp.ok) {
-      throw new McpError('upstream_error', `payroll_non_job_timesheets_list failed: ${resp.status} ${path}`, {
-        correlation,
-      });
-    }
-    const data = (await resp.json()) as { data?: RawTimesheet[]; hasMore?: boolean };
     return {
       count: (data.data ?? []).length,
       timesheets: (data.data ?? []).map(slim),

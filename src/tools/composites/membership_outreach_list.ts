@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 type Segment = 'expiring_30' | 'expiring_60' | 'expiring_90' | 'lapsed';
@@ -14,35 +13,34 @@ export const membership_outreach_list: ToolDef<Args> = {
     segment: z.enum(['expiring_30', 'expiring_60', 'expiring_90', 'lapsed']).describe('Target segment for outreach'),
     businessUnitId: z.number().int().positive().optional().describe('Filter by business unit ID'),
   },
+  stEndpoint: { method: 'GET', path: '/memberships/v2/tenant/{tid}/memberships', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     const { segment, businessUnitId } = args;
     const now = new Date();
-    const h = authHeaders(env, correlation, actor);
     const tenant = '000000000';
 
-    const qs = new URLSearchParams();
-    if (businessUnitId) qs.set('businessUnitIds', String(businessUnitId));
-    qs.set('pageSize', '200');
+    const query: Record<string, unknown> = { pageSize: 200 };
+    if (businessUnitId) query.businessUnitIds = businessUnitId;
 
     if (segment.startsWith('expiring_')) {
       const days = parseInt(segment.split('_')[1], 10);
       const windowEnd = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-      qs.set('statuses', 'Active');
-      qs.set('activeThroughOnOrAfter', now.toISOString());
-      qs.set('activeThroughBefore', windowEnd.toISOString());
+      query.statuses = 'Active';
+      query.activeThroughOnOrAfter = now.toISOString();
+      query.activeThroughBefore = windowEnd.toISOString();
     } else {
       // lapsed: cancelled in the last 90 days
       const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-      qs.set('statuses', 'Cancelled');
-      qs.set('activeThroughOnOrAfter', ninetyDaysAgo.toISOString());
+      query.statuses = 'Cancelled';
+      query.activeThroughOnOrAfter = ninetyDaysAgo.toISOString();
     }
 
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/memberships/v2/tenant/${tenant}/memberships?${qs}`)}`,
-      { headers: h }
+    const data = await readST<{ data?: any[] }>(
+      env,
+      { actor, correlation },
+      `/memberships/v2/tenant/${tenant}/memberships`,
+      query,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `membership_outreach_list failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: any[] }>();
     const memberships = data.data ?? [];
 
     const contacts = memberships.map((m) => ({

@@ -266,7 +266,7 @@ describe('payroll_job_timesheets_list', () => {
           { jobId: 1, source: 'live' },
           { actor: 'test', correlation: 'c1' },
         ),
-      ).rejects.toThrow(/payroll_job_timesheets_list live failed: 503/);
+      ).rejects.toThrow(/readST 503 on \/payroll\/v2\/tenant\/.*\/jobs\/1\/timesheets/);
     });
 
     // QA regression — explicit 'live' with a filter the live endpoint cannot

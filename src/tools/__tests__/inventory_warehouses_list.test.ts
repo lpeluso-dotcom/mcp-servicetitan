@@ -90,7 +90,7 @@ describe('inventory_warehouses_list', () => {
     } as any;
     await expect(
       inventory_warehouses_list.handler(env, {}, { actor: 'test', correlation: 'c1' }),
-    ).rejects.toThrow(/inventory_warehouses_list failed: 503/);
+    ).rejects.toThrow(/readST 503 on \/inventory\/v2\/tenant\/431848990\/warehouses/);
   });
 
   it('forwards page and pageSize args into the URL', async () => {

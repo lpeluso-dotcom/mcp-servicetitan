@@ -4,10 +4,9 @@
 // ============================================================
 
 import { z } from 'zod';
-import type { Env } from '../env';
-import { authHeaders } from '../auth';
 import { cacheGet } from '../cache';
-import { McpError, mapUpstreamStatus } from '../errors';
+import { McpError } from '../errors';
+import { readST } from '../st';
 import type { ToolDef } from './index';
 
 const TENANT_ID = '000000000';
@@ -24,6 +23,7 @@ export const st_get_customer: ToolDef<Args> = {
   zodSchema: {
     customerId: z.number().int().positive().describe('ServiceTitan customer ID'),
   },
+  stEndpoint: { method: 'GET', path: '/crm/v2/tenant/{tid}/customers/{customerId}', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     if (!args.customerId || typeof args.customerId !== 'number') {
       throw new McpError('validation_error', 'customerId is required and must be a number', { correlation });
@@ -31,14 +31,8 @@ export const st_get_customer: ToolDef<Args> = {
     const endpoint = `/crm/v2/tenant/${TENANT_ID}/customers/${args.customerId}`;
     const cacheKey = String(args.customerId);
 
-    return cacheGet(env, NAMESPACE, cacheKey, CACHE_TTL_SEC, async () => {
-      const url = `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
-      const resp = await env.ST_PROXY.fetch(url, { headers: authHeaders(env, correlation, actor) });
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => '');
-        throw new McpError(mapUpstreamStatus(resp.status), `ST get_customer ${args.customerId} ${resp.status}: ${body.slice(0, 200)}`, { correlation });
-      }
-      return resp.json();
-    });
+    return cacheGet(env, NAMESPACE, cacheKey, CACHE_TTL_SEC, async () =>
+      readST(env, { actor, correlation }, endpoint),
+    );
   },
 };

@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args { limit?: number }
@@ -15,21 +14,17 @@ export const membership_jackpot_leaderboard: ToolDef<Args> = {
   zodSchema: {
     limit: z.number().int().positive().max(50).default(10).describe('Number of top performers to return (default: 10, max: 50)'),
   },
+  stEndpoint: { method: 'GET', path: '/memberships/v2/tenant/{tid}/memberships', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     const { limit = 10 } = args;
     const shouldReveal = new Date() >= REVEAL_DATE;
 
-    const qs = new URLSearchParams();
-    qs.set('statuses', 'Active');
-    qs.set('createdOnOrAfter', '2026-01-01');
-    qs.set('pageSize', '200');
-
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/memberships/v2/tenant/000000000/memberships?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const data = await readST<{ data?: any[] }>(
+      env,
+      { actor, correlation },
+      `/memberships/v2/tenant/000000000/memberships`,
+      { statuses: 'Active', createdOnOrAfter: '2026-01-01', pageSize: 200 },
     );
-    if (!resp.ok) throw new McpError('upstream_error', `membership_jackpot_leaderboard failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: any[] }>();
     const memberships = data.data ?? [];
 
     // Group by soldBy employee

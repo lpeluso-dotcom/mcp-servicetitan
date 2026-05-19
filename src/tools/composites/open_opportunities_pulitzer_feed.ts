@@ -70,6 +70,7 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
     'most-recent linked estimate and the customer. Same shape Pulitzer’s `open-opportunities` daily ' +
     'report ships, exposed for other MCP callers. Sorted by follow_up_date ASC so overdue rows lead. ' +
     'Source: D1 opportunities + estimates.',
+  stEndpoint: { method: 'GET', path: 'd1://opportunities+estimates+customers', source: 'd1' },
   zodSchema: {
     businessUnit: z.string().optional().describe('Filter to one business unit.'),
     jobTypeName: z.string().optional().describe('Filter to one job type.'),

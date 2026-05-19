@@ -12,6 +12,7 @@ export const assign_technicians: ToolDef<Args> = {
   name: 'assign_technicians',
   description: 'Assign technicians to an appointment. ST requires a two-call compound: unassign all current techs, then assign the new set. Both calls are shown in the dryRun preview. dryRun=true (default) → token → dryRun=false to write.',
   isWrite: true,
+  stEndpoint: { method: 'POST', path: '/dispatch/v2/tenant/{tid}/appointment-assignments/assign-technicians', source: 'live' },
   zodSchema: {
     appointmentId: z.number().int().positive().describe('ST appointment ID'),
     technicianIds: z.array(z.number().int().positive()).min(1).describe('Technician IDs to assign (replaces current assignment)'),

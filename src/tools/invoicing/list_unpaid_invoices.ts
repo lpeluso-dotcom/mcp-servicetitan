@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import { cacheGet } from '../../cache';
 import type { ToolDef } from '../index';
 
@@ -15,25 +14,27 @@ export const list_unpaid_invoices: ToolDef<Args> = {
     page: z.number().int().positive().default(1).describe('Page number'),
     pageSize: z.number().int().positive().max(200).default(50).describe('Page size, max 200'),
   },
+  stEndpoint: { method: 'GET', path: '/accounting/v2/tenant/{tid}/invoices', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     const page = args.page ?? 1;
     const pageSize = args.pageSize ?? 50;
     const cacheKey = JSON.stringify({ bu: args.businessUnitId ?? 0, customer: args.customerId ?? 0, page, pageSize });
 
     return cacheGet(env, 'servicetitan:list_unpaid_invoices', cacheKey, 120, async () => {
-      const qs = new URLSearchParams();
-      qs.set('balanceExcludeZero', 'true');
-      if (args.businessUnitId) qs.set('businessUnitIds', String(args.businessUnitId));
-      if (args.customerId) qs.set('customerId', String(args.customerId));
-      qs.set('page', String(page));
-      qs.set('pageSize', String(pageSize));
+      const query: Record<string, unknown> = {
+        balanceExcludeZero: 'true',
+        page,
+        pageSize,
+      };
+      if (args.businessUnitId) query.businessUnitIds = args.businessUnitId;
+      if (args.customerId) query.customerId = args.customerId;
 
-      const resp = await env.ST_PROXY.fetch(
-        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/accounting/v2/tenant/000000000/invoices?${qs}`)}`,
-        { headers: authHeaders(env, correlation, actor) }
+      const data = await readST<{ data?: unknown[] }>(
+        env,
+        { actor, correlation },
+        '/accounting/v2/tenant/000000000/invoices',
+        query,
       );
-      if (!resp.ok) throw new McpError('upstream_error', `list_unpaid_invoices failed: ${resp.status}`, { correlation });
-      const data = await resp.json<{ data?: unknown[] }>();
       return { invoices: data.data ?? [], _source: 'live' };
     });
   },

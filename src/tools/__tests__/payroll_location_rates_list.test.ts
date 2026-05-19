@@ -71,7 +71,7 @@ describe('payroll_location_rates_list', () => {
     } as any;
     await expect(
       payroll_location_rates_list.handler(env, {}, { actor: 'test', correlation: 'c1' }),
-    ).rejects.toThrow(/payroll_location_rates_list failed: 500/);
+    ).rejects.toThrow(/readST 500 on \/payroll\/v2\/tenant\/.+\/locations\/rates/);
   });
 
   it('omits active filter when not provided', async () => {

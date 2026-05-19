@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
+
+const TENANT_ID = '000000000';
 
 interface Args { parentEquipmentId: number; active?: boolean }
 
@@ -14,17 +15,18 @@ export const get_configurable_equipment_children: ToolDef<Args> = {
     parentEquipmentId: z.number().int().positive().describe('ST pricebook equipment ID of the parent (isConfigurableEquipment=true)'),
     active: z.boolean().optional().describe('Filter by active status (default: all)'),
   },
+  stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/equipment', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    const qs = new URLSearchParams();
-    qs.set('parentEquipmentId', String(args.parentEquipmentId));
-    if (args.active !== undefined) qs.set('active', String(args.active));
-
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/pricebook/v2/tenant/000000000/equipment?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const query: Record<string, unknown> = {
+      parentEquipmentId: args.parentEquipmentId,
+      active: args.active,
+    };
+    const data = await readST<{ data?: unknown[] }>(
+      env,
+      { actor, correlation },
+      `/pricebook/v2/tenant/${TENANT_ID}/equipment`,
+      query,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `get_configurable_equipment_children failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: unknown[] }>();
     return { equipment: data.data ?? [], _source: 'live' };
   },
 };

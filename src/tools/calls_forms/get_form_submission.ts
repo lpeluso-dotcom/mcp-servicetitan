@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args { formSubmissionId: number }
@@ -13,13 +12,9 @@ export const get_form_submission: ToolDef<Args> = {
   zodSchema: {
     formSubmissionId: z.number().int().positive().describe('ST form submission ID'),
   },
+  stEndpoint: { method: 'GET', path: '/forms/v2/tenant/{tid}/submissions/{formSubmissionId}', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/forms/v2/tenant/000000000/submissions/${args.formSubmissionId}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
-    );
-    if (!resp.ok) throw new McpError('upstream_error', `get_form_submission failed: ${resp.status}`, { correlation });
-    const data = await resp.json<unknown>();
+    const data = await readST(env, { actor, correlation }, `/forms/v2/tenant/000000000/submissions/${args.formSubmissionId}`);
     return { formSubmission: data, _source: 'live' };
   },
 };

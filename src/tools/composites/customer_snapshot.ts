@@ -50,6 +50,7 @@ async function mvWrite(env: Env, customerId: number, snapshot: unknown, version:
 export const customer_snapshot: ToolDef<Args> = {
   name: 'customer_snapshot',
   description: 'L5 composite: returns a full customer snapshot — customer details, locations, jobs, memberships, estimates, and invoices in a single call. Uses single-flight DO to prevent thundering-herd. ~5 min cache via mv_customer_snapshot. Source: mixed (D1 + live ST for memberships).',
+  stEndpoint: { method: 'GET', path: '/crm/v2/tenant/{tid}/customers/{id}', source: 'mixed' },
   zodSchema: {
     customerId: z.number().int().positive().describe('ST customer ID'),
   },

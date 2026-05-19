@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args { from: string; to: string; csr?: string }
@@ -14,19 +13,15 @@ export const call_quality_review: ToolDef<Args> = {
     to: z.string().describe('End date (ISO 8601)'),
     csr: z.string().optional().describe('Filter by CSR name or employee ID'),
   },
+  stEndpoint: { method: 'GET', path: '/telecom/v3/tenant/{tid}/calls', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     const { from, to, csr } = args;
-    const qs = new URLSearchParams();
-    qs.set('createdOnOrAfter', from);
-    qs.set('createdBefore', to);
-    qs.set('pageSize', '100');
-
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/telecom/v3/tenant/000000000/calls?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const data = await readST<{ data?: any[] }>(
+      env,
+      { actor, correlation },
+      `/telecom/v3/tenant/000000000/calls`,
+      { createdOnOrAfter: from, createdBefore: to, pageSize: 100 },
     );
-    if (!resp.ok) throw new McpError('upstream_error', `call_quality_review: calls fetch failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: any[] }>();
     const calls = data.data ?? [];
 
     const reviews = calls.map((call) => ({

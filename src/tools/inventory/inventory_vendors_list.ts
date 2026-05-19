@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import { defaultShaper } from '../../response-shape';
 import type { ToolDef } from '../index';
 
@@ -49,23 +48,22 @@ export const inventory_vendors_list: ToolDef<Args> = {
     page: z.number().int().positive().optional().describe('Page number, default 1'),
     pageSize: z.number().int().positive().max(MAX_PAGESIZE).optional().describe(`Page size, default ${DEFAULT_PAGESIZE}, max ${MAX_PAGESIZE}`),
   },
+  stEndpoint: { method: 'GET', path: '/inventory/v2/tenant/{tid}/vendors', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     const page = args.page ?? 1;
     const pageSize = Math.min(args.pageSize ?? DEFAULT_PAGESIZE, MAX_PAGESIZE);
-    const qs = new URLSearchParams();
-    if (args.active !== undefined) qs.set('active', String(args.active));
-    qs.set('page', String(page));
-    qs.set('pageSize', String(pageSize));
+    const query: Record<string, unknown> = {
+      active: args.active,
+      page,
+      pageSize,
+    };
 
-    const path = `/inventory/v2/tenant/${env.ST_TENANT_ID}/vendors?${qs}`;
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(path)}`,
-      { headers: authHeaders(env, correlation, actor) },
+    const data = await readST<{ data?: RawVendor[]; hasMore?: boolean }>(
+      env,
+      { actor, correlation },
+      `/inventory/v2/tenant/${env.ST_TENANT_ID}/vendors`,
+      query,
     );
-    if (!resp.ok) {
-      throw new McpError('upstream_error', `inventory_vendors_list failed: ${resp.status} ${path}`, { correlation });
-    }
-    const data = (await resp.json()) as { data?: RawVendor[]; hasMore?: boolean };
     return {
       count: (data.data ?? []).length,
       vendors: (data.data ?? []).map(slim),

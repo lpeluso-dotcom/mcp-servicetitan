@@ -76,6 +76,6 @@ describe('inventory_transfers_list', () => {
     } as any;
     await expect(
       inventory_transfers_list.handler(env, {}, { actor: 'test', correlation: 'c1' }),
-    ).rejects.toThrow(/inventory_transfers_list failed: 502/);
+    ).rejects.toThrow(/readST 502 on \/inventory\/v2\/tenant\/431848990\/transfers/);
   });
 });

@@ -45,6 +45,7 @@ export const tech_drive_time_summary: ToolDef<Args> = {
     "Defaults: burdenRate $45/hr (loaded labor cost), windshieldRatePerHour $110/hr (windshield/lost-time rate from YTD plan). " +
     "Source: D1 `job_timesheets` joined to `technicians` for the name. " +
     "Use this for the YTD drive-time deliverable + ad-hoc 'top techs by windshield cost' cuts.",
+  stEndpoint: { method: 'GET', path: 'd1://job_timesheets+technicians', source: 'd1' },
   zodSchema: {
     technicianId: z.number().int().positive().describe('ServiceTitan technician ID.'),
     startDate: z.string().describe("ISO date 'YYYY-MM-DD'. arrived_on >= startDate."),

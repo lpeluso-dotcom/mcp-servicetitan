@@ -105,6 +105,7 @@ export const job_cost_actuals: ToolDef<Args> = {
       .optional()
       .describe(`Loaded labor cost per hour (default $${DEFAULT_BURDEN_RATE}).`),
   },
+  stEndpoint: { method: 'GET', path: '/jpm/v2/tenant/{tid}/jobs/{id}', source: 'mixed' },
   async handler(env, args, { actor, correlation }) {
     const { jobId } = args;
     const burdenRate = args.burdenRate ?? DEFAULT_BURDEN_RATE;

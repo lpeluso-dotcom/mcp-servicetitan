@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args { jobId?: number; assignedToId?: number; page?: number; pageSize?: number }
@@ -15,20 +14,22 @@ export const list_open_tasks: ToolDef<Args> = {
     page: z.number().int().positive().default(1).describe('Page number'),
     pageSize: z.number().int().positive().max(200).default(50).describe('Page size, max 200'),
   },
+  stEndpoint: { method: 'GET', path: '/taskmanagement/v2/tenant/{tid}/tasks', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    const qs = new URLSearchParams();
-    qs.set('completionStatus', 'Incomplete');
-    if (args.jobId) qs.set('jobId', String(args.jobId));
-    if (args.assignedToId) qs.set('assignedToId', String(args.assignedToId));
-    qs.set('page', String(args.page ?? 1));
-    qs.set('pageSize', String(args.pageSize ?? 50));
+    const query: Record<string, unknown> = {
+      completionStatus: 'Incomplete',
+      page: args.page ?? 1,
+      pageSize: args.pageSize ?? 50,
+    };
+    if (args.jobId) query.jobId = args.jobId;
+    if (args.assignedToId) query.assignedToId = args.assignedToId;
 
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/taskmanagement/v2/tenant/000000000/tasks?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const data = await readST<{ data?: unknown[] }>(
+      env,
+      { actor, correlation },
+      '/taskmanagement/v2/tenant/000000000/tasks',
+      query,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `list_open_tasks failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: unknown[] }>();
     return { tasks: data.data ?? [], _source: 'live' };
   },
 };

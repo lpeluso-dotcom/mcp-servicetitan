@@ -70,6 +70,7 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
     "estimate has no job link, or sold_by doesn't match any tech on the source job's appointment_assignments. " +
     "Useful before commission runs and for spotting bulk-import patterns. " +
     "Source: D1 estimates + appointment_assignments + jobs.",
+  stEndpoint: { method: 'GET', path: 'd1://estimates+appointment_assignments+jobs', source: 'd1' },
   zodSchema: {
     startDate: z.string().describe("ISO date 'YYYY-MM-DD'. estimates.modified_at >= startDate."),
     endDate: z.string().describe("ISO date 'YYYY-MM-DD'. estimates.modified_at <= endDate."),

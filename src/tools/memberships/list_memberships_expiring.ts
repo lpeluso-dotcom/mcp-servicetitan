@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args { windowDays: number; customerId?: number; page?: number; pageSize?: number }
@@ -29,24 +28,26 @@ export const list_memberships_expiring: ToolDef<Args> = {
     page: z.number().int().positive().default(1).describe('Page number'),
     pageSize: z.number().int().positive().max(100).default(50).describe('Page size, max 100 (capped to keep response under MCP token limit)'),
   },
+  stEndpoint: { method: 'GET', path: '/memberships/v2/tenant/{tid}/memberships', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     const now = new Date();
     const windowEnd = new Date(now.getTime() + args.windowDays * 24 * 60 * 60 * 1000);
 
-    const qs = new URLSearchParams();
-    qs.set('status', 'Active');
-    qs.set('activeThroughOnOrAfter', now.toISOString());
-    qs.set('activeThroughBefore', windowEnd.toISOString());
-    if (args.customerId) qs.set('customerId', String(args.customerId));
-    qs.set('page', String(args.page ?? 1));
-    qs.set('pageSize', String(args.pageSize ?? 50));
+    const query: Record<string, unknown> = {
+      status: 'Active',
+      activeThroughOnOrAfter: now.toISOString(),
+      activeThroughBefore: windowEnd.toISOString(),
+      customerId: args.customerId,
+      page: args.page ?? 1,
+      pageSize: args.pageSize ?? 50,
+    };
 
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/memberships/v2/tenant/000000000/memberships?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
+    const data = await readST<{ data?: Record<string, unknown>[] }>(
+      env,
+      { actor, correlation },
+      `/memberships/v2/tenant/000000000/memberships`,
+      query,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `list_memberships_expiring failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: Record<string, unknown>[] }>();
     const raw = data.data ?? [];
     const activeOnly = raw.filter((m) => m.status === 'Active');
     return {

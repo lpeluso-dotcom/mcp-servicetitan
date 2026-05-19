@@ -30,6 +30,7 @@ export const st_create_service: ToolDef<Args> = {
     'dryRun=true (default) validates and returns a confirmation_token — call again with dryRun=false + token to write. ' +
     'This deployment uses dynamic pricing (useStaticPrice=false) — do NOT set price unless this is a static-price service.',
   isWrite: true,
+  stEndpoint: { method: 'POST', path: '/pricebook/v2/tenant/{tid}/services', source: 'live' },
   zodSchema: {
     name: z.string().min(1).describe('Display name for the service'),
     categoryId: z.number().int().positive().describe('Pricebook category ID (required by ST)'),

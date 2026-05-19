@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
 import type { Env } from '../../env';
@@ -325,19 +325,11 @@ async function liveRead(
 }> {
   // Single-job mode: hit /jobs/{id}/timesheets (no pagination).
   if (args.jobId !== undefined) {
-    const path = `/payroll/v2/tenant/${tenant}/jobs/${args.jobId}/timesheets`;
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(path)}`,
-      { headers: authHeaders(env, correlation, actor) },
+    const data = await readST<{ data?: RawTimesheet[] }>(
+      env,
+      { actor, correlation },
+      `/payroll/v2/tenant/${tenant}/jobs/${args.jobId}/timesheets`,
     );
-    if (!resp.ok) {
-      throw new McpError(
-        'upstream_error',
-        `payroll_job_timesheets_list live failed: ${resp.status} ${path}`,
-        { correlation },
-      );
-    }
-    const data = (await resp.json()) as { data?: RawTimesheet[] };
     return {
       count: (data.data ?? []).length,
       timesheets: (data.data ?? []).map(slimLive),
@@ -347,27 +339,17 @@ async function liveRead(
   }
 
   // Batch mode: /jobs/timesheets with pagination + modifiedOnOrAfter.
-  const qs = new URLSearchParams();
-  qs.set('page', String(page));
-  qs.set('pageSize', String(pageSize));
-  qs.set('active', 'Any');
+  const query: Record<string, unknown> = { page, pageSize, active: 'Any' };
   if (args.modifiedOnOrAfter !== undefined) {
-    qs.set('modifiedOnOrAfter', args.modifiedOnOrAfter);
+    query.modifiedOnOrAfter = args.modifiedOnOrAfter;
   }
 
-  const path = `/payroll/v2/tenant/${tenant}/jobs/timesheets?${qs}`;
-  const resp = await env.ST_PROXY.fetch(
-    `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(path)}`,
-    { headers: authHeaders(env, correlation, actor) },
+  const data = await readST<{ data?: RawTimesheet[]; hasMore?: boolean }>(
+    env,
+    { actor, correlation },
+    `/payroll/v2/tenant/${tenant}/jobs/timesheets`,
+    query,
   );
-  if (!resp.ok) {
-    throw new McpError(
-      'upstream_error',
-      `payroll_job_timesheets_list live failed: ${resp.status} ${path}`,
-      { correlation },
-    );
-  }
-  const data = (await resp.json()) as { data?: RawTimesheet[]; hasMore?: boolean };
   return {
     count: (data.data ?? []).length,
     timesheets: (data.data ?? []).map(slimLive),
