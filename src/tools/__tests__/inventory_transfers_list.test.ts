@@ -26,7 +26,7 @@ function fakeEnv() {
     ),
   );
   return {
-    ST_TENANT_ID: '431848990',
+    ST_TENANT_ID: '000000000',
     ST_PROXY: { fetch: fetcher },
     MCP_SYNC_KEY: 'k',
   } as any;
@@ -55,7 +55,7 @@ describe('inventory_transfers_list', () => {
     expect(out.transfers[1].to_warehouse_id).toBeNull();
     expect(out.transfers[1].date).toBeNull();
     const calledUrl = (env.ST_PROXY.fetch as any).mock.calls[0][0];
-    expect(calledUrl).toContain('%2Finventory%2Fv2%2Ftenant%2F431848990%2Ftransfers');
+    expect(calledUrl).toContain('%2Finventory%2Fv2%2Ftenant%2F000000000%2Ftransfers');
     expect(calledUrl).toContain('fromWarehouseId%3D10');
     expect(out.has_more).toBe(false);
     expect(out._source).toBe('live');
@@ -70,12 +70,12 @@ describe('inventory_transfers_list', () => {
 
   it('throws McpError on upstream failure', async () => {
     const env = {
-      ST_TENANT_ID: '431848990',
+      ST_TENANT_ID: '000000000',
       ST_PROXY: { fetch: vi.fn(async () => new Response('', { status: 502 })) },
       MCP_SYNC_KEY: 'k',
     } as any;
     await expect(
       inventory_transfers_list.handler(env, {}, { actor: 'test', correlation: 'c1' }),
-    ).rejects.toThrow(/readST 502 on \/inventory\/v2\/tenant\/431848990\/transfers/);
+    ).rejects.toThrow(/readST 502 on \/inventory\/v2\/tenant\/000000000\/transfers/);
   });
 });

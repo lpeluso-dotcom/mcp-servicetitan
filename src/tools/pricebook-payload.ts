@@ -7,9 +7,8 @@
 //
 // We keep the user-facing arg names (`name`, `categoryId`) for ergonomics
 // and back-compat, but rewrite the outbound payload at the boundary so ST
-// actually persists the change. Documented in
-// qsc-infra/.claude/rules/servicetitan.md and observed on 2026-05-12 when
-// 5 REPIPE-* services landed with displayName:null and categories:[].
+// actually persists the change. Observed in production 2026-05-12 when
+// multiple pricebook services landed with displayName:null and categories:[].
 // ============================================================
 export function toStPricebookPayload<T extends Record<string, unknown>>(
   payload: T,

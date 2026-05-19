@@ -22,7 +22,7 @@ const OPP_ROW = {
   job_type_name: 'Generator Install',
   business_unit: 'Electrical Install Residential',
   technicians_json: '["Brooks H","Carlos P"]',
-  created_by_users_json: '["lpeluso"]',
+  created_by_users_json: '["test_user"]',
   location_name: 'Main',
   location_address: '123 Pine',
   created_date: '2026-05-10T12:00:00Z',
@@ -38,7 +38,7 @@ function envWith(handler: (body: any) => any) {
     return new Response(JSON.stringify(handler(body)), { status: 200 });
   });
   return {
-    ST_TENANT_ID: '431848990',
+    ST_TENANT_ID: '000000000',
     ST_PROXY: { fetch: fetcher },
     MCP_SYNC_KEY: 'k',
   } as any;

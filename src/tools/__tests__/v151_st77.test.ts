@@ -10,7 +10,7 @@ import { assertFilterPreservation } from './filter_preservation_helper';
 function liveEnv(body: unknown = { data: [] }, status = 200) {
   const fetcher = vi.fn(async () => new Response(JSON.stringify(body), { status }));
   return {
-    ST_TENANT_ID: '431848990',
+    ST_TENANT_ID: '000000000',
     ST_PROXY: { fetch: fetcher },
     MCP_SYNC_KEY: 'k',
   } as any;
@@ -109,7 +109,7 @@ describe('jobs_hold_reasons_list — new tool', () => {
     expect(out.hold_reasons[0]).toEqual({ id: 1, name: 'Parts ordered', active: true });
     expect(out.total_count).toBe(3);
     const url = (env.ST_PROXY.fetch as any).mock.calls[0][0] as string;
-    expect(url).toContain('%2Fjpm%2Fv2%2Ftenant%2F431848990%2Fjob-hold-reasons');
+    expect(url).toContain('%2Fjpm%2Fv2%2Ftenant%2F000000000%2Fjob-hold-reasons');
   });
 
   it('forwards active filter', async () => {

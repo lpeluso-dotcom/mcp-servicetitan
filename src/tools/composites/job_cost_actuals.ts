@@ -95,7 +95,7 @@ export const job_cost_actuals: ToolDef<Args> = {
     'L5 composite for per-job labor-burden diagnostics. Returns the job, its timesheets (with ' +
     'drive_minutes + working_minutes per tech), appointments + assignments, estimates, and the ' +
     'live invoice, plus a computed labor_burden_$ summary (sum_drive + sum_work) × burdenRate / 60. ' +
-    'Defaults burdenRate to $45/hr (QSC standard; matches the 2026-05-19 probe reconciliation). ' +
+    'Defaults burdenRate to $45/hr; override per call to match your shop standard. ' +
     'Source: mixed (D1 job_timesheets + jobs + appointments + assignments + estimates + live ST invoice).',
   zodSchema: {
     jobId: z.number().int().positive().describe('ST job ID'),

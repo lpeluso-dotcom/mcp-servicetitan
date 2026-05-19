@@ -28,7 +28,7 @@ function fakeEnv() {
     ),
   );
   return {
-    ST_TENANT_ID: '431848990',
+    ST_TENANT_ID: '000000000',
     ST_PROXY: { fetch: fetcher },
     MCP_SYNC_KEY: 'k',
   } as any;
@@ -58,7 +58,7 @@ describe('inventory_receipts_list', () => {
     expect(out.receipts[1].warehouse_id).toBeNull();
     expect(out.receipts[1].date).toBeNull();
     const calledUrl = (env.ST_PROXY.fetch as any).mock.calls[0][0];
-    expect(calledUrl).toContain('%2Finventory%2Fv2%2Ftenant%2F431848990%2Freceipts');
+    expect(calledUrl).toContain('%2Finventory%2Fv2%2Ftenant%2F000000000%2Freceipts');
     expect(calledUrl).toContain('vendorId%3D5');
     expect(out.has_more).toBe(false);
     expect(out._source).toBe('live');
@@ -73,18 +73,18 @@ describe('inventory_receipts_list', () => {
 
   it('throws McpError on upstream failure', async () => {
     const env = {
-      ST_TENANT_ID: '431848990',
+      ST_TENANT_ID: '000000000',
       ST_PROXY: { fetch: vi.fn(async () => new Response('', { status: 500 })) },
       MCP_SYNC_KEY: 'k',
     } as any;
     await expect(
       inventory_receipts_list.handler(env, {}, { actor: 'test', correlation: 'c1' }),
-    ).rejects.toThrow(/readST 500 on \/inventory\/v2\/tenant\/431848990\/receipts/);
+    ).rejects.toThrow(/readST 500 on \/inventory\/v2\/tenant\/000000000\/receipts/);
   });
 
   it('returns count=0 and receipts=[] when ST returns empty data', async () => {
     const env = {
-      ST_TENANT_ID: '431848990',
+      ST_TENANT_ID: '000000000',
       ST_PROXY: {
         fetch: vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })),
       },
