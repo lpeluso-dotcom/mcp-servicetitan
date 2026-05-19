@@ -19,25 +19,27 @@ dataset = "mcp_servicetitan_metrics"
 [triggers]
 crons = []
 
-# Replace placeholder IDs with resources from your own Cloudflare account.
+# QSC tenant IDs. CF resource IDs are public identifiers, not secrets — the
+# actual security boundary is the CLOUDFLARE_API_TOKEN (GH secret) and the
+# MCP_SYNC_KEY / JWT_SECRET wrangler secrets.
 [[d1_databases]]
 binding = "DB"
 database_name = "mcp-servicetitan"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "5380b37c-132c-4f21-a294-d99b7e05e6cf"
 
 [[kv_namespaces]]
 binding = "PROXY_STATE"
-id = "00000000000000000000000000000000"
+id = "4c18d1ac623145ab86901d5fb44a022a"
 
 # Service binding to your own ServiceTitan proxy worker. The proxy is expected
 # to expose /api/st/read, /api/st/write, and queryD1-compatible behavior.
 [[services]]
 binding = "ST_PROXY"
-service = "your-servicetitan-proxy"
+service = "taylor-ai"
 
 [vars]
 MCP_SERVICE_VERSION = "1.5.1"
-ST_TENANT_ID = "000000000"
+ST_TENANT_ID = "431848990"
 
 # Secrets (set with `wrangler secret put`):
 # MCP_SYNC_KEY - shared bearer between mcp-servicetitan and the upstream proxy
@@ -70,7 +72,7 @@ cpu_ms = 50
 
 [env.dev.vars]
 MCP_SERVICE_VERSION = "1.5.1-dev"
-ST_TENANT_ID = "000000000"
+ST_TENANT_ID = "431848990"
 
 [[env.dev.durable_objects.bindings]]
 name = "ST_RATE_LIMITER"
@@ -91,15 +93,15 @@ dataset = "mcp_servicetitan_metrics_dev"
 [[env.dev.d1_databases]]
 binding = "DB"
 database_name = "mcp-servicetitan-dev"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "74007593-70cd-462c-9a4c-75cf0771b4ee"
 
 [[env.dev.kv_namespaces]]
 binding = "PROXY_STATE"
-id = "00000000000000000000000000000000"
+id = "4c18d1ac623145ab86901d5fb44a022a"
 
 [[env.dev.services]]
 binding = "ST_PROXY"
-service = "your-servicetitan-proxy-dev"
+service = "taylor-ai"
 
 # Dev secrets (same command, add --env dev):
 # wrangler secret put MCP_SYNC_KEY --env dev
