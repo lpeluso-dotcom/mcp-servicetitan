@@ -112,6 +112,8 @@ import { job_cost_actuals } from './composites/job_cost_actuals';
 import { tech_drive_time_summary } from './composites/tech_drive_time_summary';
 import { assigned_vs_sold_estimate_audit } from './composites/assigned_vs_sold_estimate_audit';
 import { open_opportunities_pulitzer_feed } from './composites/open_opportunities_pulitzer_feed';
+// v1.5.1 ST-77 — Job hold reasons
+import { jobs_hold_reasons_list } from './jobs/jobs_hold_reasons_list';
 
 export interface ToolContext {
   actor: string;
@@ -206,6 +208,8 @@ export const TOOLS: readonly ToolDef<any>[] = [
   dispatch_pro_utilization_list, dispatch_pro_ratio_list, dispatch_pro_alerts_list,
   // v1.5 Composites
   job_cost_actuals, tech_drive_time_summary, assigned_vs_sold_estimate_audit, open_opportunities_pulitzer_feed,
+  // v1.5.1 ST-77
+  jobs_hold_reasons_list,
 ] as const;
 
 export function findTool(name: string): ToolDef<any> | undefined {
