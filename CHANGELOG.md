@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.5.0 — 2026-05-19 (UNRELEASED — awaiting Luke review)
+
+PR (`feat/v1.5-payroll-opportunities-dispatch-pro`): payroll + opportunities + dispatch-pro D1-first reads and four costing composites driven by today's ST Payroll API findings. Tool count **75 → 86** (+9 readers added; +2 composites in opportunities/dispatch_pro count is actually 9 new tools); test count **416 → 430** (+14).
+
+Plan: `~/.claude/plans/inlite-of-what-we-elegant-mitten.md`. Today's payroll probe + Q1 job-costing findings are the motivation; per-job drive/working-time data now flows through the typed MCP surface instead of the taylor-ai proxy escape-hatch.
+
+### New: D1-first reader tools (5)
+| Tool | D1 table | ST endpoint mirror |
+|---|---|---|
+| `opportunities_list` | `opportunities` (mig 0018) | `/sales/v2/tenant/{tid}/opportunities` |
+| `opportunity_get` | `opportunities` + `estimates` | `/sales/v2/tenant/{tid}/opportunities/{id}` |
+| `dispatch_pro_utilization_list` | `dispatch_pro_utilization` (mig 0022) | reporting/operations/80766576 |
+| `dispatch_pro_ratio_list` | `dispatch_pro_ratio` | reporting/operations/80770546 |
+| `dispatch_pro_alerts_list` | `dispatch_pro_alerts` | reporting/operations/80769010 |
+
+All five use `transformResult: defaultShaper` and read via the shared `src/d1.ts` helper (`POST /api/sql/read`, SELECT/WITH only).
+
+### Refactored: `payroll_job_timesheets_list` to D1-first
+- Previously: live-only (PR #16). Now: reads from the new `job_timesheets` D1 table (migration 0021, denormalized `drive_minutes` + `working_minutes`), with three modes — `auto` (D1, falls back to live on empty/stale with a jobId/appointmentId filter), `d1` (force D1), `live` (force live ST).
+- Added filters: `technicianId`, `appointmentId`, `arrivedOnOrAfter`, `arrivedOnOrBefore`, `active`. The probe-reconciliation case (job 77423990 / Brooks / drive=24m + work=152m) is covered by both modes.
+
+### New: composites (4)
+| Composite | Purpose | Source |
+|---|---|---|
+| `job_cost_actuals` | Per-job rollup: timesheets + appointments + assignments + estimates + live invoice + computed `labor_burden_$ = (drive + work) × burdenRate / 60`. Reconciles to today's probe ($132 at $45/hr on the Brooks job). | mixed |
+| `tech_drive_time_summary` | Per-tech rollup over a date window: drive %, working minutes, jobs/day, first-call drive, windshield cost ($110/hr default per YTD plan), labor burden. | D1 |
+| `assigned_vs_sold_estimate_audit` | Credit-attribution diagnostic: estimates where `sold_by` is empty (status=Sold), no job link, or doesn't match any tech on `appointment_assignments`. | D1 |
+| `open_opportunities_pulitzer_feed` | Open cohort (status NOT IN Won/Dismissed, active=1) joined to latest estimate + customer. Same shape as Pulitzer's `open-opportunities` report. | D1 |
+
+### Fix: `create_task` schema expanded to 8 ST-required fields
+- Previous shape sent only `{name, jobId, dueDate?, assignedToId?}` — ST returned 200 but created an incomplete task missing reporter / BU / classification.
+- v1.5 schema: `body`, `reportedById`, `businessUnitId`, `employeeTaskTypeId`, `employeeTaskSourceId` are now required; `reportedDate` defaults to now; `isClosed` defaults to false; `priority` defaults to 'Normal' (enum: Normal/High/Urgent).
+
+### Infra
+- New `src/d1.ts` shared helper (`readD1(env, sql, params)`) — SELECT/WITH gate + typed result.
+- `D1_TABLES` set in `src/read-router.ts` extended with: `job_timesheets`, `opportunities`, `opportunity_statuses`, `dispatch_pro_utilization`, `dispatch_pro_ratio`, `dispatch_pro_alerts`.
+- Pre-deploy follow-up: migration `0003_webhook_event_index.sql` still needs to be applied to prod (`wrangler d1 execute qsc-mcp-st --remote --file migrations/0003_webhook_event_index.sql`).
+
 ## v1.4.1 — 2026-05-06
 
 PR #8 (`feat/shape-inventory-webhooks`): three independently-shippable tracks — response shaper, inventory + payroll pack, webhook hardening. Tool count **66 → 74**; test count **316 → 398** (+82).
