@@ -1,0 +1,52 @@
+name: ServiceTitan API release drift
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '18 13 * * 1'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-st-api-release-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Check ServiceTitan API release-note bundle
+        id: drift
+        continue-on-error: true
+        run: node scripts/check-st-release-notes.js --issue-body > st-api-release-drift.md
+
+      - name: Open drift issue
+        if: steps.drift.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const title = 'ServiceTitan API release-note drift detected';
+            const body = fs.readFileSync('st-api-release-drift.md', 'utf8');
+            const { owner, repo } = context.repo;
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = issues.find((issue) => issue.title === title && !issue.pull_request);
+            if (existing) {
+              await github.rest.issues.update({ owner, repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+              });
+            }

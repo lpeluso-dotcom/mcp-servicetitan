@@ -1,24 +1,26 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readST } from '../../st-read';
 import type { ToolDef } from '../index';
 
 interface Args { jobId: number }
 
 export const get_job_appointments: ToolDef<Args> = {
   name: 'get_job_appointments',
-  description: 'Get appointments for a job. Source: live ST.',
+  description: 'Get appointments for a job. Source: live ST. ST-77.1 returns appointmentSummaries on appointment rows.',
   zodSchema: {
     jobId: z.number().int().positive().describe('ST job ID'),
   },
+  stEndpoint: {
+    method: 'GET',
+    path: '/jpm/v2/tenant/{tid}/appointments',
+    source: 'live',
+  },
   async handler(env, args, { actor, correlation }) {
     const qs = new URLSearchParams({ jobId: String(args.jobId) });
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(`/jpm/v2/tenant/000000000/appointments?${qs}`)}`,
-      { headers: authHeaders(env, correlation, actor) }
-    );
-    if (!resp.ok) throw new McpError('upstream_error', `get_job_appointments failed: ${resp.status}`, { correlation });
-    const data = await resp.json<{ data?: unknown[] }>();
+    const data = await readST<{ data?: unknown[] }>(env, `/jpm/v2/tenant/000000000/appointments?${qs}`, {
+      actor,
+      correlation,
+    });
     return { appointments: data.data ?? [], _source: 'live' };
   },
 };

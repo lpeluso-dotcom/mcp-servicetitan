@@ -4,10 +4,8 @@
 // ============================================================
 
 import { z } from 'zod';
-import type { Env } from '../env';
-import { authHeaders } from '../auth';
 import { cacheGet } from '../cache';
-import { McpError, mapUpstreamStatus } from '../errors';
+import { readST } from '../st-read';
 import type { ToolDef } from './index';
 
 const TENANT_ID = '000000000';
@@ -21,12 +19,13 @@ interface Args {
   startsBefore?: string;
   technicianId?: number;
   jobId?: number;
+  active?: boolean;
 }
 
 export const st_list_appointments: ToolDef<Args> = {
   name: 'st_list_appointments',
   description:
-    'List ServiceTitan appointments. Read-only. NOT cached. Use this for scheduled-date queries — the ST Jobs API does NOT have a scheduled date field, Appointments does (start).',
+    'List ServiceTitan appointments. Read-only. NOT cached. Use this for scheduled-date queries - the ST Jobs API does NOT have a scheduled date field, Appointments does (start). ST-77 adds active field/filter support; ST-77.1 returns appointmentSummaries.',
   zodSchema: {
     page: z.number().int().positive().optional().describe('Page number, default 1'),
     pageSize: z.number().int().positive().max(200).optional().describe('Page size, default 50, max 200'),
@@ -34,6 +33,12 @@ export const st_list_appointments: ToolDef<Args> = {
     startsBefore: z.string().optional().describe('ISO 8601 — filter start < this'),
     technicianId: z.number().int().positive().optional().describe('Filter by assigned technician'),
     jobId: z.number().int().positive().optional().describe('Filter by job ID'),
+    active: z.boolean().optional().describe('ST-77 filter: active=true or active=false; omit for both.'),
+  },
+  stEndpoint: {
+    method: 'GET',
+    path: '/jpm/v2/tenant/{tid}/appointments',
+    source: 'live',
   },
   async handler(env, args, { actor, correlation }) {
     const page = args.page ?? 1;
@@ -45,17 +50,11 @@ export const st_list_appointments: ToolDef<Args> = {
     if (args.startsBefore) qs.set('startsBefore', args.startsBefore);
     if (args.technicianId) qs.set('technicianId', String(args.technicianId));
     if (args.jobId) qs.set('jobId', String(args.jobId));
-    const endpoint = `/jpm/v2/tenant/${TENANT_ID}/appointments?${qs.toString()}`;
+    if (args.active !== undefined) qs.set('active', String(args.active));
     const cacheKey = qs.toString();
 
     return cacheGet(env, NAMESPACE, cacheKey, CACHE_TTL_SEC, async () => {
-      const url = `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
-      const resp = await env.ST_PROXY.fetch(url, { headers: authHeaders(env, correlation, actor) });
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => '');
-        throw new McpError(mapUpstreamStatus(resp.status), `ST list_appointments ${resp.status}: ${body.slice(0, 200)}`, { correlation });
-      }
-      return resp.json();
+      return readST(env, `/jpm/v2/tenant/${TENANT_ID}/appointments?${qs.toString()}`, { actor, correlation });
     });
   },
 };

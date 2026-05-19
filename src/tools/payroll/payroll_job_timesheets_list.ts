@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
+import { readST } from '../../st-read';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 
@@ -306,6 +306,11 @@ function unsupportedLiveFilters(args: Args): string[] {
   if (args.arrivedOnOrAfter !== undefined) out.push('arrivedOnOrAfter');
   if (args.arrivedOnOrBefore !== undefined) out.push('arrivedOnOrBefore');
   if (args.active !== undefined) out.push('active');
+  if (args.jobId !== undefined) {
+    if (args.modifiedOnOrAfter !== undefined) out.push('modifiedOnOrAfter');
+    if (args.page !== undefined) out.push('page');
+    if (args.pageSize !== undefined) out.push('pageSize');
+  }
   return out;
 }
 
@@ -326,18 +331,7 @@ async function liveRead(
   // Single-job mode: hit /jobs/{id}/timesheets (no pagination).
   if (args.jobId !== undefined) {
     const path = `/payroll/v2/tenant/${tenant}/jobs/${args.jobId}/timesheets`;
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(path)}`,
-      { headers: authHeaders(env, correlation, actor) },
-    );
-    if (!resp.ok) {
-      throw new McpError(
-        'upstream_error',
-        `payroll_job_timesheets_list live failed: ${resp.status} ${path}`,
-        { correlation },
-      );
-    }
-    const data = (await resp.json()) as { data?: RawTimesheet[] };
+    const data = await readST<{ data?: RawTimesheet[] }>(env, path, { actor, correlation });
     return {
       count: (data.data ?? []).length,
       timesheets: (data.data ?? []).map(slimLive),
@@ -356,18 +350,7 @@ async function liveRead(
   }
 
   const path = `/payroll/v2/tenant/${tenant}/jobs/timesheets?${qs}`;
-  const resp = await env.ST_PROXY.fetch(
-    `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(path)}`,
-    { headers: authHeaders(env, correlation, actor) },
-  );
-  if (!resp.ok) {
-    throw new McpError(
-      'upstream_error',
-      `payroll_job_timesheets_list live failed: ${resp.status} ${path}`,
-      { correlation },
-    );
-  }
-  const data = (await resp.json()) as { data?: RawTimesheet[]; hasMore?: boolean };
+  const data = await readST<{ data?: RawTimesheet[]; hasMore?: boolean }>(env, path, { actor, correlation });
   return {
     count: (data.data ?? []).length,
     timesheets: (data.data ?? []).map(slimLive),

@@ -1,8 +1,8 @@
 # mcp-servicetitan
 
-ServiceTitan MCP server - a Cloudflare Worker that exposes 74 ST tools (73 default-role + 1 admin-only gateway) to Claude Code via the Model Context Protocol. Tools span reads, write-gated mutations, L5 composites, and raw API access.
+ServiceTitan MCP server - a Cloudflare Worker that exposes 92 ST tools (91 default-role + 1 admin-only gateway) to Claude Code via the Model Context Protocol. Tools span D1-first reads, live reads, write-gated mutations, workflow composites, and raw API access.
 
-**Status:** v1.4.1 - see [CHANGELOG.md](CHANGELOG.md) for full history. 74 tools (73 default + 1 admin), CI validation for PRs/pushes, manual Cloudflare deploy workflow. Integration guide at [docs/INTEGRATION.md](docs/INTEGRATION.md).
+**Status:** v1.5.0 - see [CHANGELOG.md](CHANGELOG.md) for full history. 92 tools (91 default + 1 admin), CI validation for PRs/pushes, manual Cloudflare deploy workflow. Integration guide at [docs/INTEGRATION.md](docs/INTEGRATION.md).
 
 **Publication note:** this is a single-tenant ServiceTitan integration. Share the code for review, not a live production MCP endpoint or credentials. `POST /mcp` requires either `Authorization: Bearer <JWT>` or `X-Sync-Key`; `/health` is the only intentionally public runtime endpoint.
 
@@ -28,23 +28,23 @@ Claude Code  ──Streamable HTTP/MCP──▶  mcp-servicetitan (Cloudflare Wo
 - **Transport:** Cloudflare Agents SDK `createMcpHandler` (Streamable HTTP) — replaces the v0.1 custom JSON-RPC handler.
 - **Per-request McpServer:** required post-SDK-1.26.0 — shared instances are a known cross-request state-bleed vuln.
 - **Auth at the boundary:** `POST /mcp` requires a valid JWT or `X-Sync-Key`; every tool call writes to `audit_log` (surface=`servicetitan`), errors to `error_log`. `/admin/*` routes are guarded by `X-Sync-Key`.
-- **Read path:** `ReadRouter` is implemented as future infrastructure but not yet wired into individual tools — every read currently goes live via `/api/st/read` proxy on servicetitan-proxy. D1-first migration is a v1.2 question.
+- **Read path:** `readD1()` centralizes D1 SELECT/WITH reads; `readST()` centralizes live `/api/st/read` proxy calls. v1.5 starts D1-first reads for job timesheets, opportunities, and Dispatch Pro mirrors while preserving live reads where the API remains the source of truth.
 - **Write path:** two-phase `WriteGate` — `dryRun: true` returns a 15-min HMAC `confirmation_token`; `dryRun: false` + valid token executes via `/api/st/write` proxy. `confirmation_token` reuse, expiry, HMAC tampering, and tool-name forging are all enforced.
 - **Composites:** L5 fanout tools (`customer_snapshot`, `job_closeout_report`) use `gatherFetches` for explicit per-call partial-failure attribution. No silent empty arrays.
 - **Response shaping (v1.4.1):** `ToolDef.transformResult` lets a tool strip ST envelope noise (`paginationToken`, `_meta`, etc.) and cap big arrays before MCP serialize. Adopted on `customer_snapshot`, `job_closeout_report`, `st_list_customers`; remaining ~63 tools opt in via follow-up PR.
 
-## Tool catalog (v1.4.1)
+## Tool catalog (v1.5.0)
 
-73 default-role + 1 admin-role (`st_call`) = 74 total. Full breakdown:
+91 default-role + 1 admin-role (`st_call`) = 92 total. Full breakdown:
 
 | Tranche | Count | Tools |
 |---|---|---|
 | Legacy F1 | 9 | `st_list_customers`, `st_get_customer`, `st_list_jobs`, `st_list_appointments`, `st_get_pricebook`, `st_patch_service`, `st_create_service`, `st_patch_material`, `st_create_material` |
 | T5 CRM | 6 | `find_customer`, `get_customer`, `get_customer_locations`, `list_customer_jobs`, `get_customer_membership`, `add_customer_note` *(H1 factory)* |
-| T5 Jobs | 8 | `get_job`, `list_jobs_today`, `get_job_appointments`, `add_job_note`, `book_job`, `reschedule_appointment`, `hold_appointment`, `assign_technicians` |
-| T6 Pricebook | 5 | `search_pricebook_services`, `get_service_details`, `search_materials`, `get_configurable_equipment_children`, `list_service_categories` |
+| T5 Jobs | 11 | `get_job`, `appointment_get`, `list_jobs_today`, `get_job_appointments`, `job_equipment_list`, `add_job_note`, `book_job`, `reschedule_appointment`, `hold_appointment`, `assign_technicians`, `jobs_hold_reasons_list` *(ST-77.1)* |
+| T6 Pricebook | 6 | `search_pricebook_services`, `get_service_details`, `search_materials`, `get_configurable_equipment_children`, `list_service_categories`, `search_pricebook_all` |
 | T6 Invoicing | 4 | `get_invoice`, `list_invoices_job`, `get_invoice_balance`, `list_unpaid_invoices` |
-| T7 Estimates | 3 | `list_estimates_job`, `get_estimate`, `update_estimate_status` |
+| T7 Estimates | 5 | `list_estimates_job`, `get_estimate`, `dismiss_estimate`, `sell_estimate`, `unsell_estimate` |
 | T7 Dispatch | 5 | `get_capacity`, `list_technicians_available`, `get_technician_shifts`, `list_non_job_events`, `st_get_capacity_slots` *(v1.2 — `/capacity` slot-finder)* |
 | T7 Marketing | 3 | `list_campaigns`, `get_campaign_performance`, `create_call_with_campaign` |
 | T8 Memberships | 3 | `list_memberships_active`, `list_memberships_expiring`, `create_recurring_service` |
@@ -54,9 +54,13 @@ Claude Code  ──Streamable HTTP/MCP──▶  mcp-servicetitan (Cloudflare Wo
 | T11 Reporting (v1.2) | 1 | `st_run_report` *(mode discriminator: list_categories \| list_reports \| describe_report \| run)* |
 | T12 Marketing-attribution (v1.2) | 1 | `st_post_marketing_attribution` *(kind discriminator: job \| web_booking \| web_lead_form \| external_call)* |
 | T12 Inventory (v1.4.1) | 4 | `inventory_vendors_list`, `inventory_warehouses_list`, `inventory_receipts_list`, `inventory_transfers_list` |
-| T13 Payroll (v1.4.1) | 4 | `payroll_payrolls_list`, `payroll_non_job_timesheets_list`, `payroll_location_rates_list`, `payroll_settings_get` |
-| C10–C12 Composites | 9 | `customer_snapshot`, `pricebook_health_check_services`, `job_closeout_report`, `margin_audit`, `membership_outreach_list`, `dispatch_override_audit`, `call_quality_review`, `commercial_plumbing_opportunities`, `membership_jackpot_leaderboard` |
+| T13 Payroll | 5 | `payroll_payrolls_list`, `payroll_non_job_timesheets_list`, `payroll_job_timesheets_list`, `payroll_location_rates_list`, `payroll_settings_get` |
+| C10–C12 Composites | 13 | `customer_snapshot`, `pricebook_health_check_services`, `job_closeout_report`, `margin_audit`, `membership_outreach_list`, `dispatch_override_audit`, `call_quality_review`, `commercial_plumbing_opportunities`, `membership_jackpot_leaderboard`, `job_cost_actuals`, `tech_drive_time_summary`, `assigned_vs_sold_estimate_audit`, `open_opportunities_pulitzer_feed` |
 | Siro | 3 | `siro_list_mobile_events`, `siro_get_recording_summary`, `siro_get_engagement` |
+| Opportunities | 2 | `opportunities_list`, `opportunity_get` |
+| Dispatch Pro | 3 | `dispatch_pro_utilization_list`, `dispatch_pro_ratio_list`, `dispatch_pro_alerts_list` |
+| ST-77.1 Settings | 1 | `intacct_business_unit_mappings_get` |
+| Service Agreements | 2 | `service_agreements_list`, `service_agreement_get` |
 
 Removed in v1.1 D4: `marketing_roas` (stub blocked on three external MCPs that don't exist; cleaner-stub > stub-that-lies).
 
@@ -70,12 +74,13 @@ Deferred:
 
 | Path | Auth | Purpose |
 |---|---|---|
-| `POST /mcp` | JWT or `X-Sync-Key` | MCP Streamable HTTP — Inspector + Claude Code |
+| `POST /mcp` | JWT or `X-Sync-Key` | MCP Streamable HTTP — Inspector + Claude Code. Optional `X-MCP-Tool-Pack` header or `?pack=` query narrows the exposed tool set. |
 | `GET /health` | none | Liveness + tool count + version |
 | `GET /admin/roles` | `X-Sync-Key` | List role assignments from `mcp_roles` |
 | `GET /admin/metrics` | `X-Sync-Key` | Multi-period call stats: `period_1h`, `period_24h`, `period_7d` with `error_rate_pct`; `by_actor_24h`; `write_gate_24h` dryRun/confirm/expired counts; top 10 tools + errors |
 | `GET /admin/health/audit` | `X-Sync-Key` | Last-activity probe — returns `last_audit_ts`, `is_silent`, `_hint` for diagnosis |
 | `GET /admin/endpoints` | `X-Sync-Key` | ST endpoint inventory — per-tool `stEndpoint` descriptors + undeclared list (v1.2) |
+| `GET /admin/tool-packs` | `X-Sync-Key` | Focused workflow pack inventory: `core`, `payroll`, `dispatch`, `accounting`, `pricebook`, `sales`, `admin` |
 | `POST /webhooks/st` | HMAC | HMAC-verified ST webhook ingest (v1.4.1) — event-type allowlist: `appointmentScheduled`, `jobCompleted`, `paymentReceived`, `customerCreated`. Unknown types return 400. Per-event metric to `MCP_METRICS`. |
 
 ## Deploy

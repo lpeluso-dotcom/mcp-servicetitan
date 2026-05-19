@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { payroll_job_timesheets_list } from '../payroll/payroll_job_timesheets_list';
+import { expectNoForwardedQuery } from './filter-forwarding';
 
 // Probe job 77423990 (Brooks Hunsucker, 2026-02-20) shape.
 const PROBE_ROW = {
@@ -98,6 +99,22 @@ describe('payroll_job_timesheets_list', () => {
       )) as any;
       expect(out._source).toBe('d1');
       expect(out.count).toBe(0);
+    });
+
+    it('does not fall back live when appointmentId would be dropped', async () => {
+      const env = envWith([
+        { urlContains: '/api/sql/read', body: { success: true, results: [] } },
+        { urlContains: '/api/st/read', body: { data: [PROBE_ROW] } },
+      ]);
+      const out = (await payroll_job_timesheets_list.handler(
+        env,
+        { appointmentId: 77423991 },
+        { actor: 'test', correlation: 'c1' },
+      )) as any;
+      expect(out._source).toBe('d1');
+      expect(out.count).toBe(0);
+      const calls = (env.ST_PROXY.fetch as any).mock.calls;
+      expect(calls.every((c: any[]) => !String(c[0]).includes('/api/st/read'))).toBe(true);
     });
 
     it("source: 'd1' forces D1 only (no live fallback even on empty)", async () => {
@@ -233,6 +250,19 @@ describe('payroll_job_timesheets_list', () => {
       expect(calledUrl).toContain('pageSize%3D250');
       expect(calledUrl).toContain('active%3DAny');
       expect(calledUrl).toContain('modifiedOnOrAfter%3D2026-05-01T00%253A00%253A00Z');
+      expectNoForwardedQuery(calledUrl, 'appointmentId');
+    });
+
+    it('rejects live mode when filters cannot be preserved', async () => {
+      const env = envWith([{ urlContains: '/api/st/read', body: { data: [PROBE_ROW] } }]);
+      await expect(
+        payroll_job_timesheets_list.handler(
+          env,
+          { appointmentId: 77423991, source: 'live' },
+          { actor: 'test', correlation: 'c1' },
+        ),
+      ).rejects.toThrow(/cannot honor filter\(s\): appointmentId/);
+      expect((env.ST_PROXY.fetch as any).mock.calls.length).toBe(0);
     });
 
     it('null timestamps produce null drive_minutes / working_minutes', async () => {
@@ -266,7 +296,7 @@ describe('payroll_job_timesheets_list', () => {
           { jobId: 1, source: 'live' },
           { actor: 'test', correlation: 'c1' },
         ),
-      ).rejects.toThrow(/payroll_job_timesheets_list live failed: 503/);
+      ).rejects.toThrow(/ST read failed: 503/);
     });
 
     // QA regression — explicit 'live' with a filter the live endpoint cannot
@@ -300,17 +330,18 @@ describe('payroll_job_timesheets_list', () => {
       ).rejects.toThrow(/cannot honor filter\(s\): technicianId, active/);
     });
 
-    it("source: 'live' + jobId + modifiedOnOrAfter passes through (both are honored)", async () => {
+    it("rejects source: 'live' + jobId + modifiedOnOrAfter (per-job endpoint cannot honor it)", async () => {
       const env = envWith([
         { urlContains: '/api/st/read', body: { data: [PROBE_ROW] } },
       ]);
-      const out = (await payroll_job_timesheets_list.handler(
-        env,
-        { jobId: 77423990, modifiedOnOrAfter: '2026-01-01T00:00:00Z', source: 'live' },
-        { actor: 'test', correlation: 'c1' },
-      )) as any;
-      expect(out._source).toBe('live');
-      expect(out.count).toBe(1);
+      await expect(
+        payroll_job_timesheets_list.handler(
+          env,
+          { jobId: 77423990, modifiedOnOrAfter: '2026-01-01T00:00:00Z', source: 'live' },
+          { actor: 'test', correlation: 'c1' },
+        ),
+      ).rejects.toThrow(/cannot honor filter\(s\): modifiedOnOrAfter/);
+      expect((env.ST_PROXY.fetch as any).mock.calls.length).toBe(0);
     });
   });
 });

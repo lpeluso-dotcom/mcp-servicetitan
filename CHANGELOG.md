@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.5.1 — 2026-05-19 (UNRELEASED — ST-77 alignment + hardening)
+
+Follow-up on PR #17. Tool count **86 → 92** (+6 live ST-77 / ST-77.1 readers) and the MCP surface now has stronger guardrails around filter preservation, endpoint metadata, and focused client tool packs.
+
+### ST-77 / ST-77.1 API alignment
+- `st_list_appointments` now forwards the ST-77 `active` field/filter for appointment list calls.
+- `appointment_get` added for appointment detail reads, preserving ST-77 `active` and ST-77.1 `appointmentSummaries`.
+- `st_list_jobs` and `get_job` keep the ST-77.1 `isAutoDispatched` and `summaryOfWork` fields in live job responses.
+- `st_list_jobs` accepts the ST-77.1 `equipmentIds` filter.
+- New `jobs_hold_reasons_list` live reader for `/jpm/v2/tenant/{tid}/jobs/hold-reasons`.
+- New `job_equipment_list` live reader for `/jpm/v2/tenant/{tid}/jobs/{id}/equipment`.
+- New `intacct_business_unit_mappings_get` live reader for `/settings/v2/tenant/{tid}/business-units/intacct`.
+- New `service_agreements_list` and `service_agreement_get` readers for `/service-agreements/v2/tenant/{tid}/service-agreements`, preserving ST-77 `BillingScheduleType=Custom` and ST-77.1 `customFields`.
+
+### Hardening
+- New `src/st-read.ts` shared live-read helper centralizes `/api/st/read` URL building, auth headers, error mapping, and query serialization.
+- `payroll_job_timesheets_list` now rejects or avoids live fallback whenever that fallback would silently drop D1-only filters such as `appointmentId`, `technicianId`, arrival windows, or `active`.
+- New reusable filter-forwarding test helper catches schema/filter drift across D1 and live code paths.
+- Endpoint coverage tests now fail unless every tool has a `stEndpoint` descriptor or an explicit `undeclaredReason`.
+- Added focused workflow tool packs: `core`, `payroll`, `dispatch`, `accounting`, `pricebook`, `sales`, and `admin`. `/mcp` accepts `X-MCP-Tool-Pack` or `?pack=`, `/health` reports pack counts, and `/admin/tool-packs` inventories all packs.
+- Added ServiceTitan API release-note drift automation: `npm run release:st-drift`, `docs/st-api-release-baseline.json`, and a weekly GitHub Actions workflow that opens or refreshes an issue when the developer portal bundle adds/changes ST-77-family API releases.
+
 ## v1.5.0 — 2026-05-19 (UNRELEASED — awaiting Luke review)
 
 PR (`feat/v1.5-payroll-opportunities-dispatch-pro`): payroll + opportunities + dispatch-pro D1-first reads and four costing composites driven by today's ST Payroll API findings. Tool count **75 → 86** (+9 readers added; +2 composites in opportunities/dispatch_pro count is actually 9 new tools); test count **416 → 430** (+14).

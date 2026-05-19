@@ -4,10 +4,8 @@
 // ============================================================
 
 import { z } from 'zod';
-import type { Env } from '../env';
-import { authHeaders } from '../auth';
 import { cacheGet } from '../cache';
-import { McpError, mapUpstreamStatus } from '../errors';
+import { readST } from '../st-read';
 import type { ToolDef } from './index';
 
 const TENANT_ID = '000000000';
@@ -20,12 +18,13 @@ interface Args {
   customerId?: number;
   jobStatus?: string;
   modifiedOnOrAfter?: string;
+  equipmentIds?: number[];
 }
 
 export const st_list_jobs: ToolDef<Args> = {
   name: 'st_list_jobs',
   description:
-    'List ServiceTitan jobs. Read-only. NOT cached (jobs change frequently). Note: the Jobs API does NOT include the scheduled date — use st_list_appointments with start filter instead.',
+    'List ServiceTitan jobs. Read-only. NOT cached (jobs change frequently). Note: the Jobs API does NOT include the scheduled date - use st_list_appointments with start filter instead. ST-77.1 returns isAutoDispatched and summaryOfWork, and adds equipmentIds filtering.',
   zodSchema: {
     page: z.number().int().positive().optional().describe('Page number, default 1'),
     pageSize: z.number().int().positive().max(200).optional().describe('Page size, default 50, max 200'),
@@ -35,6 +34,17 @@ export const st_list_jobs: ToolDef<Args> = {
       .optional()
       .describe('ST job status filter (Scheduled, InProgress, Hold, Completed, Canceled, etc.)'),
     modifiedOnOrAfter: z.string().optional().describe('ISO 8601 timestamp filter'),
+    equipmentIds: z
+      .array(z.number().int().positive())
+      .min(1)
+      .max(50)
+      .optional()
+      .describe('ST-77.1 filter: only jobs with any of these attached equipment IDs'),
+  },
+  stEndpoint: {
+    method: 'GET',
+    path: '/jpm/v2/tenant/{tid}/jobs',
+    source: 'live',
   },
   async handler(env, args, { actor, correlation }) {
     const page = args.page ?? 1;
@@ -45,17 +55,12 @@ export const st_list_jobs: ToolDef<Args> = {
     if (args.customerId) qs.set('customerId', String(args.customerId));
     if (args.jobStatus) qs.set('jobStatus', args.jobStatus);
     if (args.modifiedOnOrAfter) qs.set('modifiedOnOrAfter', args.modifiedOnOrAfter);
+    if (args.equipmentIds?.length) qs.set('equipmentIds', args.equipmentIds.join(','));
     const endpoint = `/jpm/v2/tenant/${TENANT_ID}/jobs?${qs.toString()}`;
     const cacheKey = qs.toString();
 
     return cacheGet(env, NAMESPACE, cacheKey, CACHE_TTL_SEC, async () => {
-      const url = `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
-      const resp = await env.ST_PROXY.fetch(url, { headers: authHeaders(env, correlation, actor) });
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => '');
-        throw new McpError(mapUpstreamStatus(resp.status), `ST list_jobs ${resp.status}: ${body.slice(0, 200)}`, { correlation });
-      }
-      return resp.json();
+      return readST(env, endpoint, { actor, correlation });
     });
   },
 };

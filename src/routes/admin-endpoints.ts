@@ -25,13 +25,20 @@ export async function endpointsHandler(c: Context<{ Bindings: Env }>) {
     stPath: t.stEndpoint?.path ?? null,
     source: t.stEndpoint?.source ?? null,
     declared: !!t.stEndpoint,
+    undeclaredReason: t.undeclaredReason ?? null,
   }));
-  const undeclared = rows.filter((r) => !r.declared).map((r) => r.toolName);
+  const undeclared = rows.filter((r) => !r.declared).map((r) => ({
+    toolName: r.toolName,
+    reason: r.undeclaredReason,
+  }));
+  const unresolved = undeclared.filter((r) => r.reason === null).map((r) => r.toolName);
   return c.json({
     count: rows.length,
     declared_count: rows.length - undeclared.length,
     undeclared_count: undeclared.length,
     undeclared,
+    unresolved_count: unresolved.length,
+    unresolved,
     rows,
   });
 }

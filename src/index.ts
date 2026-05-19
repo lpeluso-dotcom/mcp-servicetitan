@@ -14,7 +14,7 @@ import { Hono } from 'hono';
 import { createMcpHandler } from 'agents/mcp';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Env } from './env';
-import { TOOLS, toolsForRole } from './tools/index';
+import { TOOLS, TOOL_PACKS, isToolPack, toolsForRoleAndPack, type ToolPack } from './tools/index';
 import { registerTool, type RequestContext } from './tool-registry';
 import { resolveAuth } from './auth';
 import { requireAdminKey } from './routes/admin-guard';
@@ -31,12 +31,17 @@ export { CustomerSnapshotSingleflight } from './durable/customer-snapshot-flight
 const app = new Hono<{ Bindings: Env }>();
 
 app.get('/health', (c) => {
+  const requestedPack = c.req.query('pack');
+  const pack = isToolPack(requestedPack) ? requestedPack : 'all';
+  const tools = toolsForRoleAndPack('admin', pack);
   return c.json({
     ok: true,
     service: 'mcp-servicetitan',
     version: c.env.MCP_SERVICE_VERSION,
-    toolCount: TOOLS.length,
-    tools: TOOLS.map((t) => t.name),
+    toolCount: tools.length,
+    tools: tools.map((t) => t.name),
+    toolPack: pack,
+    availableToolPacks: Object.keys(TOOL_PACKS),
     transport: 'agents-sdk createMcpHandler (Streamable HTTP)',
     stProxy: 'service-binding',
   });
@@ -128,6 +133,22 @@ app.get('/admin/health/audit', auditHealthHandler);
 // /admin/endpoints — ST endpoint inventory: per-tool stEndpoint descriptors + undeclared list.
 app.get('/admin/endpoints', endpointsHandler);
 
+app.get('/admin/tool-packs', async (c) => {
+  const denied = await requireAdminKey(c);
+  if (denied) return denied;
+  return c.json({
+    packs: Object.fromEntries(
+      Object.entries(TOOL_PACKS).map(([pack, names]) => [
+        pack,
+        {
+          count: names.length,
+          tools: names,
+        },
+      ]),
+    ),
+  });
+});
+
 // /webhooks/st — HMAC-verified ST webhook ingest.
 app.post('/webhooks/st', (c) => handleWebhook(c.env, c.req.raw));
 
@@ -139,7 +160,7 @@ app.notFound((c) => c.json({ error: 'not found' }, 404));
 const CORS_OPTIONS = {
   origin: '*', // F1 dev-friendly; tighten for prod in H13
   methods: 'GET, POST, OPTIONS, DELETE',
-  headers: 'content-type, mcp-session-id, authorization, x-sync-key, x-mcp-role, x-actor, x-correlation-id',
+  headers: 'content-type, mcp-session-id, authorization, x-sync-key, x-mcp-role, x-mcp-tool-pack, x-actor, x-correlation-id',
   exposeHeaders: 'mcp-session-id',
   maxAge: 86400,
 };
@@ -166,12 +187,12 @@ function unauthorizedMcpResponse(): Response {
 // ─── Per-request McpServer build ──────────────────────────────
 // Required per CF docs: post-SDK-1.26.0 a shared global McpServer is a
 // known security vuln (cross-request state bleed). Build one per request.
-function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: RequestContext): McpServer {
+function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: RequestContext, pack: ToolPack): McpServer {
   const server = new McpServer({
     name: 'mcp-servicetitan',
     version: env.MCP_SERVICE_VERSION,
   });
-  const visible = toolsForRole(reqCtx.role);
+  const visible = toolsForRoleAndPack(reqCtx.role, pack);
   for (const tool of visible) {
     registerTool(server, tool, env, execCtx, reqCtx);
   }
@@ -207,8 +228,10 @@ export default {
     }
     const reqCtx: RequestContext = { actor: auth.actor, role: auth.role };
     const runtimeEnv = withTenantRewrite(env);
+    const requestedPack = request.headers.get('x-mcp-tool-pack') ?? url.searchParams.get('toolPack') ?? url.searchParams.get('pack');
+    const pack = isToolPack(requestedPack) ? requestedPack : 'all';
 
-    const server = buildServer(runtimeEnv, execCtx, reqCtx);
+    const server = buildServer(runtimeEnv, execCtx, reqCtx, pack);
     const handler = createMcpHandler(server, {
       route: '/mcp',
       corsOptions: CORS_OPTIONS,

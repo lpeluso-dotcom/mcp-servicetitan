@@ -1,0 +1,167 @@
+{
+  "source": "https://developer.servicetitan.io/docs/release-notes",
+  "bundle": "https://developer.servicetitan.io/main.82d6a6567e64a72b5274.bundle.js?96dbbe1de6dabf6ff091",
+  "trackedPrefix": "77",
+  "capturedAt": "2026-05-19T17:09:59.498Z",
+  "versions": {
+    "77": {
+      "date": "2026-04-16",
+      "changeGroups": [
+        {
+          "apiId": "tenant-service-agreements-v2",
+          "updates": [
+            {
+              "description": "Added custom billing schedule type enum value to service agreements",
+              "endpoints": [
+                {
+                  "operationId": "ServiceAgreements_GetList",
+                  "method": "GET",
+                  "shortPath": "service-agreements"
+                },
+                {
+                  "operationId": "ServiceAgreements_Get",
+                  "method": "GET",
+                  "shortPath": "service-agreements/{id}"
+                },
+                {
+                  "operationId": "Export_ServiceAgreements",
+                  "method": "GET",
+                  "shortPath": "export/service-agreements"
+                }
+              ],
+              "fieldsHeader": "New field",
+              "fields": "New enum value for BillingScheduleType: Custom"
+            }
+          ]
+        }
+      ]
+    },
+    "77.1": {
+      "date": "2026-05-07",
+      "changeGroups": [
+        {
+          "apiId": "tenant-jpm-v2",
+          "additions": [
+            {
+              "description": "Added a way to set appointment summaries",
+              "endpoints": [
+                {
+                  "operationId": "Appointments_SetSummary",
+                  "method": "POST",
+                  "shortPath": "appointments/{id}/summaries"
+                }
+              ]
+            },
+            {
+              "description": "Added a way to get/attach/detach a job's equipment",
+              "endpoints": [
+                {
+                  "operationId": "JobEquipment_Get",
+                  "method": "GET",
+                  "shortPath": "jobs/{id}/equipment"
+                },
+                {
+                  "operationId": "JobEquipment_Attach",
+                  "method": "POST",
+                  "shortPath": "jobs/{id}/equipment"
+                },
+                {
+                  "operationId": "JobEquipment_DetachBulk",
+                  "method": "DELETE",
+                  "shortPath": "jobs/{id}/equipment"
+                },
+                {
+                  "operationId": "JobEquipment_Detach",
+                  "method": "DELETE",
+                  "shortPath": "jobs/{id}/equipment/{equipmentId}"
+                }
+              ]
+            }
+          ],
+          "updates": [
+            {
+              "description": "Added a way to get and update job summaries",
+              "endpoints": [
+                {
+                  "operationId": "Jobs_GetList",
+                  "method": "GET",
+                  "shortPath": "jobs"
+                },
+                {
+                  "operationId": "Jobs_Get",
+                  "method": "GET",
+                  "shortPath": "jobs/{id}"
+                },
+                {
+                  "operationId": "Jobs_Update",
+                  "method": "PATCH",
+                  "shortPath": "jobs/{id}"
+                }
+              ],
+              "fieldsHeader": "New field",
+              "fields": "summaryOfWork"
+            },
+            {
+              "description": "Added a way to get and update appointment summaries",
+              "endpoints": [
+                {
+                  "operationId": "Appointments_GetList",
+                  "method": "GET",
+                  "shortPath": "appointments"
+                },
+                {
+                  "operationId": "Appointments_Get",
+                  "method": "GET",
+                  "shortPath": "appointments/{id}"
+                }
+              ],
+              "fieldsHeader": "New field",
+              "fields": "appointmentSummaries"
+            },
+            {
+              "description": "Added a way to filter jobs by attached equipment IDs",
+              "endpoints": [
+                {
+                  "operationId": "Jobs_GetList",
+                  "method": "GET",
+                  "shortPath": "jobs"
+                }
+              ],
+              "fieldsHeader": "New field",
+              "fields": "equipmentIds",
+              "filtersHeader": "New filter",
+              "filters": "equipmentIds"
+            }
+          ]
+        },
+        {
+          "apiId": "tenant-service-agreements-v2",
+          "updates": [
+            {
+              "description": "Added new custom field object to the response data",
+              "endpoints": [
+                {
+                  "operationId": "Export_ServiceAgreements",
+                  "method": "GET",
+                  "shortPath": "export/service-agreements"
+                },
+                {
+                  "operationId": "ServiceAgreements_GetList",
+                  "method": "GET",
+                  "shortPath": "service-agreements"
+                },
+                {
+                  "operationId": "ServiceAgreements_Get",
+                  "method": "GET",
+                  "shortPath": "service-agreements/{id}"
+                }
+              ],
+              "fieldsHeader": "New field",
+              "fields": "customFields"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

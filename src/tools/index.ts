@@ -82,13 +82,16 @@ import { get_invoice_balance } from './invoicing/get_invoice_balance';
 import { list_unpaid_invoices } from './invoicing/list_unpaid_invoices';
 // T5 — Jobs & Appointments
 import { get_job } from './jobs/get_job';
+import { appointment_get } from './jobs/appointment_get';
 import { list_jobs_today } from './jobs/list_jobs_today';
 import { get_job_appointments } from './jobs/get_job_appointments';
+import { job_equipment_list } from './jobs/job_equipment_list';
 import { add_job_note } from './jobs/add_job_note';
 import { book_job } from './jobs/book_job';
 import { reschedule_appointment } from './jobs/reschedule_appointment';
 import { hold_appointment } from './jobs/hold_appointment';
 import { assign_technicians } from './jobs/assign_technicians';
+import { jobs_hold_reasons_list } from './jobs/jobs_hold_reasons_list';
 // T12 — Inventory (4)
 import { inventory_vendors_list } from './inventory/inventory_vendors_list';
 import { inventory_warehouses_list } from './inventory/inventory_warehouses_list';
@@ -112,6 +115,11 @@ import { job_cost_actuals } from './composites/job_cost_actuals';
 import { tech_drive_time_summary } from './composites/tech_drive_time_summary';
 import { assigned_vs_sold_estimate_audit } from './composites/assigned_vs_sold_estimate_audit';
 import { open_opportunities_pulitzer_feed } from './composites/open_opportunities_pulitzer_feed';
+// ST-77.1 — Settings
+import { intacct_business_unit_mappings_get } from './settings/intacct_business_unit_mappings_get';
+// ST-77 / ST-77.1 — Service Agreements
+import { service_agreements_list } from './service-agreements/service_agreements_list';
+import { service_agreement_get } from './service-agreements/service_agreement_get';
 
 export interface ToolContext {
   actor: string;
@@ -135,6 +143,13 @@ export interface StEndpointDescriptor {
   source: 'live' | 'd1' | 'mixed' | 'computed';
 }
 
+export type EndpointUndeclaredReason =
+  | 'computed_composite'
+  | 'd1_multi_table'
+  | 'external_non_servicetitan'
+  | 'admin_gateway'
+  | 'legacy_descriptor_backfill_pending';
+
 export interface ToolDef<Args = Record<string, unknown>> {
   name: string;
   description: string;
@@ -146,6 +161,8 @@ export interface ToolDef<Args = Record<string, unknown>> {
   adminOnly?: boolean;
   /** Optional ST endpoint descriptor — populated for tools that map to a single ST API call. */
   stEndpoint?: StEndpointDescriptor;
+  /** Explicit reason when a tool has no single declared ServiceTitan endpoint. */
+  undeclaredReason?: EndpointUndeclaredReason;
   handler: (env: Env, args: Args, ctx: ToolContext) => Promise<unknown>;
   /**
    * Optional response shaper applied AFTER handler returns and BEFORE
@@ -155,7 +172,85 @@ export interface ToolDef<Args = Record<string, unknown>> {
   transformResult?: (result: unknown) => unknown;
 }
 
-export const TOOLS: readonly ToolDef<any>[] = [
+export type ToolPack =
+  | 'all'
+  | 'core'
+  | 'payroll'
+  | 'dispatch'
+  | 'accounting'
+  | 'pricebook'
+  | 'sales'
+  | 'admin';
+
+const ENDPOINT_UNDECLARED_REASONS: Record<string, EndpointUndeclaredReason> = {
+  st_call: 'admin_gateway',
+  search_pricebook_all: 'd1_multi_table',
+  customer_snapshot: 'computed_composite',
+  pricebook_health_check_services: 'computed_composite',
+  job_closeout_report: 'computed_composite',
+  margin_audit: 'computed_composite',
+  membership_outreach_list: 'computed_composite',
+  dispatch_override_audit: 'computed_composite',
+  call_quality_review: 'computed_composite',
+  commercial_plumbing_opportunities: 'computed_composite',
+  membership_jackpot_leaderboard: 'computed_composite',
+  job_cost_actuals: 'computed_composite',
+  tech_drive_time_summary: 'computed_composite',
+  assigned_vs_sold_estimate_audit: 'computed_composite',
+  open_opportunities_pulitzer_feed: 'computed_composite',
+  siro_list_mobile_events: 'external_non_servicetitan',
+  siro_get_recording_summary: 'external_non_servicetitan',
+  siro_get_engagement: 'external_non_servicetitan',
+  assign_technicians: 'legacy_descriptor_backfill_pending',
+  find_customer: 'legacy_descriptor_backfill_pending',
+  get_call: 'legacy_descriptor_backfill_pending',
+  get_campaign_performance: 'legacy_descriptor_backfill_pending',
+  get_configurable_equipment_children: 'legacy_descriptor_backfill_pending',
+  get_customer: 'legacy_descriptor_backfill_pending',
+  get_customer_locations: 'legacy_descriptor_backfill_pending',
+  get_customer_membership: 'legacy_descriptor_backfill_pending',
+  get_estimate: 'legacy_descriptor_backfill_pending',
+  get_form_submission: 'legacy_descriptor_backfill_pending',
+  get_invoice: 'legacy_descriptor_backfill_pending',
+  get_invoice_balance: 'legacy_descriptor_backfill_pending',
+  get_job_appointments: 'legacy_descriptor_backfill_pending',
+  get_service_details: 'legacy_descriptor_backfill_pending',
+  get_technician_shifts: 'legacy_descriptor_backfill_pending',
+  inventory_receipts_list: 'legacy_descriptor_backfill_pending',
+  inventory_transfers_list: 'legacy_descriptor_backfill_pending',
+  inventory_vendors_list: 'legacy_descriptor_backfill_pending',
+  inventory_warehouses_list: 'legacy_descriptor_backfill_pending',
+  list_campaigns: 'legacy_descriptor_backfill_pending',
+  list_customer_jobs: 'legacy_descriptor_backfill_pending',
+  list_estimates_job: 'legacy_descriptor_backfill_pending',
+  list_invoices_job: 'legacy_descriptor_backfill_pending',
+  list_jobs_today: 'legacy_descriptor_backfill_pending',
+  list_memberships_active: 'legacy_descriptor_backfill_pending',
+  list_memberships_expiring: 'legacy_descriptor_backfill_pending',
+  list_non_job_events: 'legacy_descriptor_backfill_pending',
+  list_unpaid_invoices: 'legacy_descriptor_backfill_pending',
+  payroll_location_rates_list: 'legacy_descriptor_backfill_pending',
+  payroll_non_job_timesheets_list: 'legacy_descriptor_backfill_pending',
+  payroll_payrolls_list: 'legacy_descriptor_backfill_pending',
+  payroll_settings_get: 'legacy_descriptor_backfill_pending',
+  search_materials: 'legacy_descriptor_backfill_pending',
+  search_pricebook_services: 'legacy_descriptor_backfill_pending',
+  st_create_material: 'legacy_descriptor_backfill_pending',
+  st_create_service: 'legacy_descriptor_backfill_pending',
+  st_get_customer: 'legacy_descriptor_backfill_pending',
+  st_get_pricebook: 'legacy_descriptor_backfill_pending',
+  st_list_customers: 'legacy_descriptor_backfill_pending',
+  st_patch_material: 'legacy_descriptor_backfill_pending',
+  st_patch_service: 'legacy_descriptor_backfill_pending',
+};
+
+function withEndpointReason<T extends ToolDef<any>>(tool: T): T {
+  if (tool.stEndpoint || tool.undeclaredReason) return tool;
+  const reason = ENDPOINT_UNDECLARED_REASONS[tool.name];
+  return reason ? { ...tool, undeclaredReason: reason } : tool;
+}
+
+const RAW_TOOLS: readonly ToolDef<any>[] = [
   // F1 legacy
   st_list_customers, st_get_customer, st_list_jobs, st_list_appointments, st_get_pricebook,
   st_patch_service, st_create_service, st_patch_material, st_create_material,
@@ -163,8 +258,9 @@ export const TOOLS: readonly ToolDef<any>[] = [
   find_customer, get_customer, get_customer_locations, list_customer_jobs,
   get_customer_membership, add_customer_note,
   // T5 Jobs
-  get_job, list_jobs_today, get_job_appointments, add_job_note,
+  get_job, appointment_get, list_jobs_today, get_job_appointments, job_equipment_list, add_job_note,
   book_job, reschedule_appointment, hold_appointment, assign_technicians,
+  jobs_hold_reasons_list,
   // T6 Pricebook
   search_pricebook_services, get_service_details, search_materials,
   get_configurable_equipment_children, list_service_categories,
@@ -206,7 +302,50 @@ export const TOOLS: readonly ToolDef<any>[] = [
   dispatch_pro_utilization_list, dispatch_pro_ratio_list, dispatch_pro_alerts_list,
   // v1.5 Composites
   job_cost_actuals, tech_drive_time_summary, assigned_vs_sold_estimate_audit, open_opportunities_pulitzer_feed,
+  // ST-77.1 Settings
+  intacct_business_unit_mappings_get,
+  // ST-77 / ST-77.1 Service Agreements
+  service_agreements_list, service_agreement_get,
 ] as const;
+
+export const TOOLS: readonly ToolDef<any>[] = RAW_TOOLS.map(withEndpointReason);
+
+export const TOOL_PACKS: Record<ToolPack, readonly string[]> = {
+  all: TOOLS.map((t) => t.name),
+  core: [
+    'st_list_customers', 'st_get_customer', 'find_customer', 'get_customer',
+    'st_list_jobs', 'get_job', 'appointment_get', 'list_jobs_today', 'st_list_appointments',
+    'get_job_appointments', 'job_equipment_list', 'jobs_hold_reasons_list', 'customer_snapshot', 'job_closeout_report',
+  ],
+  payroll: [
+    'payroll_payrolls_list', 'payroll_non_job_timesheets_list',
+    'payroll_job_timesheets_list', 'payroll_location_rates_list',
+    'payroll_settings_get', 'job_cost_actuals', 'tech_drive_time_summary',
+  ],
+  dispatch: [
+    'get_capacity', 'list_technicians_available', 'get_technician_shifts',
+    'list_non_job_events', 'st_get_capacity_slots', 'dispatch_override_audit',
+    'dispatch_pro_utilization_list', 'dispatch_pro_ratio_list',
+    'dispatch_pro_alerts_list',
+  ],
+  accounting: [
+    'get_invoice', 'list_invoices_job', 'get_invoice_balance',
+    'list_unpaid_invoices', 'job_cost_actuals', 'intacct_business_unit_mappings_get',
+  ],
+  pricebook: [
+    'search_pricebook_services', 'get_service_details', 'search_materials',
+    'get_configurable_equipment_children', 'list_service_categories',
+    'search_pricebook_all', 'pricebook_health_check_services',
+    'st_patch_service', 'st_create_service', 'st_patch_material', 'st_create_material',
+  ],
+  sales: [
+    'list_estimates_job', 'get_estimate', 'dismiss_estimate', 'sell_estimate',
+    'unsell_estimate', 'opportunities_list', 'opportunity_get',
+    'service_agreements_list', 'service_agreement_get',
+    'assigned_vs_sold_estimate_audit', 'open_opportunities_pulitzer_feed',
+  ],
+  admin: ['st_call'],
+};
 
 export function findTool(name: string): ToolDef<any> | undefined {
   return TOOLS.find((t) => t.name === name);
@@ -219,4 +358,15 @@ export function findTool(name: string): ToolDef<any> | undefined {
 export function toolsForRole(role: 'default' | 'admin'): readonly ToolDef<any>[] {
   if (role === 'admin') return TOOLS;
   return TOOLS.filter((t) => !t.adminOnly);
+}
+
+export function isToolPack(value: string | null | undefined): value is ToolPack {
+  return !!value && Object.prototype.hasOwnProperty.call(TOOL_PACKS, value);
+}
+
+export function toolsForRoleAndPack(role: 'default' | 'admin', pack: ToolPack = 'all'): readonly ToolDef<any>[] {
+  const visible = toolsForRole(role);
+  if (pack === 'all') return visible;
+  const names = new Set(TOOL_PACKS[pack]);
+  return visible.filter((t) => names.has(t.name));
 }
