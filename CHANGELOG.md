@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.5.1 — 2026-05-19 (UNRELEASED — ST-77 hardening, depends on v1.5)
+
+Branch `feat/v1.5.1-st77-hardening` stacks on top of `feat/v1.5-payroll-opportunities-dispatch-pro` (PR #17). Scope follows the external QA reviewer's pick: **sharp**, not a sweep. Tool count **86 → 87** (+1); test count **437 → 451** (+14).
+
+### Infra
+- New `src/st.ts` — `readST(env, ctx, endpoint, query?)` and `readSTPaged(env, ctx, endpoint, query?, options?)`. Centralizes the `env.ST_PROXY.fetch` + `URLSearchParams` + envelope-parse pattern that 30+ tools were hand-rolling. Built-in `hasMore` drain with a `maxPages` cap (default 50) so a runaway loop can't trigger.
+- New `src/tools/__tests__/filter_preservation_helper.ts` — reusable test harness: `assertFilterPreservation(tool, matrix, baseArgs?, overrides?)`. For each declared filter, asserts one of: `forwarded_query` (live ST URL), `forwarded_path` (path segment), `forwarded_d1` (SQL WHERE clause), or `rejected_or_skipped` (validation_error or `_fallback_skipped` flag). Designed to be applied incrementally; first adopters are the v1.5.1 tools + 2 v1.5 regression checks.
+
+### ST-77 alignment
+- **`st_list_appointments`** — added `active` filter (forwarded as `active=True|False`). The returned `active` boolean on each row passes through unchanged.
+- **`st_list_jobs`** + **`get_job`** — docstrings document the ST-77 `isAutoDispatched` field; both tools already return raw JSON so the field flows through naturally. Migrated both to `readST`.
+- **New: `jobs_hold_reasons_list`** — wraps `/jpm/v2/tenant/{tid}/job-hold-reasons` (mirrors the `job-cancel-reasons` shape taylor-ai already syncs). Returns `{id, name, active}` rows. Pass to `hold_appointment` callers that need to resolve a reason name → ID before holding.
+
+### Tests
+- 14 new tests under `src/tools/__tests__/v151_st77.test.ts`:
+  - 4 for `st_list_appointments` active filter + harness sweep of all 5 declared filters
+  - 2 for `st_list_jobs` (`isAutoDispatched` pass-through + harness sweep)
+  - 1 for `get_job` (`isAutoDispatched` pass-through)
+  - 2 for `jobs_hold_reasons_list` (endpoint shape + active filter)
+  - 5 regression-via-harness for `payroll_job_timesheets_list` (jobId, technicianId, appointmentId honored in D1 SQL) and `opportunities_list` (6 filters honored in D1 SQL)
+- All 451 tests pass; `npm run check` clean.
+
+### Migrated to readST helper
+- `st_list_appointments`, `st_list_jobs`, `jobs/get_job` — 3 tools. The bulk migration of the remaining ~25 hand-rolled fetch tools is left as a v1.6 follow-up so this PR stays sharp.
+
+### Out of scope (deferred per reviewer's note)
+- Full filter-preservation coverage of all ~80 tools — harness is in place; each tool adopts via a one-test-per-tool addition.
+- ST-77.2/77.3 product probes (Equipment auto-attach, Dispatch Pro multi-appointment, FTK dispatch links, Contact Center Pro, Inventory landed costs) — separate v1.6 candidates.
+- `settings_intacct_business_unit_mappings_get` — only useful if QSC adopts Sage Intacct.
+- Tool-pack splitting (default / payroll / dispatch / accounting / pricebook / admin views) — context-pressure mitigation; separate design discussion.
+
 ## v1.5.0 — 2026-05-19 (UNRELEASED — awaiting Luke review)
 
 PR (`feat/v1.5-payroll-opportunities-dispatch-pro`): payroll + opportunities + dispatch-pro D1-first reads and four costing composites driven by today's ST Payroll API findings. Tool count **75 → 86** (+9 readers added; +2 composites in opportunities/dispatch_pro count is actually 9 new tools); test count **416 → 430** (+14).

@@ -1,7 +1,7 @@
 {
   "name": "mcp-servicetitan",
-  "version": "1.5.0",
-  "description": "ServiceTitan MCP server — v1.5.0 (86 tools: 85 default + 1 admin gateway). Streamable HTTP via Agents SDK; HMAC write-gate; D1 audit; Analytics Engine telemetry; response shaper; webhook event-type allowlist. v1.5.0 adds D1-first job_timesheets / opportunities / dispatch_pro_* readers, 4 costing composites (job_cost_actuals, tech_drive_time_summary, assigned_vs_sold_estimate_audit, open_opportunities_pulitzer_feed), and expands create_task to the 8 ST-required fields.",
+  "version": "1.5.1",
+  "description": "ServiceTitan MCP server — v1.5.1 (87 tools: 86 default + 1 admin gateway). Streamable HTTP via Agents SDK; HMAC write-gate; D1 audit; Analytics Engine telemetry; response shaper; webhook event-type allowlist. v1.5.1 ST-77 hardening: shared readST/readSTPaged helper, filter-preservation test harness, st_list_appointments active filter, jobs_hold_reasons_list tool, isAutoDispatched on job tools.",
   "license": "MIT",
   "private": true,
   "scripts": {
