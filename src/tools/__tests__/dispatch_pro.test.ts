@@ -9,7 +9,7 @@ function envWith(handler: (body: any) => any) {
     return new Response(JSON.stringify(handler(body)), { status: 200 });
   });
   return {
-    ST_TENANT_ID: '431848990',
+    ST_TENANT_ID: '000000000',
     ST_PROXY: { fetch: fetcher },
     MCP_SYNC_KEY: 'k',
   } as any;

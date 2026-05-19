@@ -48,7 +48,7 @@ function envWith(responses: Array<{ urlContains: string; body: object; status?: 
     return new Response(JSON.stringify({ success: false, error: 'no mock match' }), { status: 500 });
   });
   return {
-    ST_TENANT_ID: '431848990',
+    ST_TENANT_ID: '000000000',
     ST_PROXY: { fetch: fetcher },
     MCP_SYNC_KEY: 'k',
   } as any;
@@ -209,7 +209,7 @@ describe('payroll_job_timesheets_list', () => {
         modified_on: '2026-02-20T19:34:00Z',
       });
       const calledUrl = (env.ST_PROXY.fetch as any).mock.calls[0][0];
-      expect(calledUrl).toContain('%2Fpayroll%2Fv2%2Ftenant%2F431848990%2Fjobs%2F77423990%2Ftimesheets');
+      expect(calledUrl).toContain('%2Fpayroll%2Fv2%2Ftenant%2F000000000%2Fjobs%2F77423990%2Ftimesheets');
       expect(calledUrl).not.toContain('page%3D');
       expect(calledUrl).not.toContain('modifiedOnOrAfter');
     });
@@ -228,7 +228,7 @@ describe('payroll_job_timesheets_list', () => {
       expect(out.timesheets[0].drive_minutes).toBe(24);
       expect(out.timesheets[0].working_minutes).toBe(152);
       const calledUrl = (env.ST_PROXY.fetch as any).mock.calls[0][0];
-      expect(calledUrl).toContain('%2Fpayroll%2Fv2%2Ftenant%2F431848990%2Fjobs%2Ftimesheets');
+      expect(calledUrl).toContain('%2Fpayroll%2Fv2%2Ftenant%2F000000000%2Fjobs%2Ftimesheets');
       expect(calledUrl).toContain('page%3D2');
       expect(calledUrl).toContain('pageSize%3D250');
       expect(calledUrl).toContain('active%3DAny');

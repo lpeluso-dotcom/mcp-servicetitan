@@ -25,7 +25,7 @@ function fakeEnv() {
     ),
   );
   return {
-    ST_TENANT_ID: '431848990',
+    ST_TENANT_ID: '000000000',
     ST_PROXY: { fetch: fetcher },
     MCP_SYNC_KEY: 'k',
   } as any;
@@ -51,7 +51,7 @@ describe('inventory_warehouses_list', () => {
     // unit omitted → not in address string
     expect(out.warehouses[1].address).toBe('456 Oak Ave, Florence, SC, 29502');
     const calledUrl = (env.ST_PROXY.fetch as any).mock.calls[0][0];
-    expect(calledUrl).toContain('%2Finventory%2Fv2%2Ftenant%2F431848990%2Fwarehouses');
+    expect(calledUrl).toContain('%2Finventory%2Fv2%2Ftenant%2F000000000%2Fwarehouses');
     expect(calledUrl).toContain('active%3Dtrue');
     expect(calledUrl).toContain('pageSize%3D2');
     expect(out.has_more).toBe(true);
@@ -67,7 +67,7 @@ describe('inventory_warehouses_list', () => {
 
   it('returns empty address string when address field is absent', async () => {
     const env = {
-      ST_TENANT_ID: '431848990',
+      ST_TENANT_ID: '000000000',
       ST_PROXY: {
         fetch: vi.fn(async () =>
           new Response(
@@ -84,13 +84,13 @@ describe('inventory_warehouses_list', () => {
 
   it('throws McpError on upstream failure', async () => {
     const env = {
-      ST_TENANT_ID: '431848990',
+      ST_TENANT_ID: '000000000',
       ST_PROXY: { fetch: vi.fn(async () => new Response('', { status: 503 })) },
       MCP_SYNC_KEY: 'k',
     } as any;
     await expect(
       inventory_warehouses_list.handler(env, {}, { actor: 'test', correlation: 'c1' }),
-    ).rejects.toThrow(/readST 503 on \/inventory\/v2\/tenant\/431848990\/warehouses/);
+    ).rejects.toThrow(/readST 503 on \/inventory\/v2\/tenant\/000000000\/warehouses/);
   });
 
   it('forwards page and pageSize args into the URL', async () => {

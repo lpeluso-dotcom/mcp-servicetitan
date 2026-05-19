@@ -28,7 +28,7 @@ function fakeEnv() {
     ),
   );
   return {
-    ST_TENANT_ID: '431848990',
+    ST_TENANT_ID: '000000000',
     ST_PROXY: { fetch: fetcher },
     MCP_SYNC_KEY: 'k',
   } as any;
@@ -60,7 +60,7 @@ describe('payroll_payrolls_list', () => {
     expect(out.payrolls[1].period_end).toBeNull();
     expect(out.payrolls[1].gross_pay).toBe(0);
     const calledUrl = (env.ST_PROXY.fetch as any).mock.calls[0][0];
-    expect(calledUrl).toContain('%2Fpayroll%2Fv2%2Ftenant%2F431848990%2Fpayrolls');
+    expect(calledUrl).toContain('%2Fpayroll%2Fv2%2Ftenant%2F000000000%2Fpayrolls');
     expect(calledUrl).toContain('employeeId%3D42');
     expect(calledUrl).toContain('status%3DApproved');
     expect(out.has_more).toBe(false);
@@ -76,7 +76,7 @@ describe('payroll_payrolls_list', () => {
 
   it('throws McpError on upstream failure', async () => {
     const env = {
-      ST_TENANT_ID: '431848990',
+      ST_TENANT_ID: '000000000',
       ST_PROXY: { fetch: vi.fn(async () => new Response('', { status: 503 })) },
       MCP_SYNC_KEY: 'k',
     } as any;
@@ -87,7 +87,7 @@ describe('payroll_payrolls_list', () => {
 
   it('returns count=0 and payrolls=[] when ST returns empty data', async () => {
     const env = {
-      ST_TENANT_ID: '431848990',
+      ST_TENANT_ID: '000000000',
       ST_PROXY: {
         fetch: vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })),
       },

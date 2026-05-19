@@ -2,8 +2,8 @@
 // H1: migrated to defineWriteTool factory 2026-04-26.
 // v1.5: expanded schema to the 8 ST-required fields. The previous 4-field
 // shape returned 200 OK but created an incomplete task missing assignment +
-// reporter + classification — surfaced when the QSC Tech Leads cron tried
-// to use the tool and got tasks with no reportedBy / no businessUnitId.
+// reporter + classification — caught in production when an automated caller
+// produced tasks with no reportedBy / no businessUnitId.
 import { z } from 'zod';
 import { defineWriteTool } from '../../write-tool-factory';
 
