@@ -18,6 +18,8 @@ import { familyFromEndpoint, checkRateLimit, reportBackoff } from './rate-limit-
 // Tables nightly-synced into servicetitan-proxy D1 (verified 2026-04-22).
 // pb_services is FRESH. pb_materials (23d stale) + pb_equipment (37d stale)
 // are excluded until §13#1 sync fix ships — callers for those go live.
+// v1.5 additions (2026-05-19): job_timesheets (migration 0021, 2h sync),
+// opportunities (migration 0018), dispatch_pro_* (migration 0022, manual cron).
 export const D1_TABLES = new Set([
   'customers', 'jobs', 'invoices', 'appointments', 'estimates', 'locations',
   'payments', 'technicians', 'campaigns', 'business_units', 'job_types',
@@ -25,6 +27,9 @@ export const D1_TABLES = new Set([
   'calls', 'appointment_assignments', 'invoice_items', 'estimate_items',
   'call_transcripts', 'pb_services', 'contacts', 'customer_notes', 'tags',
   'installed_equipment',
+  // v1.5
+  'job_timesheets', 'opportunities', 'opportunity_statuses',
+  'dispatch_pro_utilization', 'dispatch_pro_ratio', 'dispatch_pro_alerts',
 ]);
 
 const STALE_THRESHOLD_MS = 48 * 60 * 60 * 1000;
