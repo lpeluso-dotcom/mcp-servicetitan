@@ -99,9 +99,13 @@ database_id = "74007593-70cd-462c-9a4c-75cf0771b4ee"
 binding = "PROXY_STATE"
 id = "4c18d1ac623145ab86901d5fb44a022a"
 
+# Dev points at the dev upstream worker, not prod. Note: taylor-ai-dev
+# still uses the QSC ST OAuth client unless ST_CLIENT_ID / ST_CLIENT_SECRET
+# were rotated per-env with `wrangler secret put --env dev` against a
+# sandbox tenant — verify before relying on this for write smoke tests.
 [[env.dev.services]]
 binding = "ST_PROXY"
-service = "taylor-ai"
+service = "taylor-ai-dev"
 
 # Dev secrets (same command, add --env dev):
 # wrangler secret put MCP_SYNC_KEY --env dev
