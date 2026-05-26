@@ -76,6 +76,35 @@ export async function readST<T = unknown>(
   return (await resp.json()) as T;
 }
 
+/**
+ * POST-as-read: some ST endpoints (e.g. /capacity-planning, /capacity, report /data)
+ * require a POST body even though they are semantically reads. This helper
+ * mirrors readST but sends method=POST + a JSON body. The servicetitan-proxy
+ * /api/st/read endpoint accepts both GET and POST.
+ */
+export async function readSTPost<T = unknown>(
+  env: Env,
+  ctx: ReadSTContext,
+  endpoint: string,
+  body: unknown,
+): Promise<T> {
+  const url = buildUrl(endpoint);
+  const resp = await env.ST_PROXY.fetch(url, {
+    method: 'POST',
+    headers: { ...authHeaders(env, ctx.correlation, ctx.actor), 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new McpError(
+      mapUpstreamStatus(resp.status),
+      `readSTPost ${resp.status} on ${endpoint}: ${text.slice(0, 200)}`,
+      { correlation: ctx.correlation },
+    );
+  }
+  return (await resp.json()) as T;
+}
+
 export interface ReadSTPagedOptions {
   /** Hard cap on pages to fetch. Default 50 (= up to 25,000 rows at pageSize=500). */
   maxPages?: number;

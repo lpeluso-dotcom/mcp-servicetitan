@@ -12,6 +12,7 @@ export interface Env {
   // Vars
   MCP_SERVICE_VERSION: string;
   ST_TENANT_ID: string;
+  MCP_LOCKDOWN?: string; // "true" → server enters lockdown / read-only mode (v1.5.2)
 
   // Secrets
   MCP_SYNC_KEY: string; // For servicetitan-proxy /api/st/read proxy

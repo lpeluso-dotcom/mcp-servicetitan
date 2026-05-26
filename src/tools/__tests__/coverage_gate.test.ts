@@ -22,6 +22,9 @@ const COVERAGE_EXEMPT = new Set<string>([
   'siro_list_mobile_events',
   'siro_get_recording_summary',
   'siro_get_engagement',
+  // Dawn SMS tools — D1-only, no ServiceTitan endpoint (v1.6.0).
+  'identify_tech_by_phone',
+  'save_tech_debrief',
 ]);
 
 describe('stEndpoint coverage gate', () => {

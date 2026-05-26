@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readSTPost } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -34,16 +33,12 @@ export const get_capacity: ToolDef<Args> = {
       skillBasedAvailability: args.skillBasedAvailability ?? false,
     };
 
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent('/dispatch/v2/tenant/000000000/capacity-planning')}`,
-      {
-        method: 'POST',
-        headers: { ...authHeaders(env, correlation, actor), 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      }
+    const data = await readSTPost<unknown>(
+      env,
+      { actor, correlation },
+      '/dispatch/v2/tenant/000000000/capacity-planning',
+      body,
     );
-    if (!resp.ok) throw new McpError('upstream_error', `get_capacity failed: ${resp.status}`, { correlation });
-    const data = await resp.json<unknown>();
     return { capacity: data, _source: 'live' };
   },
 };

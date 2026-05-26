@@ -32,7 +32,7 @@ Claude Code  ──Streamable HTTP/MCP──▶  mcp-servicetitan (Cloudflare Wo
 - **Write path:** two-phase `WriteGate` — `dryRun: true` returns a 15-min HMAC `confirmation_token`; `dryRun: false` + valid token executes via `/api/st/write` proxy. `confirmation_token` reuse, expiry, HMAC tampering, and tool-name forging are all enforced.
 - **Composites:** L5 fanout tools (`customer_snapshot`, `job_closeout_report`) use `gatherFetches` for explicit per-call partial-failure attribution. No silent empty arrays.
 - **Response shaping (v1.4.1):** `ToolDef.transformResult` lets a tool strip ST envelope noise (`paginationToken`, `_meta`, etc.) and cap big arrays before MCP serialize. Adopted on `customer_snapshot`, `job_closeout_report`, `st_list_customers`, plus every v1.5 reader/composite; mechanical rollout to remaining hand-rolled tools deferred to v1.6.
-- **Shared ST helper (v1.5.1):** `src/st.ts` exports `readST(env, ctx, endpoint, query?)` and `readSTPaged(env, ctx, endpoint, query?, options?)`, centralizing the `env.ST_PROXY.fetch` + envelope-parse pattern previously hand-rolled in 30+ tools. Built-in `hasMore` drain with `maxPages` cap (default 50) prevents runaway loops. Adopted incrementally; full migration sweep is a v1.6 task.
+- **Shared ST helper (v1.5.1 / completed v1.6.0):** `src/st.ts` exports `readST(env, ctx, endpoint, query?)`, `readSTPaged(...)`, and `readSTPost(env, ctx, endpoint, body)` (POST-as-read for ST endpoints that require a body). All read tools are migrated to `readST` / `readSTPaged` (as of v1.6.0). Write tools (`st_patch_*`, `st_create_*`, `assign_technicians`, etc.) use the write proxy by design and stay direct.
 - **stEndpoint coverage gate (v1.5.1):** every non-exempt tool declares an `stEndpoint` descriptor; `GET /admin/endpoints/coverage` plus a vitest invariant enforce 100% coverage (only `st_call` + 3 Siro tools are exempt).
 - **Filter-preservation test harness (v1.5.1):** `src/tools/__tests__/filter_preservation_helper.ts` exposes `assertFilterPreservation(tool, matrix, baseArgs?)` so each tool can declare which filters must be forwarded as query, path, D1 WHERE, or rejected. Generalizes the payroll auto-fallback regression caught in v1.5.
 
@@ -68,9 +68,8 @@ Claude Code  ──Streamable HTTP/MCP──▶  mcp-servicetitan (Cloudflare Wo
 
 Removed in v1.1 D4: `marketing_roas` (stub blocked on three external MCPs that don't exist; cleaner-stub > stub-that-lies).
 
-Deferred (v1.6 candidates):
+Deferred (v1.6 candidates / post-v1.6.0):
 - `pricebook_health_check_materials_equipment` — needs upstream proxy nightly sync of `pb_materials` + `pb_equipment`.
-- Mechanical `readST`/`readSTPaged` migration sweep across the remaining ~25 hand-rolled live-fetch tools.
 - Mechanical response-shaper rollout to the remaining hand-rolled tools.
 - Full filter-preservation coverage of all ~80 tools via the v1.5.1 harness (each tool adopts via one test).
 - ST-77.2/77.3 product probes (Equipment auto-attach, Dispatch Pro multi-appointment, FTK dispatch links, Contact Center Pro, Inventory landed costs).

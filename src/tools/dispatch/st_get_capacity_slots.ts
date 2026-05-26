@@ -9,8 +9,7 @@
 // Both endpoints are POST-as-read (servicetitan-proxy's /api/st/read accepts POST).
 // ============================================================
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
+import { readSTPost } from '../../st';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -55,20 +54,12 @@ export const st_get_capacity_slots: ToolDef<Args> = {
       body.businessUnitIds = args.businessUnitIds;
     }
 
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent('/dispatch/v2/tenant/000000000/capacity')}`,
-      {
-        method: 'POST',
-        headers: { ...authHeaders(env, correlation, actor), 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      }
+    const data = await readSTPost<unknown>(
+      env,
+      { actor, correlation },
+      '/dispatch/v2/tenant/000000000/capacity',
+      body,
     );
-    if (!resp.ok) {
-      throw new McpError('upstream_error', `st_get_capacity_slots failed: ${resp.status}`, {
-        correlation,
-      });
-    }
-    const data = await resp.json<unknown>();
     return { slots: data, _source: 'live' };
   },
 };

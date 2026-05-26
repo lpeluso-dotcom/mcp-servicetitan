@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.6.0 — 2026-05-25 (Dawn SMS + lockdown + readST sweep)
+
+Combined release. Tool count **87 → 89** (+2); test count **451 → 472** (+21).
+
+Branch: `feat/v1.6.0-dawn-and-sweep`. Three streams folded into one release per Luke's decision to ship Dawn alongside the in-flight v1.5.2 hardening + the v1.6 sweep.
+
+### Stream A — MCP_LOCKDOWN role (was v1.5.2)
+- New `lockdown` role in `src/auth.ts`. `MCP_LOCKDOWN=true` env flag short-circuits `resolveAuth` to force every caller into the lockdown role regardless of credentials.
+- `toolsForRole('lockdown')` strips every `isWrite=true` tool and adminOnly tools (`st_call`). Composites stay (reads with extra D1 work).
+- `/health` surfaces `lockdown: bool`.
+- 7 new tests in `src/tools/__tests__/lockdown.test.ts` — doubles as an `isWrite`-classification audit (a name-pattern sweep catches missing `isWrite: true` on new write tools).
+- Use case: defence-in-depth during incidents, or fronting an untrusted network. Toggle via env var, no redeploy.
+
+### Stream B — Dawn SMS tools (new)
+The conversational debrief agent on (843) 733-9568 calls these as MCP tools from a Retell text agent.
+
+- **`identify_tech_by_phone(phone)`** — D1-only. Two-tier lookup: `voice_registry` (learned associations) → `technicians` (canonical sync). Returns `{status: 'found' | 'not_found' | 'parse_error', tech_id?, tech_name?, role?, business_unit?, source?}`. Always HTTP 200 (F8 lesson from voice era). 4 tests.
+- **`save_tech_debrief(...)`** — D1-only. Idempotent INSERT...ON CONFLICT on `dawn_text_debriefs` D1 table (taylor-ai migration 0033, applied to dev + prod). Returns `{status: 'saved' | 'db_error' | 'parse_error', debrief_id?}`. 13 fields (retell_chat_id, tech_id/name/phone, job_id, customer_name, job_complete, parts_used, follow_up_*, additional_notes, transcript_summary, status). Uses `tech_name` not `name` (F9 lesson — `name` collides with Retell internal). 3 tests.
+
+Both tools declare `stEndpoint: null` (added to `COVERAGE_EXEMPT`). Spec at `qsc-infra/docs/superpowers/specs/2026-05-25-miss-dawn-text-agent-design.md`.
+
+### Stream C — readST sweep finished + doc correction
+- `dispatch/get_capacity` — migrated raw `ST_PROXY.fetch` POST → new `readSTPost` helper.
+- `dispatch/st_get_capacity_slots` — same treatment. Both dispatch tools use POST-as-read so `readSTPost` was added to `src/st.ts` (mirrors `readST` but method=POST + JSON body).
+- `reporting/st_run_report` — 3 GET modes were already on `readST`; migrated the `run`-mode POST to `readSTPost`. Dropped unused `authHeaders` import.
+- `pricebook/search_pricebook_all` — confirmed D1-only (calls `/api/sql/read`, not `/api/st/read`); no migration applicable. Added 5 smoke tests for the tool + `codeVariants` helper.
+- README + CHANGELOG: removed stale "~25 hand-rolled fetch tools" language. All read tools are now on `readST` / `readSTPaged` / `readSTPost`. Write tools (`st_patch_*`, `st_create_*`, `assign_technicians`, etc.) intentionally stay on the write proxy.
+
+### Deferred to v1.6.1 / v1.7
+- Response-shaper rollout to the remaining ~62 hand-rolled tools (`transformResult` adoption). v1.6-PLAN scoped 1-2 days; deferred to keep v1.6.0 shippable today.
+- Filter-preservation harness coverage across ~80 tools (test-only, incremental).
+- ST-77.2/77.3 product probes — separable spikes.
+- Tool-pack splitting (role/domain views) — needs design pass first.
+
 ## v1.5.1 — 2026-05-19 (ST-77 hardening)
 
 Stacks on top of v1.5 (PR #17). Scope follows the external QA reviewer's pick: **sharp**, not a sweep. Tool count **86 → 87** (+1); test count **437 → 451** (+14).
@@ -23,7 +57,7 @@ Stacks on top of v1.5 (PR #17). Scope follows the external QA reviewer's pick: *
 - All 451 tests pass; `npm run check` clean.
 
 ### Migrated to readST helper
-- `st_list_appointments`, `st_list_jobs`, `jobs/get_job` — 3 tools. The bulk migration of the remaining ~25 hand-rolled fetch tools is left as a v1.6 follow-up so this PR stays sharp.
+- `st_list_appointments`, `st_list_jobs`, `jobs/get_job` — 3 tools. The remaining hand-rolled read tools (`get_capacity`, `st_get_capacity_slots`, `st_run_report` run-mode) completed in v1.6.0. All read tools are migrated to `readST` / `readSTPaged` / `readSTPost` as of v1.6.0. Write tools (`st_patch_*`, `st_create_*`, `assign_technicians`, etc.) use the write proxy by design and stay direct.
 
 ### Out of scope (deferred per reviewer's note)
 - Full filter-preservation coverage of all ~80 tools — harness is in place; each tool adopts via a one-test-per-tool addition.

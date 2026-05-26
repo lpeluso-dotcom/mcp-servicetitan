@@ -114,6 +114,9 @@ import { assigned_vs_sold_estimate_audit } from './composites/assigned_vs_sold_e
 import { open_opportunities_pulitzer_feed } from './composites/open_opportunities_pulitzer_feed';
 // v1.5.1 ST-77 — Job hold reasons
 import { jobs_hold_reasons_list } from './jobs/jobs_hold_reasons_list';
+// Dawn — SMS support (v1.6.0)
+import { identify_tech_by_phone } from './dawn/identify_tech_by_phone';
+import { save_tech_debrief } from './dawn/save_tech_debrief';
 
 export interface ToolContext {
   actor: string;
@@ -210,6 +213,9 @@ export const TOOLS: readonly ToolDef<any>[] = [
   job_cost_actuals, tech_drive_time_summary, assigned_vs_sold_estimate_audit, open_opportunities_pulitzer_feed,
   // v1.5.1 ST-77
   jobs_hold_reasons_list,
+  // Dawn — SMS support (v1.6.0)
+  identify_tech_by_phone,
+  save_tech_debrief,
 ] as const;
 
 export function findTool(name: string): ToolDef<any> | undefined {
@@ -217,10 +223,14 @@ export function findTool(name: string): ToolDef<any> | undefined {
 }
 
 /**
- * Filter tools by caller role. F1: only adminOnly tools are gated (none yet).
- * F2 will expand this to read mcp_roles D1.
+ * Filter tools by caller role.
+ *   - 'lockdown' (v1.5.2): read-only mode. Strips every isWrite=true tool and
+ *     adminOnly tools. Composites stay (they're reads with extra D1 work).
+ *   - 'admin':   full catalog including st_call escape hatch.
+ *   - 'default': everything except adminOnly tools.
  */
-export function toolsForRole(role: 'default' | 'admin'): readonly ToolDef<any>[] {
+export function toolsForRole(role: 'default' | 'admin' | 'lockdown'): readonly ToolDef<any>[] {
+  if (role === 'lockdown') return TOOLS.filter((t) => !t.isWrite && !t.adminOnly);
   if (role === 'admin') return TOOLS;
   return TOOLS.filter((t) => !t.adminOnly);
 }
