@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import { codeVariants } from './search_pricebook_all';
+import { queryD1First } from '../../d1-proxy';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 
@@ -33,17 +34,22 @@ interface Args {
   pageSize?: number;
 }
 
-async function lookupExactCode(env: Env, code: string): Promise<unknown | null> {
+async function lookupExactCode(
+  env: Env,
+  code: string,
+  correlation?: string,
+): Promise<unknown | null> {
   for (const variant of codeVariants(code)) {
-    const resp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/sql/read', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Sync-Key': env.MCP_SYNC_KEY },
-      body: JSON.stringify({ sql: SQL_BY_CODE, params: [variant] }),
-    });
-    if (!resp.ok) continue;
-    const data = (await resp.json()) as { success: boolean; results?: unknown[] };
-    if (data.success && data.results && data.results.length > 0) {
-      return { ...(data.results[0] as object), _matched_code: variant };
+    try {
+      const row = await queryD1First<Record<string, unknown>>(
+        env,
+        SQL_BY_CODE,
+        [variant],
+        { correlation, tag: 'search_materials:by_code' },
+      );
+      if (row) return { ...row, _matched_code: variant };
+    } catch {
+      // Best-effort — fall through to next variant / live ST on any error.
     }
   }
   return null;
@@ -74,7 +80,7 @@ export const search_materials: ToolDef<Args> = {
   stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/materials', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     if (args.code) {
-      const exact = await lookupExactCode(env, args.code);
+      const exact = await lookupExactCode(env, args.code, correlation);
       if (exact) {
         return { materials: [exact], _source: 'd1-exact', _matched_code: args.code };
       }

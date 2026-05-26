@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import type { ToolDef } from '../index';
+import { queryD1First } from '../../d1-proxy';
 import type { Env } from '../../env';
 
 interface Args {
@@ -47,22 +48,8 @@ function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, '').slice(-10);
 }
 
-// Cross-worker D1 read against TAYLOR-AI's D1 via the servicetitan-proxy
-// service binding. Returns the first row, or null if none. Throws on
-// non-2xx, non-success-envelope, or transport error. Same call shape as
-// queryD1 in search_pricebook_all.ts. Step D of the QUA-267 plan
-// consolidates both into a shared src/d1-proxy.ts helper.
-async function queryTaylorAiD1<T>(env: Env, sql: string, params: unknown[]): Promise<T | null> {
-  const resp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/sql/read', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Sync-Key': env.MCP_SYNC_KEY },
-    body: JSON.stringify({ sql, params }),
-  });
-  if (!resp.ok) throw new Error(`d1 read failed: ${resp.status}`);
-  const data = (await resp.json()) as { success: boolean; results?: T[]; error?: string };
-  if (!data.success) throw new Error(data.error || 'd1 read returned success=false');
-  return data.results?.[0] ?? null;
-}
+// Cross-worker D1 reads against taylor-ai go through src/d1-proxy.ts's
+// queryD1First helper — retry-on-transient + correlation threading.
 
 export const identify_tech_by_phone: ToolDef<Args> = {
   name: 'identify_tech_by_phone',
@@ -74,7 +61,8 @@ export const identify_tech_by_phone: ToolDef<Args> = {
     phone: z.string().min(1).describe('Caller phone number (any format — will be normalized to 10 digits)'),
   },
   stEndpoint: undefined,
-  async handler(env: Env, args: Args): Promise<Result> {
+  async handler(env: Env, args: Args, ctx?: { correlation?: string }): Promise<Result> {
+    const correlation = ctx?.correlation;
     try {
       const normalized = normalizePhone(args.phone ?? '');
       if (normalized.length < 10) {
@@ -83,7 +71,7 @@ export const identify_tech_by_phone: ToolDef<Args> = {
 
       // Tier 1: voice_registry (has learned associations from prior calls).
       // Lives in taylor-ai's D1 — read via servicetitan-proxy.
-      const registry = await queryTaylorAiD1<{
+      const registry = await queryD1First<{
         name: string;
         tech_id: string;
         role: string;
@@ -92,6 +80,7 @@ export const identify_tech_by_phone: ToolDef<Args> = {
         env,
         `SELECT name, tech_id, role, confidence FROM voice_registry WHERE phone = ?`,
         [normalized],
+        { correlation, tag: 'identify_tech_by_phone:voice_registry' },
       );
 
       if (registry && registry.name && registry.name !== 'Unknown Tech') {
@@ -105,7 +94,7 @@ export const identify_tech_by_phone: ToolDef<Args> = {
       }
 
       // Tier 2: technicians table (canonical ST sync). Also taylor-ai D1.
-      const row = await queryTaylorAiD1<{
+      const row = await queryD1First<{
         tech_id: string;
         name: string;
         business_unit: string | null;
@@ -116,6 +105,7 @@ export const identify_tech_by_phone: ToolDef<Args> = {
          WHERE REPLACE(REPLACE(REPLACE(REPLACE(phone, '-', ''), ' ', ''), '(', ''), ')', '') = ?
          AND active = 1 LIMIT 1`,
         [normalized],
+        { correlation, tag: 'identify_tech_by_phone:technicians' },
       );
 
       if (row) {
