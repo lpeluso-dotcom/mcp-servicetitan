@@ -1,7 +1,7 @@
 {
   "name": "mcp-servicetitan",
-  "version": "1.5.1",
-  "description": "ServiceTitan MCP server — v1.5.1 (87 tools: 86 default + 1 admin gateway). Streamable HTTP via Agents SDK; HMAC write-gate; D1 audit; Analytics Engine telemetry; response shaper; webhook event-type allowlist. v1.5.1 ST-77 hardening: shared readST/readSTPaged helper, filter-preservation test harness, st_list_appointments active filter, jobs_hold_reasons_list tool, isAutoDispatched on job tools.",
+  "version": "1.6.0",
+  "description": "ServiceTitan MCP server — v1.6.0 (89 tools: 88 default + 1 admin gateway). Streamable HTTP via Agents SDK; HMAC write-gate; D1 audit; Analytics Engine telemetry; response shaper; webhook event-type allowlist. v1.6.0 adds: MCP_LOCKDOWN read-only role; Dawn SMS tools (identify_tech_by_phone, save_tech_debrief) for the conversational debrief agent; readST sweep finished (all read tools on readST / readSTPaged / readSTPost).",
   "license": "MIT",
   "private": true,
   "scripts": {

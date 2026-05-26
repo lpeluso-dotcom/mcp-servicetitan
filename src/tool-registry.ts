@@ -23,7 +23,7 @@ import * as obs from './obs';
 
 export interface RequestContext {
   actor: string;
-  role: 'default' | 'admin';
+  role: 'default' | 'admin' | 'lockdown';
 }
 
 // Field-name patterns that indicate values likely to contain PII or free-text
