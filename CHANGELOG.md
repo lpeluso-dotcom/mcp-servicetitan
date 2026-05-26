@@ -23,7 +23,7 @@ Stacks on top of v1.5 (PR #17). Scope follows the external QA reviewer's pick: *
 - All 451 tests pass; `npm run check` clean.
 
 ### Migrated to readST helper
-- `st_list_appointments`, `st_list_jobs`, `jobs/get_job` — 3 tools. The bulk migration of the remaining ~25 hand-rolled fetch tools is left as a v1.6 follow-up so this PR stays sharp.
+- `st_list_appointments`, `st_list_jobs`, `jobs/get_job` — 3 tools. The remaining hand-rolled read tools (`get_capacity`, `st_get_capacity_slots`, `st_run_report` run-mode) completed in v1.6.0. All read tools are migrated to `readST` / `readSTPaged` / `readSTPost` as of v1.6.0. Write tools (`st_patch_*`, `st_create_*`, `assign_technicians`, etc.) use the write proxy by design and stay direct.
 
 ### Out of scope (deferred per reviewer's note)
 - Full filter-preservation coverage of all ~80 tools — harness is in place; each tool adopts via a one-test-per-tool addition.
