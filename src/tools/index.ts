@@ -217,10 +217,14 @@ export function findTool(name: string): ToolDef<any> | undefined {
 }
 
 /**
- * Filter tools by caller role. F1: only adminOnly tools are gated (none yet).
- * F2 will expand this to read mcp_roles D1.
+ * Filter tools by caller role.
+ *   - 'lockdown' (v1.5.2): read-only mode. Strips every isWrite=true tool and
+ *     adminOnly tools. Composites stay (they're reads with extra D1 work).
+ *   - 'admin':   full catalog including st_call escape hatch.
+ *   - 'default': everything except adminOnly tools.
  */
-export function toolsForRole(role: 'default' | 'admin'): readonly ToolDef<any>[] {
+export function toolsForRole(role: 'default' | 'admin' | 'lockdown'): readonly ToolDef<any>[] {
+  if (role === 'lockdown') return TOOLS.filter((t) => !t.isWrite && !t.adminOnly);
   if (role === 'admin') return TOOLS;
   return TOOLS.filter((t) => !t.adminOnly);
 }

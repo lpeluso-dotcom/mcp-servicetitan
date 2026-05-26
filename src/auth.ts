@@ -5,7 +5,7 @@
 import type { Env } from './env';
 import { verifyJwt } from './jwt';
 
-export type Role = 'admin' | 'default';
+export type Role = 'admin' | 'default' | 'lockdown';
 
 export interface AuthResult {
   authenticated: boolean;
@@ -50,6 +50,14 @@ export async function hasValidSyncKey(request: Request, env: Env): Promise<boole
 // session stays alive with the safe tool set.
 export async function resolveAuth(request: Request, env: Env): Promise<AuthResult> {
   const fallbackActor = safeActorHeader(request.headers.get('x-actor'));
+
+  // Lockdown short-circuit (v1.5.2). MCP_LOCKDOWN=true forces every caller into
+  // the lockdown role regardless of credentials — toolsForRole() then strips
+  // all writes + st_call. Use this when the server is fronting an untrusted
+  // network or when you want defence-in-depth during an incident.
+  if (env.MCP_LOCKDOWN === 'true') {
+    return { authenticated: true, role: 'lockdown', actor: fallbackActor, authMode: 'none' };
+  }
 
   // JWT path first
   const authHeader = request.headers.get('authorization');

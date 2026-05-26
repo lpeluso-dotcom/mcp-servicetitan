@@ -31,6 +31,7 @@ export { CustomerSnapshotSingleflight } from './durable/customer-snapshot-flight
 const app = new Hono<{ Bindings: Env }>();
 
 app.get('/health', (c) => {
+  const lockdown = c.env.MCP_LOCKDOWN === 'true';
   return c.json({
     ok: true,
     service: 'mcp-servicetitan',
@@ -39,6 +40,7 @@ app.get('/health', (c) => {
     tools: TOOLS.map((t) => t.name),
     transport: 'agents-sdk createMcpHandler (Streamable HTTP)',
     stProxy: 'service-binding',
+    lockdown,
   });
 });
 
