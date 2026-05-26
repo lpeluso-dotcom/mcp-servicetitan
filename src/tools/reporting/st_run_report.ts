@@ -15,8 +15,7 @@
 // ============================================================
 import { z } from 'zod';
 import { McpError } from '../../errors';
-import { authHeaders } from '../../auth';
-import { readST } from '../../st';
+import { readST, readSTPost } from '../../st';
 import type { ToolDef } from '../index';
 
 const ReportMode = z.enum(['list_categories', 'list_reports', 'describe_report', 'run']);
@@ -75,7 +74,6 @@ export const st_run_report: ToolDef<Args> = {
       }
     };
     const tid = '000000000';
-    const headers = authHeaders(env, correlation, actor);
 
     if (args.mode === 'list_categories') {
       const data = await readST<{ data?: unknown[] }>(
@@ -126,28 +124,18 @@ export const st_run_report: ToolDef<Args> = {
       'parameters[] required for mode=run (use describe_report to discover the schema)'
     );
 
-    const body: Record<string, unknown> = {
+    const runBody: Record<string, unknown> = {
       parameters: args.parameters,
       pageSize: args.pageSize ?? 100,
       page: args.page ?? 1,
     };
 
-    const resp = await env.ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(
-        `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports/${args.reportId}/data`
-      )}`,
-      {
-        method: 'POST',
-        headers: { ...headers, 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      }
+    const data = await readSTPost<unknown>(
+      env,
+      { actor, correlation },
+      `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports/${args.reportId}/data`,
+      runBody,
     );
-    if (!resp.ok) {
-      throw new McpError('upstream_error', `st_run_report run failed: ${resp.status}`, {
-        correlation,
-      });
-    }
-    const data = await resp.json<unknown>();
     return {
       mode: 'run',
       categoryId: args.categoryId,

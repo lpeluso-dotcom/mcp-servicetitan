@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { st_get_capacity_slots } from '../dispatch/st_get_capacity_slots';
 import { st_run_report } from '../reporting/st_run_report';
 import { st_post_marketing_attribution } from '../marketing/st_post_marketing_attribution';
+import { search_pricebook_all, codeVariants } from '../pricebook/search_pricebook_all';
 
 const CTX = { actor: 'vitest', correlation: 'test-corr' };
 
@@ -402,5 +403,61 @@ describe('st_post_marketing_attribution', () => {
     const body = JSON.parse(init.body);
     expect(body.endpoint).toBe('/marketingads/v2/tenant/000000000/external-call-attributions');
     expect(body.payload.externalCallId).toBe('lace-123');
+  });
+});
+
+// ── search_pricebook_all — D1 read, smoke test ───────────────────
+
+describe('search_pricebook_all', () => {
+  function makeD1Env(results: unknown[]) {
+    return {
+      ST_PROXY: {
+        fetch: vi.fn(async () =>
+          new Response(JSON.stringify({ success: true, results }), { status: 200 })
+        ),
+      },
+      MCP_SYNC_KEY: 'test-key',
+      MCP_SERVICE_VERSION: '0.0.0-test',
+      DB: {},
+      PROXY_STATE: {},
+      SIRO_API_TOKEN: '',
+    };
+  }
+
+  it('code lookup calls ST_PROXY with /api/sql/read (D1 path, not ST read path)', async () => {
+    const env = makeD1Env([{ code: 'FLU-150', name: 'Flush', description: '', category: 'Drain', price: 150, member_price: null, type: 'service' }]);
+    const result: any = await search_pricebook_all.handler(env as any, { code: 'FLU-150' }, { actor: 'vitest', correlation: 'test' });
+    expect(result.status).toBe('success');
+    expect(result.count).toBe(1);
+    const [url] = (env.ST_PROXY.fetch as any).mock.calls[0];
+    expect(url).toContain('/api/sql/read');
+    expect(url).not.toContain('/api/st/read');
+  });
+
+  it('query path fans out across all 3 D1 tables and merges results', async () => {
+    const env = makeD1Env([]);
+    await search_pricebook_all.handler(env as any, { query: 'flush' }, { actor: 'vitest', correlation: 'test' });
+    // 3 parallel queries for query path (services + materials + equipment)
+    expect((env.ST_PROXY.fetch as any).mock.calls.length).toBe(3);
+  });
+
+  it('rejects when neither code nor query provided', async () => {
+    const env = makeD1Env([]);
+    await expect(
+      search_pricebook_all.handler(env as any, {}, { actor: 'vitest', correlation: 'test' })
+    ).rejects.toMatchObject({ code: 'validation_error' });
+  });
+});
+
+describe('codeVariants', () => {
+  it('dedupes when input is already canonical', () => {
+    expect(codeVariants('FLU-150')).toEqual(['FLU-150']);
+  });
+
+  it('adds uppercase and hyphenated variants for lowercase spoken input', () => {
+    const v = codeVariants('flu150');
+    expect(v).toContain('flu150');
+    expect(v).toContain('FLU150');
+    expect(v).toContain('FLU-150');
   });
 });
