@@ -447,6 +447,27 @@ describe('search_pricebook_all', () => {
       search_pricebook_all.handler(env as any, {}, { actor: 'vitest', correlation: 'test' })
     ).rejects.toMatchObject({ code: 'validation_error' });
   });
+
+  // Pins the fix for "when asked how much time, surface estimated labor on service code".
+  // pb_services.hours + pb_equipment.hours are now selected and passed through to the agent.
+  it('returns hours field for services (estimated labor in decimal hours)', async () => {
+    const env = makeD1Env([
+      { code: 'ACC-006', name: 'Roof Access', description: 'Roof access labor', category: 'Access', price: 138.75, member_price: null, hours: 0.75, type: 'service' },
+    ]);
+    const result: any = await search_pricebook_all.handler(env as any, { code: 'ACC-006' }, { actor: 'vitest', correlation: 'test' });
+    expect(result.status).toBe('success');
+    expect(result.items[0].hours).toBe(0.75);
+    expect(result.items[0].type).toBe('service');
+  });
+
+  it('returns hours: null for materials (no labor attached)', async () => {
+    const env = makeD1Env([
+      { code: 'MAT-001', name: 'Copper Pipe', description: '', category: 'Pipe', price: 12.5, member_price: null, hours: null, type: 'material' },
+    ]);
+    const result: any = await search_pricebook_all.handler(env as any, { code: 'MAT-001' }, { actor: 'vitest', correlation: 'test' });
+    expect(result.items[0].hours).toBeNull();
+    expect(result.items[0].type).toBe('material');
+  });
 });
 
 describe('codeVariants', () => {
