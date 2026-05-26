@@ -1,80 +1,127 @@
 // ============================================================
-// identify_tech_by_phone.test.ts — TDD for Dawn SMS tool (v1.6.0)
+// identify_tech_by_phone — QUA-267 finding 1 regression
+//
+// Validates the cross-worker D1 read path (env.ST_PROXY.fetch
+// against /api/sql/read on servicetitan-proxy). Pre-fix used
+// env.DB.prepare(...) directly, which always failed with
+// "no such table: voice_registry" because those tables live in
+// taylor-ai's D1, not mcp-servicetitan's own.
+//
+// Supersedes the prior version of this test (which mocked env.DB).
 // ============================================================
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+import { describe, it, expect, vi } from 'vitest';
 import { identify_tech_by_phone } from '../identify_tech_by_phone';
-import type { Env } from '../../../env';
-import type { ToolContext } from '../../index';
 
-function makeEnv(voiceResult: unknown, techResult: unknown): Env {
-  const firstChain = (result: unknown) => ({
-    first: vi.fn().mockResolvedValue(result),
+type Row = Record<string, unknown>;
+
+/**
+ * Build an env with an ST_PROXY mock that returns successive responses,
+ * one per call (FIFO). Each test wires the registry + technicians answers
+ * in the order the tool issues them (registry first, technicians second).
+ */
+function fakeEnv(responses: Array<Row[] | { httpStatus?: number; success?: boolean; error?: string }>) {
+  let i = 0;
+  const fetcher = vi.fn(async () => {
+    const r = responses[i++];
+    if (r && !Array.isArray(r) && typeof r.httpStatus === 'number') {
+      return new Response('upstream', { status: r.httpStatus });
+    }
+    const env = Array.isArray(r)
+      ? { success: true, results: r }
+      : r ?? { success: true, results: [] };
+    return new Response(JSON.stringify(env), { status: 200 });
   });
-
-  let callCount = 0;
-  const mockDB = {
-    prepare: vi.fn().mockImplementation(() => ({
-      bind: vi.fn().mockReturnValue(
-        callCount++ === 0 ? firstChain(voiceResult) : firstChain(techResult),
-      ),
-    })),
-  };
-
-  return { DB: mockDB as unknown as D1Database } as unknown as Env;
+  return {
+    ST_PROXY: { fetch: fetcher },
+    MCP_SYNC_KEY: 'test-key',
+  } as any;
 }
 
-function makeEnvSequential(responses: unknown[]): Env {
-  let callCount = 0;
-  const mockDB = {
-    prepare: vi.fn().mockImplementation(() => ({
-      bind: vi.fn().mockReturnValue({
-        first: vi.fn().mockImplementation(() => Promise.resolve(responses[callCount++])),
-      }),
-    })),
-  };
-  return { DB: mockDB as unknown as D1Database } as unknown as Env;
-}
+const ctx = { actor: 'test', correlation: 'c1' };
 
-const ctx: ToolContext = { actor: 'test', correlation: 'test-corr' };
-
-describe('identify_tech_by_phone', () => {
-  it('returns {status: "found", source: "technicians"} when technicians query returns a row', async () => {
-    // voice_registry misses, technicians hits
-    const env = makeEnvSequential([
-      null, // voice_registry returns null
-      { tech_id: 'T123', name: 'Jane Smith', phone: '8435551234', business_unit: 'HVAC' },
+describe('identify_tech_by_phone (QUA-267 binding fix)', () => {
+  it('returns voice_registry hit when tier 1 has a row', async () => {
+    const env = fakeEnv([
+      [{ name: 'Brooks Hunsucker', tech_id: '111', role: 'Service', confidence: 0.9 }],
     ]);
-
-    const result = await identify_tech_by_phone.handler(env, { phone: '8435551234' }, ctx) as any;
-    expect(result.status).toBe('found');
-    expect(result.source).toBe('technicians');
-    expect(result.tech_id).toBe('T123');
-    expect(result.tech_name).toBe('Jane Smith');
+    const out = (await identify_tech_by_phone.handler(env, { phone: '843-496-3573' }, ctx)) as any;
+    expect(out.status).toBe('found');
+    expect(out.source).toBe('voice_registry');
+    expect(out.tech_id).toBe('111');
+    expect(out.tech_name).toBe('Brooks Hunsucker');
+    // Tier 2 should NOT have fired.
+    expect((env.ST_PROXY.fetch as any).mock.calls).toHaveLength(1);
   });
 
-  it('returns {status: "not_found"} when no match in either table', async () => {
-    const env = makeEnvSequential([null, null]);
-
-    const result = await identify_tech_by_phone.handler(env, { phone: '8435559999' }, ctx) as any;
-    expect(result.status).toBe('not_found');
-  });
-
-  it('normalizes formatted phone "+1 (843) 555-1234" to "8435551234" before query', async () => {
-    const env = makeEnvSequential([
-      null,
-      { tech_id: 'T456', name: 'Bob Jones', phone: '(843) 555-1234', business_unit: 'Plumbing' },
+  it('falls through to technicians when tier 1 returns empty', async () => {
+    const env = fakeEnv([
+      [],
+      [{ tech_id: '222', name: 'AH Tech', business_unit: null, role: 'DummyTech' }],
     ]);
-
-    const result = await identify_tech_by_phone.handler(env, { phone: '+1 (843) 555-1234' }, ctx) as any;
-    expect(result.status).toBe('found');
-    // Verify the DB was queried with the normalized value by checking the result
-    expect(result.source).toBe('technicians');
+    const out = (await identify_tech_by_phone.handler(env, { phone: '8435365603' }, ctx)) as any;
+    expect(out.status).toBe('found');
+    expect(out.source).toBe('technicians');
+    expect(out.tech_id).toBe('222');
+    expect(out.tech_name).toBe('AH Tech');
+    expect((env.ST_PROXY.fetch as any).mock.calls).toHaveLength(2);
   });
 
-  it('returns {status: "parse_error"} when input has <10 digits after normalization', async () => {
-    const env = makeEnvSequential([]);
+  it('falls through to technicians when tier 1 returns "Unknown Tech"', async () => {
+    const env = fakeEnv([
+      [{ name: 'Unknown Tech', tech_id: '999', role: '', confidence: 0.1 }],
+      [{ tech_id: '333', name: 'Chase Feagin', business_unit: '4921847', role: 'Service' }],
+    ]);
+    const out = (await identify_tech_by_phone.handler(env, { phone: '854-903-5837' }, ctx)) as any;
+    expect(out.status).toBe('found');
+    expect(out.source).toBe('technicians');
+    expect(out.tech_name).toBe('Chase Feagin');
+  });
 
-    const result = await identify_tech_by_phone.handler(env, { phone: '12345' }, ctx) as any;
-    expect(result.status).toBe('parse_error');
+  it('returns not_found when both tiers are empty', async () => {
+    const env = fakeEnv([[], []]);
+    const out = (await identify_tech_by_phone.handler(env, { phone: '5555555555' }, ctx)) as any;
+    expect(out.status).toBe('not_found');
+    expect((env.ST_PROXY.fetch as any).mock.calls).toHaveLength(2);
+  });
+
+  it('rejects too-short numbers before hitting D1', async () => {
+    const env = fakeEnv([]);
+    const out = (await identify_tech_by_phone.handler(env, { phone: '123' }, ctx)) as any;
+    expect(out.status).toBe('parse_error');
+    expect(out.message).toMatch(/too short/i);
+    expect((env.ST_PROXY.fetch as any).mock.calls).toHaveLength(0);
+  });
+
+  it('wraps upstream HTTP 500 as parse_error (never throws)', async () => {
+    const env = fakeEnv([{ httpStatus: 500 }]);
+    const out = (await identify_tech_by_phone.handler(env, { phone: '8435365603' }, ctx)) as any;
+    expect(out.status).toBe('parse_error');
+    expect(out.message).toMatch(/d1 read failed: 500/);
+  });
+
+  it('wraps success:false envelope as parse_error', async () => {
+    const env = fakeEnv([{ success: false, error: 'no such table: voice_registry' }]);
+    const out = (await identify_tech_by_phone.handler(env, { phone: '8435365603' }, ctx)) as any;
+    expect(out.status).toBe('parse_error');
+    expect(out.message).toMatch(/no such table: voice_registry/);
+  });
+
+  it('normalizes phone formatting before querying (digits-only, last 10)', async () => {
+    const env = fakeEnv([
+      [{ name: 'Briley Ward', tech_id: '444', role: 'Service', confidence: 0.95 }],
+    ]);
+    await identify_tech_by_phone.handler(env, { phone: '+1 (854) 208-3516' }, ctx);
+    const callBody = JSON.parse((env.ST_PROXY.fetch as any).mock.calls[0][1].body);
+    expect(callBody.params[0]).toBe('8542083516');
+  });
+
+  it('hits /api/sql/read on servicetitan-proxy with X-Sync-Key header', async () => {
+    const env = fakeEnv([[]]);
+    await identify_tech_by_phone.handler(env, { phone: '8435365603' }, ctx);
+    const [url, init] = (env.ST_PROXY.fetch as any).mock.calls[0];
+    expect(String(url)).toContain('/api/sql/read');
+    expect(init.headers['X-Sync-Key']).toBe('test-key');
+    expect(init.method).toBe('POST');
   });
 });

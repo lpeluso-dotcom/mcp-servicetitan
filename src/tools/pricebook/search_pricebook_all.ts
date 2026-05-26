@@ -29,29 +29,32 @@ interface PricebookItem {
   category: string;
   price: number;
   member_price: number | null;
+  // Estimated labor hours for services + equipment (decimal: 0.75 = 45 min, 1.5 = 90 min).
+  // NULL for materials (no labor attached) and for items where ST has no value set.
+  hours: number | null;
   type: 'service' | 'material' | 'equipment';
 }
 
 const SQL_BY_CODE_SVC =
-  `SELECT code, name, description, category_name as category, price, member_price, 'service' as type
+  `SELECT code, name, description, category_name as category, price, member_price, hours, 'service' as type
    FROM pb_services WHERE code = ? LIMIT 1`;
 const SQL_BY_CODE_MAT =
-  `SELECT code, name, description, category_name as category, cost as price, NULL as member_price, 'material' as type
+  `SELECT code, name, description, category_name as category, cost as price, NULL as member_price, NULL as hours, 'material' as type
    FROM pb_materials WHERE code = ? LIMIT 1`;
 const SQL_BY_CODE_EQUIP =
-  `SELECT code, name, description, category_name as category, price, member_price, 'equipment' as type
+  `SELECT code, name, description, category_name as category, price, member_price, hours, 'equipment' as type
    FROM pb_equipment WHERE code = ? LIMIT 1`;
 
 const SQL_BY_NAME_SVC =
-  `SELECT code, name, description, category_name as category, price, member_price, 'service' as type
+  `SELECT code, name, description, category_name as category, price, member_price, hours, 'service' as type
    FROM pb_services WHERE active = 1 AND (name LIKE ? OR description LIKE ? OR category_name LIKE ?)
    ORDER BY price DESC LIMIT 5`;
 const SQL_BY_NAME_MAT =
-  `SELECT code, name, description, category_name as category, cost as price, NULL as member_price, 'material' as type
+  `SELECT code, name, description, category_name as category, cost as price, NULL as member_price, NULL as hours, 'material' as type
    FROM pb_materials WHERE active = 1 AND (name LIKE ? OR description LIKE ? OR category_name LIKE ?)
    ORDER BY cost DESC LIMIT 3`;
 const SQL_BY_NAME_EQUIP =
-  `SELECT code, name, description, category_name as category, price, member_price, 'equipment' as type
+  `SELECT code, name, description, category_name as category, price, member_price, hours, 'equipment' as type
    FROM pb_equipment WHERE active = 1 AND (name LIKE ? OR description LIKE ? OR category_name LIKE ?)
    ORDER BY price DESC LIMIT 3`;
 
@@ -90,7 +93,7 @@ async function queryD1(env: Env, sql: string, params: unknown[]): Promise<Priceb
 export const search_pricebook_all: ToolDef<Args> = {
   name: 'search_pricebook_all',
   description:
-    'Search ServiceTitan pricebook across services, materials, and equipment in one call. Use code for an exact lookup, or query for fuzzy name/description/category matching. Returns up to 8 items ranked by price descending, each with a type discriminator (service/material/equipment) and member_price where applicable. Source: D1 (pb_services / pb_materials / pb_equipment via servicetitan-proxy). Tuned for voice-agent usage (sub-100ms typical).',
+    'Search ServiceTitan pricebook across services, materials, and equipment in one call. Use code for an exact lookup, or query for fuzzy name/description/category matching. Returns up to 8 items ranked by price descending, each with a type discriminator (service/material/equipment), member_price where applicable, and `hours` (estimated labor in decimal hours: 0.75 = 45 min, 1.5 = 90 min) on services + equipment. Materials return hours = null (no labor attached). When asked about time/duration/how long, surface `hours` — do NOT say the data is missing. Source: D1 (pb_services / pb_materials / pb_equipment via servicetitan-proxy). Sub-100ms typical.',
   stEndpoint: { method: 'GET', path: 'd1://pb_services+pb_materials+pb_equipment', source: 'd1' },
   zodSchema: {
     code: z.string().optional().describe('Exact pricebook code (e.g. "HUM-120"). Wins over query if both provided.'),
