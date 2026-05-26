@@ -1,16 +1,71 @@
+// ============================================================
+// search_materials
+//
+// QUA-267 finding 2 (2026-05-26): added `code` parameter for exact-code
+// lookup. pb_materials is stale in D1 (~23d as of 2026-04-22 note),
+// but exact codes change rarely so D1 is still safe for the lookup —
+// and we fall through to live ST if D1 doesn't have the code. Mirrors
+// search_pricebook_services's shape.
+// ============================================================
+
 import { z } from 'zod';
 import { readST } from '../../st';
+import { codeVariants } from './search_pricebook_all';
+import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 
 const TENANT_ID = '000000000';
 
-interface Args { name?: string; categoryId?: number; active?: boolean; page?: number; pageSize?: number }
+const SQL_BY_CODE = `SELECT
+  id, code, name, description, category_name, price, member_price, cost,
+  active, unit_of_measure, taxable, account, primary_vendor_name,
+  primary_vendor_id, is_inventory
+FROM pb_materials
+WHERE code = ?
+LIMIT 1`;
+
+interface Args {
+  code?: string;
+  name?: string;
+  categoryId?: number;
+  active?: boolean;
+  page?: number;
+  pageSize?: number;
+}
+
+async function lookupExactCode(env: Env, code: string): Promise<unknown | null> {
+  for (const variant of codeVariants(code)) {
+    const resp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/sql/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Sync-Key': env.MCP_SYNC_KEY },
+      body: JSON.stringify({ sql: SQL_BY_CODE, params: [variant] }),
+    });
+    if (!resp.ok) continue;
+    const data = (await resp.json()) as { success: boolean; results?: unknown[] };
+    if (data.success && data.results && data.results.length > 0) {
+      return { ...(data.results[0] as object), _matched_code: variant };
+    }
+  }
+  return null;
+}
 
 export const search_materials: ToolDef<Args> = {
   name: 'search_materials',
-  description: 'Search pricebook materials by name or category. Source: live ST (pb_materials 23d stale in D1 — falls back to live until sync fixed).',
+  description:
+    'Search pricebook materials by exact `code` (e.g. "PRV-075"), or fuzzy `name`/category. ' +
+    'Exact-code path hits D1 directly (sub-100ms) and short-circuits on hit. ' +
+    'Fuzzy path falls through to live ST. ' +
+    'Source: D1 for exact code (pb_materials may be stale; falls through to live ST on miss); live ST for name/category fuzzy.',
   zodSchema: {
-    name: z.string().optional().describe('Material name (partial match)'),
+    code: z
+      .string()
+      .min(1)
+      .max(64)
+      .optional()
+      .describe(
+        'Exact material code (e.g. "PRV-075"). Wins over `name` if both provided. Tries the raw value, UPPERCASE, and UPPERCASE-hyphenated variants in order.',
+      ),
+    name: z.string().optional().describe('Material name or token (partial match against live ST)'),
     categoryId: z.number().int().positive().optional().describe('Filter by category ID'),
     active: z.boolean().optional().describe('Filter by active status (default: all)'),
     page: z.number().int().positive().default(1).describe('Page number'),
@@ -18,8 +73,15 @@ export const search_materials: ToolDef<Args> = {
   },
   stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/materials', source: 'live' },
   async handler(env, args, { actor, correlation }) {
+    if (args.code) {
+      const exact = await lookupExactCode(env, args.code);
+      if (exact) {
+        return { materials: [exact], _source: 'd1-exact', _matched_code: args.code };
+      }
+    }
+
     const query: Record<string, unknown> = {
-      name: args.name,
+      name: args.name ?? args.code,
       categoryId: args.categoryId,
       active: args.active,
       page: args.page ?? 1,
