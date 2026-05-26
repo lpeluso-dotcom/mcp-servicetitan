@@ -14,6 +14,7 @@
 // ============================================================
 import { z } from 'zod';
 import { McpError } from '../../errors';
+import { queryD1 as d1ProxyQuery } from '../../d1-proxy';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 
@@ -78,16 +79,19 @@ export function codeVariants(raw: string): string[] {
   return out;
 }
 
-async function queryD1(env: Env, sql: string, params: unknown[]): Promise<PricebookItem[]> {
-  const resp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/sql/read', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Sync-Key': env.MCP_SYNC_KEY },
-    body: JSON.stringify({ sql, params }),
+// queryD1 now lives in src/d1-proxy.ts with retry + classification + correlation.
+// Local alias preserves the original signature so the rest of this file
+// reads the same.
+function queryD1(
+  env: Env,
+  sql: string,
+  params: unknown[],
+  correlation?: string,
+): Promise<PricebookItem[]> {
+  return d1ProxyQuery<PricebookItem>(env, sql, params, {
+    correlation,
+    tag: 'search_pricebook_all',
   });
-  if (!resp.ok) throw new Error(`d1 read failed: ${resp.status}`);
-  const data = (await resp.json()) as { success: boolean; results?: PricebookItem[]; error?: string };
-  if (!data.success) throw new Error(data.error || 'd1 read returned success=false');
-  return data.results ?? [];
 }
 
 export const search_pricebook_all: ToolDef<Args> = {
@@ -122,7 +126,7 @@ export const search_pricebook_all: ToolDef<Args> = {
         const variants = codeVariants(code);
         for (const variant of variants) {
           for (const sql of [SQL_BY_CODE_SVC, SQL_BY_CODE_MAT, SQL_BY_CODE_EQUIP]) {
-            const rows = await queryD1(env, sql, [variant]);
+            const rows = await queryD1(env, sql, [variant], correlation);
             if (rows.length > 0) {
               return {
                 status: 'success',
@@ -140,9 +144,9 @@ export const search_pricebook_all: ToolDef<Args> = {
       // Query path — fuzzy search across all 3 tables, merge + rank by price desc, top 8
       const q = `%${query}%`;
       const [services, materials, equipment] = await Promise.all([
-        queryD1(env, SQL_BY_NAME_SVC, [q, q, q]),
-        queryD1(env, SQL_BY_NAME_MAT, [q, q, q]),
-        queryD1(env, SQL_BY_NAME_EQUIP, [q, q, q]),
+        queryD1(env, SQL_BY_NAME_SVC, [q, q, q], correlation),
+        queryD1(env, SQL_BY_NAME_MAT, [q, q, q], correlation),
+        queryD1(env, SQL_BY_NAME_EQUIP, [q, q, q], correlation),
       ]);
 
       const merged = [...services, ...materials, ...equipment]

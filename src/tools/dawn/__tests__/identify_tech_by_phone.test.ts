@@ -93,8 +93,26 @@ describe('identify_tech_by_phone (QUA-267 binding fix)', () => {
     expect((env.ST_PROXY.fetch as any).mock.calls).toHaveLength(0);
   });
 
-  it('wraps upstream HTTP 500 as parse_error (never throws)', async () => {
-    const env = fakeEnv([{ httpStatus: 500 }]);
+  it('retries transient HTTP 500 and recovers (Step D retry behavior)', async () => {
+    const env = fakeEnv([
+      { httpStatus: 500 }, // attempt 1 — transient, retried
+      [{ name: 'Brooks Hunsucker', tech_id: '111', role: 'Service', confidence: 0.9 }], // attempt 2 — success
+    ]);
+    const out = (await identify_tech_by_phone.handler(env, { phone: '8434963573' }, ctx)) as any;
+    expect(out.status).toBe('found');
+    expect(out.source).toBe('voice_registry');
+    // Two ST_PROXY calls: 500 + 200.
+    expect((env.ST_PROXY.fetch as any).mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('wraps persistent upstream HTTP 500 (all retries exhausted) as parse_error', async () => {
+    // d1-proxy makes 3 attempts (1 initial + 2 retries) — queue 3 + a tier-2 fallback set.
+    const env = fakeEnv([
+      { httpStatus: 500 },
+      { httpStatus: 500 },
+      { httpStatus: 500 },
+      // tier 2 wouldn't be reached because tier 1 throws D1ProxyError after the 3rd 500.
+    ]);
     const out = (await identify_tech_by_phone.handler(env, { phone: '8435365603' }, ctx)) as any;
     expect(out.status).toBe('parse_error');
     expect(out.message).toMatch(/d1 read failed: 500/);
