@@ -114,6 +114,8 @@ import { assigned_vs_sold_estimate_audit } from './composites/assigned_vs_sold_e
 import { open_opportunities_pulitzer_feed } from './composites/open_opportunities_pulitzer_feed';
 // v1.5.1 ST-77 — Job hold reasons
 import { jobs_hold_reasons_list } from './jobs/jobs_hold_reasons_list';
+// v1.6.1 — Job history (audit-log per ticket)
+import { get_job_history } from './jobs/get_job_history';
 // Dawn — SMS support (v1.6.0)
 import { identify_tech_by_phone } from './dawn/identify_tech_by_phone';
 import { save_tech_debrief } from './dawn/save_tech_debrief';
@@ -168,7 +170,7 @@ export const TOOLS: readonly ToolDef<any>[] = [
   find_customer, get_customer, get_customer_locations, list_customer_jobs,
   get_customer_membership, add_customer_note,
   // T5 Jobs
-  get_job, list_jobs_today, get_job_appointments, add_job_note,
+  get_job, list_jobs_today, get_job_appointments, get_job_history, add_job_note,
   book_job, reschedule_appointment, hold_appointment, assign_technicians,
   // T6 Pricebook
   search_pricebook_services, get_service_details, search_materials,
