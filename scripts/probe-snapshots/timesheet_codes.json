@@ -1,0 +1,15 @@
+{
+  "name": "timesheet_codes",
+  "captured": "2026-06-12T03:42:40.034Z",
+  "keys": [
+    "active",
+    "applicableEmployeeType",
+    "code",
+    "createdOn",
+    "description",
+    "id",
+    "modifiedOn",
+    "rateInfo",
+    "type"
+  ]
+}

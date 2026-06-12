@@ -1,0 +1,21 @@
+{
+  "name": "locations",
+  "captured": "2026-06-12T03:41:00.204Z",
+  "keys": [
+    "active",
+    "address",
+    "createdById",
+    "createdOn",
+    "customFields",
+    "customerId",
+    "externalData",
+    "id",
+    "mergedToId",
+    "modifiedOn",
+    "name",
+    "tagTypeIds",
+    "taxExempt",
+    "taxZoneId",
+    "zoneId"
+  ]
+}

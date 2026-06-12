@@ -1,0 +1,13 @@
+{
+  "name": "technician_skills",
+  "captured": "2026-06-12T03:42:56.813Z",
+  "keys": [
+    "active",
+    "createdOn",
+    "id",
+    "jobTypeIds",
+    "modifiedOn",
+    "name",
+    "technicianId"
+  ]
+}

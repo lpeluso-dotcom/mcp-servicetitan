@@ -1,0 +1,26 @@
+{
+  "name": "customers",
+  "captured": "2026-06-12T03:40:51.995Z",
+  "keys": [
+    "active",
+    "address",
+    "balance",
+    "createdById",
+    "createdOn",
+    "creditLimit",
+    "creditLimitBalance",
+    "customFields",
+    "doNotMail",
+    "doNotService",
+    "externalData",
+    "id",
+    "mergedToId",
+    "modifiedOn",
+    "name",
+    "nationalAccount",
+    "paymentTermId",
+    "tagTypeIds",
+    "taxExempt",
+    "type"
+  ]
+}

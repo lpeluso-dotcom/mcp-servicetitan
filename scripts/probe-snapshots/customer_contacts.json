@@ -1,0 +1,15 @@
+{
+  "name": "customer_contacts",
+  "captured": "2026-06-12T03:41:08.836Z",
+  "keys": [
+    "createdOn",
+    "customerId",
+    "id",
+    "memo",
+    "modifiedOn",
+    "phoneSettings",
+    "preferences",
+    "type",
+    "value"
+  ]
+}

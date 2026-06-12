@@ -1,0 +1,12 @@
+{
+  "name": "calls_telecom_v3",
+  "captured": "2026-06-12T03:41:34.047Z",
+  "keys": [
+    "businessUnit",
+    "id",
+    "jobNumber",
+    "leadCall",
+    "projectId",
+    "type"
+  ]
+}

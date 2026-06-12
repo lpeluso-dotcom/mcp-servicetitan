@@ -1,0 +1,27 @@
+{
+  "name": "projects",
+  "captured": "2026-06-12T03:40:35.519Z",
+  "keys": [
+    "actualCompletionDate",
+    "businessUnitIds",
+    "createdOn",
+    "customFields",
+    "customerId",
+    "externalData",
+    "id",
+    "jobIds",
+    "locationId",
+    "modifiedOn",
+    "name",
+    "number",
+    "projectManagerIds",
+    "projectTypeId",
+    "startDate",
+    "status",
+    "statusId",
+    "subStatus",
+    "subStatusId",
+    "summary",
+    "targetCompletionDate"
+  ]
+}

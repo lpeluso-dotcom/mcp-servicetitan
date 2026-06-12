@@ -1,0 +1,23 @@
+{
+  "name": "appointments",
+  "captured": "2026-06-12T03:40:43.751Z",
+  "keys": [
+    "active",
+    "appointmentNumber",
+    "appointmentSummaries",
+    "arrivalWindowEnd",
+    "arrivalWindowStart",
+    "createdById",
+    "createdOn",
+    "customerId",
+    "end",
+    "id",
+    "isConfirmed",
+    "jobId",
+    "modifiedOn",
+    "specialInstructions",
+    "start",
+    "status",
+    "unused"
+  ]
+}

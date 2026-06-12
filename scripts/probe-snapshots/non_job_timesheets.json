@@ -1,0 +1,15 @@
+{
+  "name": "non_job_timesheets",
+  "captured": "2026-06-12T03:42:31.818Z",
+  "keys": [
+    "active",
+    "createdOn",
+    "employeeId",
+    "employeeType",
+    "endedOn",
+    "id",
+    "modifiedOn",
+    "startedOn",
+    "timesheetCodeId"
+  ]
+}

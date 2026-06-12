@@ -1,0 +1,17 @@
+{
+  "name": "recurring_service_events",
+  "captured": "2026-06-12T03:43:05.022Z",
+  "keys": [
+    "createdById",
+    "createdOn",
+    "date",
+    "id",
+    "jobId",
+    "locationRecurringServiceId",
+    "locationRecurringServiceName",
+    "membershipId",
+    "membershipName",
+    "modifiedOn",
+    "status"
+  ]
+}
