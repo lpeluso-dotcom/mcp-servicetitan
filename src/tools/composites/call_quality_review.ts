@@ -4,10 +4,11 @@ import type { ToolDef } from '../index';
 
 interface Args { from: string; to: string; csr?: string }
 
-// 15 min memo. Lace scores + ST calls + call_transcripts D1 table.
+// 15 min memo. Live ST calls; Lace scores deferred to v1.1.
+// (call_transcripts D1 table dropped 2026-06-12 — legacy soak expired.)
 export const call_quality_review: ToolDef<Args> = {
   name: 'call_quality_review',
-  description: 'L5 composite: call quality review combining ST call records with available transcripts. 15 min memo. Source: D1 (calls + call_transcripts nightly-synced). Note: Lace score integration deferred to v1.1.',
+  description: 'L5 composite: call quality review over ST call records. 15 min memo. Source: live ST calls. Note: Lace score integration deferred to v1.1.',
   zodSchema: {
     from: z.string().describe('Start date (ISO 8601)'),
     to: z.string().describe('End date (ISO 8601)'),

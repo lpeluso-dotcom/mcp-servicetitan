@@ -15,9 +15,13 @@ import type { Env } from './env';
 import { authHeaders, newCorrelationId } from './auth';
 import { familyFromEndpoint, checkRateLimit, reportBackoff } from './rate-limit-guard';
 
-// Tables nightly-synced into servicetitan-proxy D1 (verified 2026-04-22).
-// pb_services is FRESH. pb_materials (23d stale) + pb_equipment (37d stale)
-// are excluded until §13#1 sync fix ships — callers for those go live.
+// Tables nightly-synced into servicetitan-proxy D1 (verified 2026-04-22;
+// re-audited 2026-06-12).
+// 2026-06-12 audit: pb_materials + pb_equipment re-ADDED — the staleness that
+// excluded them (23d/37d as of 2026-04-22) was fixed by the 2026-04-28
+// active=True sync flip; sync_log shows both syncing daily (<24h fresh).
+// call_transcripts REMOVED — legacy soak expired 2026-05-31, table dropped
+// from taylor-ai D1 (R2 backup at qsc-media/backups/d1/call_transcripts/).
 // v1.5 additions (2026-05-19): job_timesheets (migration 0021, 2h sync),
 // opportunities (migration 0018), dispatch_pro_* (migration 0022, manual cron).
 export const D1_TABLES = new Set([
@@ -25,8 +29,8 @@ export const D1_TABLES = new Set([
   'payments', 'technicians', 'campaigns', 'business_units', 'job_types',
   'tag_types', 'dispatch_zones', 'cancel_reasons', 'customer_contacts',
   'calls', 'appointment_assignments', 'invoice_items', 'estimate_items',
-  'call_transcripts', 'pb_services', 'contacts', 'customer_notes', 'tags',
-  'installed_equipment',
+  'pb_services', 'pb_materials', 'pb_equipment', 'contacts', 'customer_notes',
+  'tags', 'installed_equipment',
   // v1.5
   'job_timesheets', 'opportunities', 'opportunity_statuses',
   'dispatch_pro_utilization', 'dispatch_pro_ratio', 'dispatch_pro_alerts',
