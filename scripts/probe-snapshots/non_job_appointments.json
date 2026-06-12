@@ -1,0 +1,22 @@
+{
+  "name": "non_job_appointments",
+  "captured": "2026-06-12T03:42:23.566Z",
+  "keys": [
+    "active",
+    "allDay",
+    "clearDispatchBoard",
+    "clearTechnicianView",
+    "createdById",
+    "createdOn",
+    "duration",
+    "id",
+    "modifiedOn",
+    "name",
+    "removeTechnicianFromCapacityPlanning",
+    "showOnTechnicianSchedule",
+    "start",
+    "summary",
+    "technicianId",
+    "timesheetCodeId"
+  ]
+}

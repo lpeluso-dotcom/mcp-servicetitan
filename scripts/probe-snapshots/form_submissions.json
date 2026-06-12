@@ -1,0 +1,14 @@
+{
+  "name": "form_submissions",
+  "captured": "2026-06-12T03:42:06.992Z",
+  "keys": [
+    "createdById",
+    "formId",
+    "formName",
+    "id",
+    "owners",
+    "status",
+    "submittedOn",
+    "units"
+  ]
+}

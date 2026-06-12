@@ -1,0 +1,17 @@
+{
+  "name": "job_timesheets",
+  "captured": "2026-06-12T03:42:15.173Z",
+  "keys": [
+    "active",
+    "appointmentId",
+    "arrivedOn",
+    "canceledOn",
+    "createdOn",
+    "dispatchedOn",
+    "doneOn",
+    "id",
+    "jobId",
+    "modifiedOn",
+    "technicianId"
+  ]
+}

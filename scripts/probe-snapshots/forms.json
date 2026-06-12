@@ -1,0 +1,15 @@
+{
+  "name": "forms",
+  "captured": "2026-06-12T03:41:58.681Z",
+  "keys": [
+    "active",
+    "createdById",
+    "createdOn",
+    "hasConditionalLogic",
+    "hasTriggers",
+    "id",
+    "modifiedOn",
+    "name",
+    "published"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "pb_categories",
+  "captured": "2026-06-12T03:43:21.950Z",
+  "keys": [
+    "active",
+    "businessUnitIds",
+    "categoryType",
+    "createdOn",
+    "description",
+    "externalId",
+    "hideInMobile",
+    "id",
+    "image",
+    "modifiedOn",
+    "name",
+    "parentId",
+    "position",
+    "skuImages",
+    "skuVideos",
+    "source",
+    "subcategories"
+  ]
+}

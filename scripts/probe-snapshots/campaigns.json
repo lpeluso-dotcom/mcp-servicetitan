@@ -1,0 +1,19 @@
+{
+  "name": "campaigns",
+  "captured": "2026-06-12T03:43:30.136Z",
+  "keys": [
+    "active",
+    "businessUnit",
+    "campaignPhoneNumbers",
+    "category",
+    "createdOn",
+    "id",
+    "isDefaultCampaign",
+    "medium",
+    "modifiedOn",
+    "name",
+    "otherMedium",
+    "otherSource",
+    "source"
+  ]
+}

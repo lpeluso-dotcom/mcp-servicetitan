@@ -1,0 +1,16 @@
+{
+  "name": "scheduling_pro_schedulers",
+  "captured": "2026-06-12T03:43:38.921Z",
+  "keys": [
+    "companyName",
+    "createdOn",
+    "dataApiKey",
+    "id",
+    "isDefault",
+    "mode",
+    "modifiedOn",
+    "name",
+    "quickLaunchLink",
+    "schedulerStatus"
+  ]
+}

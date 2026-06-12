@@ -1,0 +1,125 @@
+{
+  "_comment": "Probe manifest for probe-st-endpoints.mjs. {tenant} is substituted from ST_TENANT_ID. Seeded 2026-06-12 from the st-gap-2026-05-21 probe set + the live sync/MCP surfaces most exposed to ST release drift. list:false = single-object endpoint (no pageSize param).",
+  "endpoints": [
+    {
+      "name": "jobs",
+      "family": "jpm",
+      "path": "/jpm/v2/tenant/{tenant}/jobs"
+    },
+    {
+      "name": "projects",
+      "family": "jpm",
+      "path": "/jpm/v2/tenant/{tenant}/projects"
+    },
+    {
+      "name": "appointments",
+      "family": "jpm",
+      "path": "/jpm/v2/tenant/{tenant}/appointments"
+    },
+    {
+      "name": "customers",
+      "family": "crm",
+      "path": "/crm/v2/tenant/{tenant}/customers"
+    },
+    {
+      "name": "locations",
+      "family": "crm",
+      "path": "/crm/v2/tenant/{tenant}/locations"
+    },
+    {
+      "name": "customer_contacts",
+      "family": "crm",
+      "path": "/crm/v2/tenant/{tenant}/customers/contacts?modifiedOnOrAfter=2026-01-01T00:00:00Z"
+    },
+    {
+      "name": "invoices",
+      "family": "accounting",
+      "path": "/accounting/v2/tenant/{tenant}/invoices"
+    },
+    {
+      "name": "estimates",
+      "family": "sales",
+      "path": "/sales/v2/tenant/{tenant}/estimates?active=Any"
+    },
+    {
+      "name": "calls_telecom_v3",
+      "family": "telecom",
+      "path": "/telecom/v3/tenant/{tenant}/calls"
+    },
+    {
+      "name": "memberships",
+      "family": "memberships",
+      "path": "/memberships/v2/tenant/{tenant}/memberships"
+    },
+    {
+      "name": "installed_equipment",
+      "family": "equipmentsystems",
+      "path": "/equipmentsystems/v2/tenant/{tenant}/installed-equipment"
+    },
+    {
+      "name": "forms",
+      "family": "forms",
+      "path": "/forms/v2/tenant/{tenant}/forms"
+    },
+    {
+      "name": "form_submissions",
+      "family": "forms",
+      "path": "/forms/v2/tenant/{tenant}/submissions?submittedOnOrAfter=2026-06-01T00:00:00Z"
+    },
+    {
+      "name": "job_timesheets",
+      "family": "payroll",
+      "path": "/payroll/v2/tenant/{tenant}/jobs/timesheets?active=Any"
+    },
+    {
+      "name": "non_job_appointments",
+      "family": "dispatch",
+      "path": "/dispatch/v2/tenant/{tenant}/non-job-appointments"
+    },
+    {
+      "name": "non_job_timesheets",
+      "family": "payroll",
+      "path": "/payroll/v2/tenant/{tenant}/non-job-timesheets"
+    },
+    {
+      "name": "timesheet_codes",
+      "family": "payroll",
+      "path": "/payroll/v2/tenant/{tenant}/timesheet-codes"
+    },
+    {
+      "name": "technicians",
+      "family": "settings",
+      "path": "/settings/v2/tenant/{tenant}/technicians"
+    },
+    {
+      "name": "technician_skills",
+      "family": "dispatch",
+      "path": "/dispatch/v2/tenant/{tenant}/technician-skills"
+    },
+    {
+      "name": "recurring_service_events",
+      "family": "memberships",
+      "path": "/memberships/v2/tenant/{tenant}/recurring-service-events"
+    },
+    {
+      "name": "pb_services",
+      "family": "pricebook",
+      "path": "/pricebook/v2/tenant/{tenant}/services"
+    },
+    {
+      "name": "pb_categories",
+      "family": "pricebook",
+      "path": "/pricebook/v2/tenant/{tenant}/categories"
+    },
+    {
+      "name": "campaigns",
+      "family": "marketing",
+      "path": "/marketing/v2/tenant/{tenant}/campaigns"
+    },
+    {
+      "name": "scheduling_pro_schedulers",
+      "family": "schedulingpro",
+      "path": "/schedulingpro/v2/tenant/{tenant}/schedulers"
+    }
+  ]
+}

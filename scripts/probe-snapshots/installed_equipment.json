@@ -1,0 +1,33 @@
+{
+  "name": "installed_equipment",
+  "captured": "2026-06-12T03:41:50.480Z",
+  "keys": [
+    "active",
+    "actualReplacementDate",
+    "barcodeId",
+    "cost",
+    "createdOn",
+    "customerId",
+    "equipmentId",
+    "id",
+    "installedOn",
+    "invoiceItemId",
+    "locationId",
+    "manufacturedOn",
+    "manufacturer",
+    "manufacturerWarrantyEnd",
+    "manufacturerWarrantyStart",
+    "memo",
+    "model",
+    "modifiedOn",
+    "name",
+    "predictedReplacementDate",
+    "predictedReplacementMonths",
+    "serialNumber",
+    "serviceProviderWarrantyEnd",
+    "serviceProviderWarrantyStart",
+    "status",
+    "tags",
+    "type"
+  ]
+}
