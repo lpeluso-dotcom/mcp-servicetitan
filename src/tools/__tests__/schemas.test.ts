@@ -17,7 +17,7 @@ function schemaOf(name: string) {
 // ── Registry sanity ──────────────────────────────────────────
 
 describe('tool registry', () => {
-  it('exports 90 tools (v1.6.1 — +get_job_history)', () => {
+  it('exports 90 tools (v1.7.0 — pricebook full-field surface; tool count unchanged from v1.6.1)', () => {
     expect(TOOLS.length).toBe(90);
   });
 
@@ -183,18 +183,40 @@ describe('st_patch_service schema', () => {
 describe('st_create_service schema', () => {
   const s = schemaOf('st_create_service');
 
-  it('requires name and categoryId', () => {
+  it('requires name (categoryId-or-categories enforced in handler, not Zod)', () => {
     expect(s.safeParse({}).success).toBe(false);
-    expect(s.safeParse({ name: 'X' }).success).toBe(false);
     expect(s.safeParse({ categoryId: 1 }).success).toBe(false);
+    // name-only passes Zod; handler enforces categoryId-or-categories
+    expect(s.safeParse({ name: 'X' }).success).toBe(true);
   });
 
   it('accepts minimal create payload', () => {
     expect(s.safeParse({ name: 'New Service', categoryId: 5 }).success).toBe(true);
   });
 
+  it('accepts multi-cat create payload', () => {
+    expect(s.safeParse({ name: 'New Service', categories: [5, 7] }).success).toBe(true);
+  });
+
   it('rejects empty name', () => {
     expect(s.safeParse({ name: '', categoryId: 5 }).success).toBe(false);
+  });
+
+  it('accepts new v1.7.0 fields', () => {
+    const r = s.safeParse({
+      name: 'Lab Fee', categories: [1, 2],
+      hours: 0.5, isLabor: true, taxable: true, account: 'Revenue',
+      paysCommission: false, memberPrice: 89, useStaticPrices: true, price: 89,
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects singular useStaticPrice (removed in v1.7.0)', () => {
+    // Zod strips unknown keys by default; this test documents the rename.
+    // The transform layer also strips it as belt-and-suspenders.
+    const r: any = s.safeParse({ name: 'X', categoryId: 5, useStaticPrice: true });
+    expect(r.success).toBe(true);
+    expect(r.data).not.toHaveProperty('useStaticPrice');
   });
 });
 
