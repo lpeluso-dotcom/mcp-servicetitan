@@ -98,3 +98,24 @@ jobs:
           fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      # Post-deploy smoke: exercise EVERY read tool against the just-deployed worker
+      # and fail the deploy if any returns a real error (404 / 500 / schema-drift) —
+      # needs_args + external-config gaps are non-blocking. This is the gate that would
+      # have caught the tenant-404s, the bad dispatch endpoints, and the estimates
+      # schema-drift before they shipped silently.
+      # GATED: runs only when MCP_SMOKE_KEY + MCP_SMOKE_URL secrets are provisioned
+      # (MCP_SMOKE_KEY = the worker's X-Sync-Key; MCP_SMOKE_URL = the deployed /mcp URL,
+      # e.g. https://mcp-servicetitan[-dev].<subdomain>.workers.dev/mcp). Otherwise it
+      # logs a warning and skips so the repo stays fork-friendly.
+      - name: Post-deploy smoke (read-tool sweep)
+        if: success()
+        env:
+          MCP_SYNC_KEY: ${{ secrets.MCP_SMOKE_KEY }}
+          MCP_URL: ${{ secrets.MCP_SMOKE_URL }}
+        run: |
+          if [ -z "${MCP_SYNC_KEY:-}" ] || [ -z "${MCP_URL:-}" ]; then
+            echo "::warning::MCP_SMOKE_KEY / MCP_SMOKE_URL secrets not set — skipping post-deploy smoke. Add them to enable the gate."
+            exit 0
+          fi
+          bash scripts/all-tools-smoke.sh "$DEPLOY_ENV" --actor ci-post-deploy

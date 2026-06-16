@@ -19,6 +19,7 @@ import { registerTool, type RequestContext } from './tool-registry';
 import { resolveAuth, verifyConnectorToken } from './auth';
 import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
+import { unackedErrorsHandler } from './routes/admin-errors';
 import { endpointsHandler, endpointsCoverageHandler } from './routes/admin-endpoints';
 import { handleWebhook } from './webhook-ingest';
 import { createOAuthProvider, handleOAuthRoute } from './oauth';
@@ -126,6 +127,9 @@ app.get('/admin/metrics', async (c) => {
 
 // /admin/health/audit — last-activity probe so future telemetry-silence is detectable in one curl.
 app.get('/admin/health/audit', auditHealthHandler);
+// /admin/errors/unacked — error_log rows in a recent window + `alert` flag, so a monitor
+// can fire when prod tools start failing (the gap that hid the tenant-404s).
+app.get('/admin/errors/unacked', unackedErrorsHandler);
 
 // /admin/endpoints — ST endpoint inventory: per-tool stEndpoint descriptors + undeclared list.
 app.get('/admin/endpoints', endpointsHandler);
