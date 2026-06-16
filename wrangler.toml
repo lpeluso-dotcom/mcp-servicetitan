@@ -29,6 +29,13 @@ database_id = "00000000-0000-0000-0000-000000000000"
 binding = "PROXY_STATE"
 id = "00000000000000000000000000000000"
 
+# Phase-2 OAuth store (workers-oauth-provider). Real id — NOT a placeholder: the CI inject script
+# only swaps the all-zero placeholder, so a real id passes through untouched, and KV ids are
+# account-scoped identifiers (not secrets). Separate from qsc-hopper's OAUTH_KV (no grant bleed).
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "0fc38122dc7b4f15b2e2c3403b688fa6"
+
 # Service binding to your own ServiceTitan proxy worker. The proxy is expected
 # to expose /api/st/read, /api/st/write, and queryD1-compatible behavior.
 [[services]]
@@ -38,12 +45,18 @@ service = "your-servicetitan-proxy"
 [vars]
 MCP_SERVICE_VERSION = "1.6.0"
 ST_TENANT_ID = "000000000"
+# Phase-2 OAuth (prod). SELF_ORIGIN pins the callback origin; ALLOWED_EMAILS is the in-worker
+# allow-list. ACCESS_CLIENT_ID/ISSUER/SECRET are wrangler SECRETS (not committed — keeps the
+# 64-hex client id out of git / gitleaks).
+SELF_ORIGIN = "https://mcp-servicetitan.lpeluso.workers.dev"
+ALLOWED_EMAILS = "office@qualityservicecompany.net,lpeluso@qualityservicecompany.net"
 
 # Secrets (set with `wrangler secret put`):
 # MCP_SYNC_KEY - shared bearer between mcp-servicetitan and the upstream proxy
 # SIRO_API_TOKEN - Siro org API token for v1 read endpoints
 # ST_WEBHOOK_SECRET - ServiceTitan webhook HMAC-SHA256 secret
 # JWT_SECRET - JWT signing secret for dual-mode auth
+# ACCESS_CLIENT_ID / ACCESS_ISSUER / ACCESS_CLIENT_SECRET - Cloudflare Access SaaS-OIDC (Phase-2 OAuth)
 
 [[durable_objects.bindings]]
 name = "ST_RATE_LIMITER"
@@ -71,6 +84,9 @@ cpu_ms = 50
 [env.dev.vars]
 MCP_SERVICE_VERSION = "1.6.0-dev"
 ST_TENANT_ID = "000000000"
+# Phase-2 OAuth (dev): SELF_ORIGIN = dev worker origin; ACCESS_* are wrangler secrets (see prod).
+SELF_ORIGIN = "https://mcp-servicetitan-dev.lpeluso.workers.dev"
+ALLOWED_EMAILS = "office@qualityservicecompany.net,lpeluso@qualityservicecompany.net"
 
 [[env.dev.durable_objects.bindings]]
 name = "ST_RATE_LIMITER"
@@ -96,6 +112,11 @@ database_id = "00000000-0000-0000-0000-000000000000"
 [[env.dev.kv_namespaces]]
 binding = "PROXY_STATE"
 id = "00000000000000000000000000000000"
+
+# Phase-2 OAuth store (dev) — real id; see prod note above.
+[[env.dev.kv_namespaces]]
+binding = "OAUTH_KV"
+id = "d7fb3c58f8604a43a57df60206638a3b"
 
 [[env.dev.services]]
 binding = "ST_PROXY"
