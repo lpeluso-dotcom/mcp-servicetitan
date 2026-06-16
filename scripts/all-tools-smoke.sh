@@ -105,10 +105,12 @@ for TOOL in $READS; do
   TEXT="$(echo "$RESULT" | jq -r '.content[0].text // empty' 2>/dev/null)"
   IS_ERROR="$(echo "$RESULT" | jq -r '.isError // false' 2>/dev/null)"
 
-  # Heuristic: any "input validation" / "invalid arguments" / "at least one of" /
+  # Heuristic: any "input validation" / "invalid arguments" / "requires|either" /
   # "missing" / "required" pattern is a needs_args healthy response (handler is
-  # wired; we just didn't pass valid args). Anything else is a real fail.
-  ARG_PATTERN='input validation|invalid arguments|invalid_value|at least one of|required|missing|expected.*string|expected.*number|expected.*array|undefined.*field'
+  # wired; we just didn't pass valid args). External-token config gaps
+  # ("not configured") are also NON-blocking — a deploy didn't break them; they're
+  # a standing provisioning state. Anything else is a real fail (404 / 500 / drift).
+  ARG_PATTERN='input validation|invalid arguments|invalid_value|at least one of|requires|either|required|missing|expected.*string|expected.*number|expected.*array|undefined.*field|not configured|not_configured|not provisioned|not set on this worker'
 
   if [[ -z "$TEXT" ]] && [[ "$IS_ERROR" != "true" ]]; then
     STATUS="fail"
