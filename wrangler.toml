@@ -43,7 +43,7 @@ binding = "ST_PROXY"
 service = "your-servicetitan-proxy"
 
 [vars]
-MCP_SERVICE_VERSION = "1.6.0"
+MCP_SERVICE_VERSION = "1.7.0"
 ST_TENANT_ID = "000000000"
 # Phase-2 OAuth (prod). SELF_ORIGIN pins the callback origin; ALLOWED_EMAILS is the in-worker
 # allow-list. ACCESS_CLIENT_ID/ISSUER/SECRET are wrangler SECRETS (not committed — keeps the
@@ -82,7 +82,7 @@ enabled = true
 cpu_ms = 50
 
 [env.dev.vars]
-MCP_SERVICE_VERSION = "1.6.0-dev"
+MCP_SERVICE_VERSION = "1.7.0-dev"
 ST_TENANT_ID = "000000000"
 # Phase-2 OAuth (dev): SELF_ORIGIN = dev worker origin; ACCESS_* are wrangler secrets (see prod).
 SELF_ORIGIN = "https://mcp-servicetitan-dev.lpeluso.workers.dev"
