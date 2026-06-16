@@ -180,11 +180,15 @@ describe('list_technicians_available', () => {
     expect(result.technicians).toBeDefined();
   });
 
-  it('passes date filter', async () => {
+  it('hits the settings roster endpoint and warns that date is ignored', async () => {
     const env = makeEnv(liveOk([]));
-    await list_technicians_available.handler(env, { date: '2026-05-01' }, CTX);
+    const result: any = await list_technicians_available.handler(env, { date: '2026-05-01' }, CTX);
     const [url] = env.ST_PROXY.fetch.mock.calls[0];
-    expect(url).toContain('2026-05-01');
+    // ST has no dispatch availability-by-date route; we list the active roster
+    // from /settings/v2/.../technicians and surface the date as a warning.
+    expect(url).toContain('settings%2Fv2');
+    expect(url).not.toContain('2026-05-01');
+    expect(result._warnings?.some((w: string) => w.startsWith('date_ignored'))).toBe(true);
   });
 });
 

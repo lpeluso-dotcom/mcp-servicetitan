@@ -21,7 +21,6 @@ import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
 import { endpointsHandler, endpointsCoverageHandler } from './routes/admin-endpoints';
 import { handleWebhook } from './webhook-ingest';
-import { withTenantRewrite } from './tenant';
 import { createOAuthProvider, handleOAuthRoute } from './oauth';
 
 // Durable Object classes must be exported from the worker entry point.
@@ -270,7 +269,7 @@ async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContex
         if (!conn) return unauthorizedConnectorResponse();
         reqCtx = { actor: conn.owner, role: conn.role };
       }
-      const runtimeEnv = withTenantRewrite(env);
+      const runtimeEnv = env; // tenant placeholder resolution is done at each data-helper call site (readST/stRead/write-factory)
       const server = buildServer(runtimeEnv, execCtx, reqCtx);
       const handler = createMcpHandler(server, { route: '/mcp', corsOptions: CORS_OPTIONS });
       const rewrittenUrl = new URL(request.url);
@@ -301,7 +300,7 @@ async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContex
       return unauthorizedMcpResponse();
     }
     const reqCtx: RequestContext = { actor: auth.actor, role: auth.role };
-    const runtimeEnv = withTenantRewrite(env);
+    const runtimeEnv = env; // tenant placeholder resolution is done at each data-helper call site (readST/stRead/write-factory)
 
     const server = buildServer(runtimeEnv, execCtx, reqCtx);
     const handler = createMcpHandler(server, {
@@ -319,7 +318,7 @@ const oauthApiHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const props = (ctx as unknown as { props?: { email?: string } }).props;
     const reqCtx: RequestContext = { actor: props?.email ?? 'oauth', role: 'readonly' };
-    const runtimeEnv = withTenantRewrite(env);
+    const runtimeEnv = env; // tenant placeholder resolution is done at each data-helper call site (readST/stRead/write-factory)
     const server = buildServer(runtimeEnv, ctx, reqCtx);
     const handler = createMcpHandler(server, { route: '/mcp-oauth', corsOptions: CORS_OPTIONS });
     return handler(request, runtimeEnv, ctx);
