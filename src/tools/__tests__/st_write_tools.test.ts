@@ -306,3 +306,67 @@ describe('pricebook payload transform — name→displayName, categoryId→categ
     expect(result.payload).not.toHaveProperty('categoryId');
   });
 });
+
+// ── v1.7.0 — full pricebook-service field surface ────────────
+// Adds hours, isLabor, taxable, account, paysCommission, memberPrice,
+// useStaticPrices (plural), and multi-category support to st_create_service +
+// st_patch_service. Drops the silently-dropped singular useStaticPrice.
+
+describe('pricebook full-field surface — new in v1.7.0', () => {
+  it('toStPricebookPayload passes through hours/isLabor/taxable/account/paysCommission/memberPrice/useStaticPrices verbatim', async () => {
+    const { toStPricebookPayload } = await import('../pricebook-payload');
+    const out = toStPricebookPayload({
+      name: 'X', categoryId: 5,
+      hours: 0.5, isLabor: true, taxable: true, account: 'Revenue',
+      paysCommission: false, memberPrice: 89, useStaticPrices: true, price: 89,
+    });
+    expect(out).toMatchObject({
+      displayName: 'X', categories: [5],
+      hours: 0.5, isLabor: true, taxable: true, account: 'Revenue',
+      paysCommission: false, memberPrice: 89, useStaticPrices: true, price: 89,
+    });
+  });
+
+  it('multi-cat: categories[] wins over categoryId when both passed', async () => {
+    const { toStPricebookPayload } = await import('../pricebook-payload');
+    const out: any = toStPricebookPayload({ name: 'X', categoryId: 5, categories: [5, 7] });
+    expect(out.categories).toEqual([5, 7]);
+    expect(out).not.toHaveProperty('categoryId');
+  });
+
+  it('multi-cat: categoryId still works alone (back-compat)', async () => {
+    const { toStPricebookPayload } = await import('../pricebook-payload');
+    const out: any = toStPricebookPayload({ name: 'X', categoryId: 5 });
+    expect(out.categories).toEqual([5]);
+    expect(out).not.toHaveProperty('categoryId');
+  });
+
+  it('toStPricebookPayload strips singular useStaticPrice (belt-and-suspenders)', async () => {
+    const { toStPricebookPayload } = await import('../pricebook-payload');
+    const out: any = toStPricebookPayload({ name: 'X', categoryId: 5, useStaticPrice: true });
+    expect(out).not.toHaveProperty('useStaticPrice');
+  });
+
+  it('st_create_service multi-cat round-trip: categories[1,2] → categories:[1,2] in dryRun payload', async () => {
+    const env = makeEnv(dryRunFetch());
+    const result: any = await st_create_service.handler(env,
+      { name: 'Lab Fee', categories: [1, 2], useStaticPrices: true, price: 89, hours: 0, isLabor: false }, CTX);
+    expect(result.payload).toMatchObject({
+      displayName: 'Lab Fee', categories: [1, 2], useStaticPrices: true, price: 89, hours: 0, isLabor: false,
+    });
+  });
+
+  it('st_create_service requires categoryId or categories', async () => {
+    const env = makeEnv(dryRunFetch());
+    await expect(
+      st_create_service.handler(env, { name: 'X' } as any, CTX)
+    ).rejects.toThrow(/categor/i);
+  });
+
+  it('st_patch_service accepts new fields without id-only validation tripping', async () => {
+    const env = makeEnv(dryRunFetch());
+    const result: any = await st_patch_service.handler(env,
+      { id: 1, hours: 1.5, isLabor: true }, CTX);
+    expect(result.payload).toMatchObject({ hours: 1.5, isLabor: true });
+  });
+});

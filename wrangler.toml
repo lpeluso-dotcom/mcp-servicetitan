@@ -36,7 +36,7 @@ binding = "ST_PROXY"
 service = "your-servicetitan-proxy"
 
 [vars]
-MCP_SERVICE_VERSION = "1.6.0"
+MCP_SERVICE_VERSION = "1.7.0"
 ST_TENANT_ID = "000000000"
 
 # Secrets (set with `wrangler secret put`):
@@ -69,7 +69,7 @@ enabled = true
 cpu_ms = 50
 
 [env.dev.vars]
-MCP_SERVICE_VERSION = "1.6.0-dev"
+MCP_SERVICE_VERSION = "1.7.0-dev"
 ST_TENANT_ID = "000000000"
 
 [[env.dev.durable_objects.bindings]]
