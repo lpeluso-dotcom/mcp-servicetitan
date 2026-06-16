@@ -17,6 +17,7 @@
     "preflight:dev": "bash scripts/preflight.sh --env dev"
   },
   "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.8.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "agents": "^0.13.2",
     "hono": "^4.12.23",

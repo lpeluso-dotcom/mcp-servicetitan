@@ -22,6 +22,7 @@ import { auditHealthHandler } from './routes/admin-health-audit';
 import { endpointsHandler, endpointsCoverageHandler } from './routes/admin-endpoints';
 import { handleWebhook } from './webhook-ingest';
 import { withTenantRewrite } from './tenant';
+import { createOAuthProvider, handleOAuthRoute } from './oauth';
 
 // Durable Object classes must be exported from the worker entry point.
 export { StRateLimiter } from './durable/st-rate-limiter';
@@ -240,9 +241,18 @@ function unauthorizedConnectorResponse(): Response {
 }
 
 // ─── Export ───────────────────────────────────────────────────
-export default {
-  async fetch(request: Request, env: Env, execCtx: ExecutionContext): Promise<Response> {
+// defaultHandler for the OAuthProvider: the worker's existing router. The provider serves
+// /.well-known/oauth-authorization-server + /token + /register and Bearer-gates /mcp-oauth via the
+// apiHandler; every other path (Hono /health|/admin|/webhooks, keyed /mcp, disabled /c/<token>/mcp)
+// falls through here unchanged.
+async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // ── OAuth upstream dance (/authorize + /callback), federated to Cloudflare Access (M365). ──
+    // Must run BEFORE the Hono fallthrough (which would 404 these). The provider advertises these
+    // endpoints; they're implemented in src/oauth.ts.
+    const oauthRoute = await handleOAuthRoute(request, env, url);
+    if (oauthRoute) return oauthRoute;
 
     // ── /c/<token>/mcp — Claude Desktop custom-connector entry (QUA, Jessica Hunt, READ-ONLY). ──
     // Desktop's connector UI accepts only a URL (no custom header), so the secret lives in the URL
@@ -299,5 +309,28 @@ export default {
       corsOptions: CORS_OPTIONS,
     });
     return handler(request, runtimeEnv, execCtx);
+}
+
+// ─── apiHandler: OAuth-Bearer-gated READ-ONLY MCP on /mcp-oauth (Phase-2) ──────────────────────
+// The OAuthProvider validated the downstream token before this runs and set the authenticated
+// identity on ctx.props. OAuth callers are always 'readonly' (the grant is only ever minted for an
+// allow-listed user in /callback). route MUST equal apiRoute ('/mcp-oauth') or the transport 404s.
+const oauthApiHandler = {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const props = (ctx as unknown as { props?: { email?: string } }).props;
+    const reqCtx: RequestContext = { actor: props?.email ?? 'oauth', role: 'readonly' };
+    const runtimeEnv = withTenantRewrite(env);
+    const server = buildServer(runtimeEnv, ctx, reqCtx);
+    const handler = createMcpHandler(server, { route: '/mcp-oauth', corsOptions: CORS_OPTIONS });
+    return handler(request, runtimeEnv, ctx);
   },
 };
+
+// ─── Default export (Phase-2 OAuth) ───────────────────────────────────────────────────────────
+// Delegate ONLY fetch to the provider; the named Durable Object exports above are independent and
+// preserved. (Do NOT `export default new OAuthProvider(...)` — that form drops named exports.)
+const oauthProvider = createOAuthProvider(defaultFetch, oauthApiHandler);
+
+export default {
+  fetch: oauthProvider.fetch.bind(oauthProvider),
+} satisfies ExportedHandler<Env>;
