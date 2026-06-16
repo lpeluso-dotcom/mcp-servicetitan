@@ -5,7 +5,10 @@
 import type { Env } from './env';
 import { verifyJwt } from './jwt';
 
-export type Role = 'admin' | 'default' | 'lockdown';
+export type Role = 'admin' | 'default' | 'lockdown' | 'readonly';
+
+/** The roles a connector token may map to. 'readonly' is the no-write reporting surface. */
+const CONNECTOR_ROLES: readonly Role[] = ['readonly', 'default'];
 
 export interface AuthResult {
   authenticated: boolean;
@@ -106,6 +109,52 @@ export async function resolveAuth(request: Request, env: Env): Promise<AuthResul
 
 export async function resolveRole(request: Request, env: Env): Promise<Role> {
   return (await resolveAuth(request, env)).role;
+}
+
+export interface ConnectorAuth {
+  role: Role;
+  owner: string;
+}
+
+/**
+ * Resolve a Claude Desktop connector token (the `/c/<token>/mcp` route). Desktop's connector
+ * UI accepts only a URL — it cannot send X-Sync-Key — so the secret lives in the URL path and
+ * IS the credential. We SHA-256 the presented token and look it up in mcp_auth_tokens (same
+ * hash-in-D1 pattern as mcp_roles); a hit that hasn't expired returns its role + owner.
+ *
+ * Fail-closed: unknown/expired token, missing table, or any D1 error ⇒ null (deny). The role
+ * is constrained to CONNECTOR_ROLES (never 'admin' via this path), defaulting to 'readonly' —
+ * so a misconfigured row can only ever GRANT LESS, never escalate to writes.
+ */
+export async function verifyConnectorToken(
+  token: string | undefined,
+  env: Env,
+): Promise<ConnectorAuth | null> {
+  if (!token || token.length < 16) return null; // reject empty / too-short tokens
+  let hashHex: string;
+  try {
+    const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+    hashHex = Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  } catch {
+    return null;
+  }
+  try {
+    const row = await env.DB.prepare(
+      'SELECT role, owner, expires_at FROM mcp_auth_tokens WHERE token_hash = ?',
+    )
+      .bind(hashHex)
+      .first<{ role: string; owner: string | null; expires_at: number | null }>();
+    if (!row) return null;
+    if (row.expires_at != null && row.expires_at < Date.now()) return null; // expired
+    const role: Role = (CONNECTOR_ROLES as readonly string[]).includes(row.role)
+      ? (row.role as Role)
+      : 'readonly';
+    return { role, owner: safeActorHeader(row.owner) };
+  } catch {
+    return null; // table missing / D1 error ⇒ deny
+  }
 }
 
 export function authHeaders(env: Env, correlation: string, actor: string): Record<string, string> {
