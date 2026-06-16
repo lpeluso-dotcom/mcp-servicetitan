@@ -23,6 +23,7 @@
 import type { Env } from './env';
 import { authHeaders } from './auth';
 import { McpError, mapUpstreamStatus } from './errors';
+import { rewriteTenantPlaceholders } from './tenant';
 
 export interface ReadSTContext {
   actor: string;
@@ -61,7 +62,13 @@ export async function readST<T = unknown>(
   endpoint: string,
   query?: Record<string, unknown>,
 ): Promise<T> {
-  const url = buildUrl(endpoint, query);
+  // Resolve the /tenant/000000000/ placeholder to the real tenant HERE, at the
+  // call site, using env.ST_TENANT_ID directly — the same value job_cost_actuals
+  // interpolates successfully. The withTenantRewrite ST_PROXY.fetch wrapper does
+  // not reliably substitute on this path in prod; resolving up front is robust
+  // and independent of that wrapper. No-op when ST_TENANT_ID is the placeholder
+  // (dev/test), so existing 000000000 URL assertions still hold.
+  const url = buildUrl(rewriteTenantPlaceholders(env, endpoint), query);
   const resp = await env.ST_PROXY.fetch(url, {
     headers: authHeaders(env, ctx.correlation, ctx.actor),
   });
@@ -88,7 +95,7 @@ export async function readSTPost<T = unknown>(
   endpoint: string,
   body: unknown,
 ): Promise<T> {
-  const url = buildUrl(endpoint);
+  const url = buildUrl(rewriteTenantPlaceholders(env, endpoint));
   const resp = await env.ST_PROXY.fetch(url, {
     method: 'POST',
     headers: { ...authHeaders(env, ctx.correlation, ctx.actor), 'content-type': 'application/json' },
