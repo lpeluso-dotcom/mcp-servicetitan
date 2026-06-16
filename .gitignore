@@ -9,3 +9,7 @@ node_modules/
 dist/
 *.log
 .DS_Store
+
+# Generated ST probe artifacts — contain customer PII, never commit
+scripts/probe-logs/
+scripts/probe-snapshots/
