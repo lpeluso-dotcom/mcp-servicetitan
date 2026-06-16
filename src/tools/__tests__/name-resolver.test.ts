@@ -22,10 +22,13 @@ const TECH_ROWS = [
 ];
 
 function makeEnv(d1Rows: { id: number; name: string }[], cacheStore = new Map<string, string>()): any {
-  const queryD1Resp = { rows: d1Rows, updatedAt: Date.now() };
+  // name-resolver now reads via readD1 (src/d1.ts → servicetitan-proxy /api/sql/read),
+  // whose success shape is { success: true, results: Row[] } — not the dead
+  // /internal/query-d1 { rows, updatedAt } contract.
+  const readD1Resp = { success: true, results: d1Rows };
   return {
     ST_PROXY: {
-      fetch: vi.fn(async () => new Response(JSON.stringify(queryD1Resp), { status: 200 })),
+      fetch: vi.fn(async () => new Response(JSON.stringify(readD1Resp), { status: 200 })),
     },
     DB: {
       prepare: vi.fn().mockImplementation((sql: string) => ({
