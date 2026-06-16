@@ -42,19 +42,19 @@ export async function readD1<Row = Record<string, unknown>>(
     body: JSON.stringify({ sql: trimmed, params }),
   });
 
-  if (!resp.ok) {
-    throw new Error(`readD1: proxy returned ${resp.status}`);
-  }
-
-  const data = (await resp.json()) as {
-    success: boolean;
+  // taylor-ai returns { success:false, error } as a JSON body even on a 500
+  // (e.g. "no such column: name"). Parse the body BEFORE deciding to throw so
+  // the real D1 error is surfaced instead of an opaque "proxy returned 500".
+  const data = (await resp.json().catch(() => null)) as {
+    success?: boolean;
     results?: Row[];
     meta?: unknown;
     error?: string;
-  };
+  } | null;
 
-  if (!data.success) {
-    throw new Error(`readD1: ${data.error ?? 'unknown error'}`);
+  if (!resp.ok || !data || !data.success) {
+    const detail = data?.error ?? `proxy returned ${resp.status}`;
+    throw new Error(`readD1: ${detail}`);
   }
 
   return { rows: data.results ?? [], meta: data.meta };

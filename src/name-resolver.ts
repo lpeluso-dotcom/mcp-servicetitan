@@ -1,8 +1,9 @@
 // ============================================================
 // name-resolver.ts — v1.4 BU + technician name → ID resolver.
 //
-// Looks up business_units / technicians via the upstream proxy's queryD1 RPC
-// (read-router.queryD1 contract) and memoizes the index in-process
+// Looks up business_units / technicians via the shared readD1 helper
+// (src/d1.ts → servicetitan-proxy /api/sql/read, the proven D1-read path)
+// and memoizes the index in-process
 // for the lifetime of the worker isolate. Tier match: exact >
 // prefix > contains; first tier with one or more hits resolves.
 //
@@ -16,7 +17,7 @@
 // ============================================================
 
 import type { Env } from './env';
-import { authHeaders, newCorrelationId } from './auth';
+import { readD1 } from './d1';
 import { McpError } from './errors';
 
 export interface ResolutionResult {
@@ -59,19 +60,14 @@ async function loadIndex(env: Env, kind: Kind): Promise<IndexRow[]> {
 
   const promise = (async () => {
     const { sql } = KIND_CONFIG[kind];
-    const resp = await env.ST_PROXY.fetch('https://servicetitan-proxy/internal/query-d1', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...authHeaders(env, newCorrelationId(), 'mcp-servicetitan-name-resolver'),
-      },
-      body: JSON.stringify({ sql, params: [] }),
-    });
-    if (!resp.ok) {
-      throw new McpError('upstream_error', `name-resolver: queryD1 failed: ${resp.status}`);
+    try {
+      const { rows } = await readD1<IndexRow>(env, sql);
+      return rows;
+    } catch (e) {
+      // Preserve the upstream_error contract callers rely on, regardless of
+      // whether readD1 threw on non-2xx or a { success: false } body.
+      throw new McpError('upstream_error', `name-resolver: ${(e as Error).message}`);
     }
-    const data = await resp.json<{ rows: IndexRow[]; updatedAt: number | null }>();
-    return data.rows ?? [];
   })();
 
   indexCache.set(kind, promise);

@@ -27,7 +27,6 @@ interface Args {
 
 interface JobRow {
   job_id: number;
-  job_number: string | null;
   customer_id: number | null;
   business_unit: string | null;
   job_type: string | null;
@@ -116,7 +115,7 @@ export const job_cost_actuals: ToolDef<Args> = {
     const [jobRows, tsRows, apptRows, asgRows, estRows] = await Promise.all([
       readD1<JobRow>(
         env,
-        `SELECT job_id, job_number, customer_id, business_unit, job_type, job_status,
+        `SELECT job_id, customer_id, business_unit, job_type, job_status,
                 completed_date, revenue, project_id, modified_at
          FROM jobs WHERE job_id = ? LIMIT 1`,
         [jobId],
@@ -143,8 +142,10 @@ export const job_cost_actuals: ToolDef<Args> = {
       ),
       readD1<EstimateRow>(
         env,
-        `SELECT estimate_id, job_id, name, status, total, sold_by, active, modified_at
-         FROM estimates WHERE job_id = ? ORDER BY modified_at DESC`,
+        // taylor-ai estimates store the title as `summary` and the timestamp as
+        // `modified_date`; alias both so the EstimateRow shape stays stable.
+        `SELECT estimate_id, job_id, summary AS name, status, total, sold_by, active, modified_date AS modified_at
+         FROM estimates WHERE job_id = ? ORDER BY modified_date DESC`,
         [jobId],
       ),
     ]);
