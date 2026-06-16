@@ -100,9 +100,11 @@ export const opportunity_get: ToolDef<Args> = {
           where.push('project_id = ?');
           params.push(opp.project_id);
         }
+        // taylor-ai estimates: title is `summary`, timestamp is `modified_date`;
+        // alias both so the EstimateRow shape stays stable.
         const sql =
-          `SELECT estimate_id, job_id, project_id, name, status, total, sold_by, active, modified_at ` +
-          `FROM estimates WHERE (${where.join(' OR ')}) ORDER BY modified_at DESC LIMIT 25`;
+          `SELECT estimate_id, job_id, project_id, summary AS name, status, total, sold_by, active, modified_date AS modified_at ` +
+          `FROM estimates WHERE (${where.join(' OR ')}) ORDER BY modified_date DESC LIMIT 25`;
         const { rows: estRows } = await readD1<EstimateRow>(env, sql, params);
         estimates = estRows;
       }

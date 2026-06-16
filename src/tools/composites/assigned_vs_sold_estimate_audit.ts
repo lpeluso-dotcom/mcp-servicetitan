@@ -89,9 +89,10 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
     const startTs = args.startDate.length === 10 ? `${args.startDate}T00:00:00` : args.startDate;
     const endTs = args.endDate.length === 10 ? `${args.endDate}T23:59:59` : args.endDate;
 
+    // taylor-ai estimates store the timestamp as `modified_date` (not modified_at).
     const where: string[] = [
-      'e.modified_at >= ?',
-      'e.modified_at <= ?',
+      'e.modified_date >= ?',
+      'e.modified_date <= ?',
     ];
     const params: unknown[] = [startTs, endTs];
     if (args.status !== undefined) {
@@ -104,7 +105,7 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
     }
 
     const sql =
-      `SELECT e.estimate_id, e.job_id, e.status, e.total, e.sold_by, e.modified_at,
+      `SELECT e.estimate_id, e.job_id, e.status, e.total, e.sold_by, e.modified_date AS modified_at,
               j.business_unit AS job_business_unit, j.job_type,
               (SELECT GROUP_CONCAT(DISTINCT technician_name)
                  FROM appointment_assignments aa
@@ -112,7 +113,7 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
        FROM estimates e
        LEFT JOIN jobs j ON j.job_id = e.job_id
        WHERE ${where.join(' AND ')}
-       ORDER BY e.modified_at DESC
+       ORDER BY e.modified_date DESC
        LIMIT ?`;
 
     const { rows } = await readD1<EstimateAuditRow>(env, sql, [...params, limit * 3]);
