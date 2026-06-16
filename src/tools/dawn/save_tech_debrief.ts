@@ -33,6 +33,10 @@ interface Args {
 
 export const save_tech_debrief: ToolDef<Args> = {
   name: 'save_tech_debrief',
+  // A state mutation (INSERT into dawn_text_debriefs) — even though it's D1-only (no ST API
+  // call), it is NOT a read. Flag isWrite so the read-only / lockdown roles strip it; the
+  // default + admin roles (Dawn agent) are unaffected (they don't filter isWrite).
+  isWrite: true,
   description:
     'Save a tech debrief from an SMS conversation (Dawn agent). ' +
     'Idempotent on retell_chat_id — safe to call on Retell retry. ' +

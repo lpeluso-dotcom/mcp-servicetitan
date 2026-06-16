@@ -16,7 +16,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Env } from './env';
 import { TOOLS, toolsForRole } from './tools/index';
 import { registerTool, type RequestContext } from './tool-registry';
-import { resolveAuth } from './auth';
+import { resolveAuth, verifyConnectorToken } from './auth';
 import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
 import { endpointsHandler, endpointsCoverageHandler } from './routes/admin-endpoints';
@@ -170,14 +170,49 @@ function unauthorizedMcpResponse(): Response {
   );
 }
 
+// The finance/ops "skill" delivered inline to a read-only Desktop connector (Jessica Hunt).
+// Claude Desktop can't load Claude Code skills, so this context ships in the MCP `instructions`.
+const READONLY_INSTRUCTIONS = [
+  'You are a READ-ONLY ServiceTitan reporting assistant for Quality Service Company (QSC), an',
+  'HVAC / electrical / plumbing contractor (ServiceTitan tenant 431848990). Only read/lookup',
+  'tools are available — there is NO way to create, change, book, or delete anything in',
+  'ServiceTitan from this connector. If asked to make a change, explain that this is read-only.',
+  '',
+  'WHAT YOU CAN PULL (live ServiceTitan):',
+  '- Customers & jobs: find_customer, get_customer, get_customer_locations, list_customer_jobs,',
+  '  get_job, list_jobs_today, get_job_appointments, customer_snapshot.',
+  '- Money/AR: get_invoice, list_invoices_job, get_invoice_balance, list_unpaid_invoices.',
+  '- Estimates: list_estimates_job, get_estimate, assigned_vs_sold_estimate_audit.',
+  '- Dispatch & capacity: get_capacity, list_technicians_available, get_technician_shifts,',
+  '  dispatch_pro_utilization_list, tech_drive_time_summary.',
+  '- Memberships: list_memberships_active, list_memberships_expiring.',
+  '- Job costing & margin: job_cost_actuals, margin_audit, job_closeout_report.',
+  '- Payroll/timesheets: payroll_* tools. Opportunities: opportunities_list, opportunity_get.',
+  '- Reporting passthrough: st_run_report. Pricebook lookups: search_pricebook_*.',
+  '',
+  'IMPORTANT NOTES:',
+  '- Dynamic pricing: a pricebook item with a 0/blank price is NOT free — QSC prices',
+  '  dynamically at invoice time. Never report a pricebook item as "unpriced".',
+  '- For company-wide financials (revenue by division, P&L, A/R aging from QuickBooks), prefer',
+  "  the separate QSC Finance & Ops (Woz) connector — it's the conformed warehouse + QBO.",
+  '- Prefer the composite tools (customer_snapshot, job_closeout_report, margin_audit) over many',
+  '  small calls when answering a broad question.',
+].join('\n');
+
 // ─── Per-request McpServer build ──────────────────────────────
 // Required per CF docs: post-SDK-1.26.0 a shared global McpServer is a
 // known security vuln (cross-request state bleed). Build one per request.
 function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: RequestContext): McpServer {
-  const server = new McpServer({
-    name: 'mcp-servicetitan',
-    version: env.MCP_SERVICE_VERSION,
-  });
+  // The read-only connector (Jessica) gets a branded name + inline instructions; every other
+  // caller keeps the historical surface unchanged.
+  const readonly = reqCtx.role === 'readonly';
+  const server = new McpServer(
+    {
+      name: readonly ? 'QSC ServiceTitan (read-only)' : 'mcp-servicetitan',
+      version: env.MCP_SERVICE_VERSION,
+    },
+    readonly ? { instructions: READONLY_INSTRUCTIONS } : undefined,
+  );
   const visible = toolsForRole(reqCtx.role);
   for (const tool of visible) {
     registerTool(server, tool, env, execCtx, reqCtx);
@@ -185,10 +220,53 @@ function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: RequestContext
   return server;
 }
 
+// Plain 401 for the connector route — deliberately NO www-authenticate header (a challenge
+// would make Claude attempt an OAuth flow). CORS headers included so claude.ai surfaces the
+// error rather than a CORS failure. The token is never echoed or logged.
+function unauthorizedConnectorResponse(): Response {
+  return new Response(
+    JSON.stringify({ error: 'unauthorized', message: 'invalid or expired connector token' }),
+    {
+      status: 401,
+      headers: {
+        'content-type': 'application/json',
+        'access-control-allow-origin': CORS_OPTIONS.origin,
+        'access-control-allow-methods': CORS_OPTIONS.methods,
+        'access-control-allow-headers': CORS_OPTIONS.headers,
+        'access-control-expose-headers': CORS_OPTIONS.exposeHeaders,
+      },
+    }
+  );
+}
+
 // ─── Export ───────────────────────────────────────────────────
 export default {
   async fetch(request: Request, env: Env, execCtx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // ── /c/<token>/mcp — Claude Desktop custom-connector entry (QUA, Jessica Hunt, READ-ONLY). ──
+    // Desktop's connector UI accepts only a URL (no custom header), so the secret lives in the URL
+    // path and IS the credential. A valid token resolves to its role (Jessica = 'readonly', which
+    // registers ZERO write tools) and dispatches through the SAME per-request McpServer flow after
+    // rewriting the path to /mcp (the SDK handler is bound to that route). Invalid/expired token →
+    // plain 401 with NO www-authenticate (so Claude does not attempt OAuth). Token is never logged.
+    const connMatch = url.pathname.match(/^\/c\/([A-Za-z0-9_-]+)\/mcp$/);
+    if (connMatch) {
+      let reqCtx: RequestContext;
+      if (request.method === 'OPTIONS') {
+        reqCtx = { actor: 'preflight', role: 'readonly' };
+      } else {
+        const conn = await verifyConnectorToken(connMatch[1], env);
+        if (!conn) return unauthorizedConnectorResponse();
+        reqCtx = { actor: conn.owner, role: conn.role };
+      }
+      const runtimeEnv = withTenantRewrite(env);
+      const server = buildServer(runtimeEnv, execCtx, reqCtx);
+      const handler = createMcpHandler(server, { route: '/mcp', corsOptions: CORS_OPTIONS });
+      const rewrittenUrl = new URL(request.url);
+      rewrittenUrl.pathname = '/mcp';
+      return handler(new Request(rewrittenUrl.toString(), request), runtimeEnv, execCtx);
+    }
 
     // Dispatch non-MCP routes to Hono.
     if (

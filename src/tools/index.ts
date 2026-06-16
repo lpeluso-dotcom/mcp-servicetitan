@@ -226,13 +226,16 @@ export function findTool(name: string): ToolDef<any> | undefined {
 
 /**
  * Filter tools by caller role.
- *   - 'lockdown' (v1.5.2): read-only mode. Strips every isWrite=true tool and
- *     adminOnly tools. Composites stay (they're reads with extra D1 work).
+ *   - 'readonly' (QUA, Jessica Hunt Desktop connector): read-only reporting surface. Strips
+ *     every isWrite=true tool and adminOnly tools — identical safe set as 'lockdown', but a
+ *     PER-CONNECTOR role (not the global incident switch). The 18 write tools are never
+ *     registered, so a readonly caller cannot write to ServiceTitan (removal, not gating).
+ *   - 'lockdown' (v1.5.2): same read-only filter, applied GLOBALLY via MCP_LOCKDOWN.
  *   - 'admin':   full catalog including st_call escape hatch.
  *   - 'default': everything except adminOnly tools.
  */
-export function toolsForRole(role: 'default' | 'admin' | 'lockdown'): readonly ToolDef<any>[] {
-  if (role === 'lockdown') return TOOLS.filter((t) => !t.isWrite && !t.adminOnly);
+export function toolsForRole(role: 'default' | 'admin' | 'lockdown' | 'readonly'): readonly ToolDef<any>[] {
+  if (role === 'lockdown' || role === 'readonly') return TOOLS.filter((t) => !t.isWrite && !t.adminOnly);
   if (role === 'admin') return TOOLS;
   return TOOLS.filter((t) => !t.adminOnly);
 }

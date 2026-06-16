@@ -45,6 +45,7 @@ describe('tool registry', () => {
       'dismiss_estimate',
       'hold_appointment',
       'reschedule_appointment',
+      'save_tech_debrief',
       'sell_estimate',
       'st_create_material',
       'st_create_service',
