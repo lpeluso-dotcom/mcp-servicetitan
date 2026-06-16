@@ -23,6 +23,7 @@ import type { ZodTypeAny } from 'zod';
 import { z } from 'zod';
 import { McpError } from './errors';
 import { WriteGate } from './write-gate';
+import { rewriteTenantPlaceholders } from './tenant';
 import { cachePurgeNamespace } from './cache';
 import type { ToolDef } from './tools/index';
 import type { Env } from './env';
@@ -121,7 +122,11 @@ export function defineWriteTool<TArgs extends BaseWriteArgs>(
       const confirmation_token = args.confirmation_token;
       const businessArgs = spec.businessArgs ? spec.businessArgs(args) : defaultBusinessArgs(args);
       const gate = new WriteGate(env);
-      const endpoint = spec.endpoint(args);
+      // Resolve /tenant/000000000/ to the real tenant at the call site before the
+      // write reaches /api/st/write. Previously this relied on the (unreliable,
+      // now-retired) withTenantRewrite wrapper, so confirmed writes could be sent
+      // to tenant 000000000.
+      const endpoint = rewriteTenantPlaceholders(env, spec.endpoint(args));
       const payload = spec.payload(args);
 
       if (dryRun) {

@@ -9,11 +9,14 @@ interface Args {
   skillBasedAvailability?: boolean;
 }
 
-// T3 catalog correction: get_capacity is a POST (not GET).
-// ST /dispatch/v2/tenant/{t}/capacity-planning requires a POST body.
+// get_capacity POSTs to ST /dispatch/v2/tenant/{t}/capacity. The previously-used
+// /capacity-planning route does not exist in ST (404 "Unable to match an operation").
+// NOTE: this now hits the SAME ST /capacity operation as st_get_capacity_slots — the two
+// overlap and should be deduped in a follow-up; and ST must grant the /capacity scope to
+// this tenant's token (currently 403) before either tool returns data.
 export const get_capacity: ToolDef<Args> = {
   name: 'get_capacity',
-  description: 'Get dispatch capacity for business units over a date range. Note: this is a POST call to ST (not GET — the body carries the filter params). **Returns BU capacity counts** (`/capacity-planning` endpoint). For SLOT discovery, see `st_get_capacity_slots` which calls `/capacity`. Source: live ST (computed endpoint).',
+  description: 'Get dispatch capacity for business units over a date range (POST to ST /dispatch/v2/.../capacity; the body carries the filters). Overlaps st_get_capacity_slots — both call ST /capacity. Source: live ST.',
   zodSchema: {
     businessUnitIds: z.array(z.number().int().positive()).min(1).describe('Business unit IDs to check capacity for'),
     startDate: z.string().describe('Start date (YYYY-MM-DD)'),
@@ -22,21 +25,22 @@ export const get_capacity: ToolDef<Args> = {
   },
   stEndpoint: {
     method: 'POST',
-    path: '/dispatch/v2/tenant/{tid}/capacity-planning',
+    path: '/dispatch/v2/tenant/{tid}/capacity',
     source: 'live',
   },
   async handler(env, args, { actor, correlation }) {
+    // ST /capacity expects startsOnOrAfter/endsOnOrBefore (not startDate/endDate).
     const body = {
       businessUnitIds: args.businessUnitIds,
-      startDate: args.startDate,
-      endDate: args.endDate,
+      startsOnOrAfter: args.startDate,
+      endsOnOrBefore: args.endDate,
       skillBasedAvailability: args.skillBasedAvailability ?? false,
     };
 
     const data = await readSTPost<unknown>(
       env,
       { actor, correlation },
-      '/dispatch/v2/tenant/000000000/capacity-planning',
+      '/dispatch/v2/tenant/000000000/capacity',
       body,
     );
     return { capacity: data, _source: 'live' };

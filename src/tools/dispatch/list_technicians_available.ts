@@ -14,8 +14,8 @@ interface Args {
 
 export const list_technicians_available: ToolDef<Args> = {
   name: 'list_technicians_available',
-  description: 'List technicians available for dispatch on a given date. v1.4 accepts businessUnitName as an alternative to businessUnitId. Source: live ST.',
-  stEndpoint: { method: 'GET', path: '/dispatch/v2/tenant/{tid}/technicians', source: 'live' },
+  description: 'List the active technician roster from ST Settings, optionally resolving a business-unit name. NOTE: ST has no dispatch "available technicians by date" operation, so this returns the active roster; the `date` arg does NOT filter by availability and business-unit filtering is not supported by the roster endpoint (both surface as _warnings). Source: live ST (settings/technicians).',
+  stEndpoint: { method: 'GET', path: '/settings/v2/tenant/{tid}/technicians', source: 'live' },
   zodSchema: {
     date: z.string().optional().describe('Date to check availability (YYYY-MM-DD, default: today)'),
     businessUnitId: z.number().int().positive().optional().describe('Filter by business unit ID'),
@@ -36,17 +36,22 @@ export const list_technicians_available: ToolDef<Args> = {
       if (r.ambiguous) warnings.push(`businessUnit_name_ambiguous: chose ${r.id} for "${args.businessUnitName}"`);
     }
 
+    // ST Settings /technicians is the technician ROSTER endpoint — it has no
+    // availability-date or business-unit filter, so surface those as warnings
+    // instead of silently dropping them. The old /dispatch/v2/.../technicians
+    // route never existed (404 "Unable to match an operation").
     const query: Record<string, unknown> = {
+      active: true,
       page: args.page ?? 1,
       pageSize: args.pageSize ?? 50,
     };
-    if (args.date) query.requestedOn = args.date;
-    if (buId !== undefined) query.businessUnitId = buId;
+    if (args.date) warnings.push('date_ignored: ST has no technician-availability-by-date endpoint; returning the active roster');
+    if (buId !== undefined) warnings.push(`businessUnit_ignored: ST Settings technicians is not filterable by business unit (resolved ${buId})`);
 
     const data = await readST<{ data?: unknown[] }>(
       env,
       { actor, correlation },
-      '/dispatch/v2/tenant/000000000/technicians',
+      '/settings/v2/tenant/000000000/technicians',
       query,
     );
     return {

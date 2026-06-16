@@ -7,7 +7,7 @@ interface Args { technicianId: number; startsOnOrAfter?: string; startsBefore?: 
 export const get_technician_shifts: ToolDef<Args> = {
   name: 'get_technician_shifts',
   description: 'Get scheduled shifts for a technician. Source: live ST (shifts are computed, not in D1).',
-  stEndpoint: { method: 'GET', path: '/dispatch/v2/tenant/{tid}/shifts', source: 'live' },
+  stEndpoint: { method: 'GET', path: '/dispatch/v2/tenant/{tid}/technician-shifts', source: 'live' },
   zodSchema: {
     technicianId: z.number().int().positive().describe('ST technician ID'),
     startsOnOrAfter: z.string().optional().describe('Filter shifts starting on or after this date (ISO 8601)'),
@@ -27,7 +27,7 @@ export const get_technician_shifts: ToolDef<Args> = {
     const data = await readST<{ data?: unknown[] }>(
       env,
       { actor, correlation },
-      '/dispatch/v2/tenant/000000000/shifts',
+      '/dispatch/v2/tenant/000000000/technician-shifts',
       query,
     );
     return { shifts: data.data ?? [], _source: 'live' };

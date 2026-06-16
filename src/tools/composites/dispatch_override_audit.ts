@@ -1,8 +1,16 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
 import { readST } from '../../st';
+import { readD1 } from '../../d1';
 import { resolveBusinessUnit, resolveTechnician } from '../../name-resolver';
 import type { ToolDef } from '../index';
+
+interface AssignmentRow {
+  appointment_id: number;
+  technician_id: number;
+  technician_name: string | null;
+  status: string | null;
+}
 
 interface Args {
   from: string;
@@ -65,6 +73,26 @@ export const dispatch_override_audit: ToolDef<Args> = {
     );
     const appointments = data.data ?? [];
 
+    // ST /jpm/v2/appointments does NOT carry technician assignments, so join the
+    // synced D1 appointment_assignments table to populate `technicians` per
+    // appointment (previously `appt.technicians` was always undefined → []).
+    const techsByAppt = new Map<number, AssignmentRow[]>();
+    const apptIds = appointments.map((a) => a.id).filter((id: unknown): id is number => typeof id === 'number');
+    if (apptIds.length > 0) {
+      const placeholders = apptIds.map(() => '?').join(',');
+      const { rows } = await readD1<AssignmentRow>(
+        env,
+        `SELECT appointment_id, technician_id, technician_name, status
+         FROM appointment_assignments WHERE appointment_id IN (${placeholders})`,
+        apptIds,
+      );
+      for (const r of rows) {
+        const arr = techsByAppt.get(r.appointment_id) ?? [];
+        arr.push(r);
+        techsByAppt.set(r.appointment_id, arr);
+      }
+    }
+
     // ST-77 optional join: batch-fetch parent jobs to get isAutoDispatched.
     let autoDispatchedByJobId: Map<number, boolean> | null = null;
     if (includeAutoDispatchedFlag && appointments.length > 0) {
@@ -85,7 +113,7 @@ export const dispatch_override_audit: ToolDef<Args> = {
         appointmentId: appt.id,
         jobId: appt.jobId,
         start: appt.start,
-        technicians: appt.technicians ?? [],
+        technicians: techsByAppt.get(appt.id) ?? [],
       };
       if (autoDispatchedByJobId) {
         row.isAutoDispatched = autoDispatchedByJobId.get(appt.jobId) ?? null;

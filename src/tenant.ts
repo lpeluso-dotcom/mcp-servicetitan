@@ -7,6 +7,13 @@ function configuredTenantId(env: Pick<Env, 'ST_TENANT_ID'>): string {
   return tenantId || PUBLIC_TENANT_ID_PLACEHOLDER;
 }
 
+// Resolve the public /tenant/000000000/ placeholder to the real ST_TENANT_ID.
+// Call this at every data-helper call site (readST/readSTPost, stRead, the write
+// factory, st_call). It is a no-op in dev/test where ST_TENANT_ID is the placeholder.
+//
+// NOTE: a previous `withTenantRewrite(env)` wrapped env.ST_PROXY.fetch to do this
+// transparently, but it did not substitute reliably at runtime and leaked
+// 000000000 to ST (404s). It was retired in favor of explicit call-site resolution.
 export function rewriteTenantPlaceholders(
   env: Pick<Env, 'ST_TENANT_ID'>,
   value: string
@@ -14,32 +21,4 @@ export function rewriteTenantPlaceholders(
   const tenantId = configuredTenantId(env);
   if (tenantId === PUBLIC_TENANT_ID_PLACEHOLDER) return value;
   return value.replaceAll(PUBLIC_TENANT_ID_PLACEHOLDER, tenantId);
-}
-
-function rewriteInput(input: RequestInfo | URL, env: Env): RequestInfo | URL {
-  if (typeof input === 'string') return rewriteTenantPlaceholders(env, input);
-  if (input instanceof URL) return new URL(rewriteTenantPlaceholders(env, input.toString()));
-  if (input instanceof Request) {
-    return new Request(rewriteTenantPlaceholders(env, input.url), input);
-  }
-  return input;
-}
-
-function rewriteInit(init: RequestInit | undefined, env: Env) {
-  if (!init || typeof init.body !== 'string') return init;
-  return {
-    ...init,
-    body: rewriteTenantPlaceholders(env, init.body),
-  };
-}
-
-export function withTenantRewrite(env: Env): Env {
-  return {
-    ...env,
-    ST_PROXY: {
-      fetch(input: RequestInfo | URL, init?: RequestInit) {
-        return env.ST_PROXY.fetch(rewriteInput(input, env), rewriteInit(init, env));
-      },
-    } as Fetcher,
-  };
 }

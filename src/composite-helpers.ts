@@ -13,6 +13,7 @@
 // ============================================================
 
 import type { Env } from './env';
+import { rewriteTenantPlaceholders } from './tenant';
 
 /**
  * Extract the `data` payload from a servicetitan-proxy/ST response shape, falling back
@@ -37,7 +38,10 @@ export function stRead(
   endpoint: string,
   signal?: AbortSignal
 ): Promise<Response> {
-  const url = `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(endpoint)}`;
+  // Resolve the /tenant/000000000/ placeholder at the call site (authoritative;
+  // the withTenantRewrite ST_PROXY wrapper was unreliable and has been retired).
+  // No-op when the caller already interpolated the real env.ST_TENANT_ID.
+  const url = `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(rewriteTenantPlaceholders(env, endpoint))}`;
   return env.ST_PROXY.fetch(url, signal ? { headers, signal } : { headers });
 }
 

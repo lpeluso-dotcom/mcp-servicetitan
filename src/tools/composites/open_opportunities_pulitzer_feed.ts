@@ -117,15 +117,15 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
               o.location_name, o.location_address,
               o.created_date, o.modified_date, o.job_completed_on,
               e.estimate_id      AS latest_estimate_id,
-              e.name             AS latest_estimate_name,
+              e.summary          AS latest_estimate_name,
               e.status           AS latest_estimate_status,
               e.total            AS latest_estimate_total,
-              e.modified_at      AS latest_estimate_modified_at
+              e.modified_date    AS latest_estimate_modified_at
        FROM opportunities o
        LEFT JOIN estimates e ON e.estimate_id = (
          SELECT estimate_id FROM estimates
          WHERE (job_id = o.job_id OR project_id = o.project_id) AND active = 1
-         ORDER BY modified_at DESC LIMIT 1
+         ORDER BY modified_date DESC LIMIT 1
        )
        WHERE ${where.join(' AND ')}
        ORDER BY o.follow_up_date ASC NULLS LAST, o.modified_date DESC
