@@ -99,6 +99,10 @@ function queryD1(
 
 const withPricing = (r: PricebookItem) => ({
   ...r,
+  // Preserve the numeric `price` contract: never null for a null-price
+  // service. Dawn/Retell may read `price` as a number; honesty about
+  // dynamic pricing now comes from calculated_price + pricing.
+  price: r.price ?? 0,
   member_price: r.member_price ?? null,
   description: r.description ?? '',
   category: r.category ?? '',
@@ -111,7 +115,7 @@ const withPricing = (r: PricebookItem) => ({
 export const search_pricebook_all: ToolDef<Args> = {
   name: 'search_pricebook_all',
   description:
-    'Search ServiceTitan pricebook across services, materials, and equipment in one call. Use code for an exact lookup, or query for fuzzy name/description/category matching. Returns up to 8 items ranked by price descending, each with a type discriminator (service/material/equipment), member_price where applicable, and `hours` (estimated labor in decimal hours: 0.75 = 45 min, 1.5 = 90 min) on services + equipment. Materials return hours = null (no labor attached). When asked about time/duration/how long, surface `hours` — do NOT say the data is missing. Source: D1 (pb_services / pb_materials / pb_equipment via servicetitan-proxy). Sub-100ms typical. PRICE CAVEAT: QSC prices dynamically — price 0/null does NOT mean free or unpriced. When present, calculated_price is ST\'s most-recent computed sell; the pricing flag marks each item static|dynamic|cost. Never tell the user an item is unpriced.',
+    'Search ServiceTitan pricebook across services, materials, and equipment in one call. Use code for an exact lookup, or query for fuzzy name/description/category matching. Returns up to 8 items ranked by price descending, each with a type discriminator (service/material/equipment), member_price where applicable, and `hours` (estimated labor in decimal hours: 0.75 = 45 min, 1.5 = 90 min) on services + equipment. Materials return hours = null (no labor attached). When asked about time/duration/how long, surface `hours` — do NOT say the data is missing. Source: D1 (pb_services / pb_materials / pb_equipment via servicetitan-proxy). Sub-100ms typical. PRICE CAVEAT: QSC prices dynamically — price 0/null does NOT mean free or unpriced. When present, calculated_price is ST\'s most-recent computed sell; the pricing flag marks each item static|dynamic|cost|dynamic-unknown. Never tell the user an item is unpriced.',
   stEndpoint: { method: 'GET', path: 'd1://pb_services+pb_materials+pb_equipment', source: 'd1' },
   zodSchema: {
     code: z.string().optional().describe('Exact pricebook code (e.g. "HUM-120"). Wins over query if both provided.'),
