@@ -468,6 +468,33 @@ describe('search_pricebook_all', () => {
     expect(result.items[0].hours).toBeNull();
     expect(result.items[0].type).toBe('material');
   });
+
+  // Pins the fix for dynamic pricing: a service with price=0 but calculated_price=200
+  // must rank ABOVE a $50 material, and expose calculated_price + pricing fields.
+  it('calculated_price: dynamic service (price 0, calculated_price 200) ranks above $50 material in fuzzy results', async () => {
+    // Three parallel fetches: services, materials, equipment
+    const svcRow = { code: 'SVC-DYN', name: 'Dynamic Service', description: '', category: 'HVAC', price: 0, calculated_price: 200, member_price: null, hours: 1.0, type: 'service' };
+    const matRow = { code: 'MAT-050', name: 'Some Material', description: '', category: 'Parts', price: 50, calculated_price: null, member_price: null, hours: null, type: 'material' };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, results: [svcRow] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, results: [matRow] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, results: [] }), { status: 200 }));
+    const env = {
+      ST_PROXY: { fetch: fetchMock },
+      MCP_SYNC_KEY: 'test-key',
+      MCP_SERVICE_VERSION: '0.0.0-test',
+      DB: {},
+      PROXY_STATE: {},
+      SIRO_API_TOKEN: '',
+    };
+    const result: any = await search_pricebook_all.handler(env as any, { query: 'service' }, { actor: 'vitest', correlation: 'test' });
+    expect(result.status).toBe('success');
+    expect(result.items[0].code).toBe('SVC-DYN');
+    expect(result.items[0].calculated_price).toBe(200);
+    expect(result.items[0].pricing).toBe('dynamic');
+    expect(result.items[1].code).toBe('MAT-050');
+    expect(result.items[1].pricing).toBe('cost');
+  });
 });
 
 describe('codeVariants', () => {

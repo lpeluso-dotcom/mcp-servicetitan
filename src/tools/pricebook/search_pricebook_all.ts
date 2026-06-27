@@ -34,28 +34,31 @@ interface PricebookItem {
   // NULL for materials (no labor attached) and for items where ST has no value set.
   hours: number | null;
   type: 'service' | 'material' | 'equipment';
+  // ST's most-recent computed sell price for services (dynamic pricing).
+  // NULL for materials/equipment — only pb_services has this column.
+  calculated_price: number | null;
 }
 
 const SQL_BY_CODE_SVC =
-  `SELECT code, name, description, category_name as category, price, member_price, hours, 'service' as type
+  `SELECT code, name, description, category_name as category, price, member_price, hours, calculated_price, 'service' as type
    FROM pb_services WHERE code = ? LIMIT 1`;
 const SQL_BY_CODE_MAT =
-  `SELECT code, name, description, category_name as category, cost as price, NULL as member_price, NULL as hours, 'material' as type
+  `SELECT code, name, description, category_name as category, cost as price, NULL as member_price, NULL as hours, NULL as calculated_price, 'material' as type
    FROM pb_materials WHERE code = ? LIMIT 1`;
 const SQL_BY_CODE_EQUIP =
-  `SELECT code, name, description, category_name as category, price, member_price, hours, 'equipment' as type
+  `SELECT code, name, description, category_name as category, price, member_price, hours, NULL as calculated_price, 'equipment' as type
    FROM pb_equipment WHERE code = ? LIMIT 1`;
 
 const SQL_BY_NAME_SVC =
-  `SELECT code, name, description, category_name as category, price, member_price, hours, 'service' as type
+  `SELECT code, name, description, category_name as category, price, member_price, hours, calculated_price, 'service' as type
    FROM pb_services WHERE active = 1 AND (name LIKE ? OR description LIKE ? OR category_name LIKE ?)
-   ORDER BY price DESC LIMIT 5`;
+   ORDER BY COALESCE(calculated_price, price) DESC LIMIT 5`;
 const SQL_BY_NAME_MAT =
-  `SELECT code, name, description, category_name as category, cost as price, NULL as member_price, NULL as hours, 'material' as type
+  `SELECT code, name, description, category_name as category, cost as price, NULL as member_price, NULL as hours, NULL as calculated_price, 'material' as type
    FROM pb_materials WHERE active = 1 AND (name LIKE ? OR description LIKE ? OR category_name LIKE ?)
    ORDER BY cost DESC LIMIT 3`;
 const SQL_BY_NAME_EQUIP =
-  `SELECT code, name, description, category_name as category, price, member_price, hours, 'equipment' as type
+  `SELECT code, name, description, category_name as category, price, member_price, hours, NULL as calculated_price, 'equipment' as type
    FROM pb_equipment WHERE active = 1 AND (name LIKE ? OR description LIKE ? OR category_name LIKE ?)
    ORDER BY price DESC LIMIT 3`;
 
@@ -94,10 +97,21 @@ function queryD1(
   });
 }
 
+const withPricing = (r: PricebookItem) => ({
+  ...r,
+  member_price: r.member_price ?? null,
+  description: r.description ?? '',
+  category: r.category ?? '',
+  calculated_price: r.calculated_price ?? null,
+  pricing: r.type === 'material'
+    ? 'cost'
+    : (r.calculated_price != null ? 'dynamic' : (r.price ? 'static' : 'dynamic-unknown')),
+});
+
 export const search_pricebook_all: ToolDef<Args> = {
   name: 'search_pricebook_all',
   description:
-    'Search ServiceTitan pricebook across services, materials, and equipment in one call. Use code for an exact lookup, or query for fuzzy name/description/category matching. Returns up to 8 items ranked by price descending, each with a type discriminator (service/material/equipment), member_price where applicable, and `hours` (estimated labor in decimal hours: 0.75 = 45 min, 1.5 = 90 min) on services + equipment. Materials return hours = null (no labor attached). When asked about time/duration/how long, surface `hours` — do NOT say the data is missing. Source: D1 (pb_services / pb_materials / pb_equipment via servicetitan-proxy). Sub-100ms typical.',
+    'Search ServiceTitan pricebook across services, materials, and equipment in one call. Use code for an exact lookup, or query for fuzzy name/description/category matching. Returns up to 8 items ranked by price descending, each with a type discriminator (service/material/equipment), member_price where applicable, and `hours` (estimated labor in decimal hours: 0.75 = 45 min, 1.5 = 90 min) on services + equipment. Materials return hours = null (no labor attached). When asked about time/duration/how long, surface `hours` — do NOT say the data is missing. Source: D1 (pb_services / pb_materials / pb_equipment via servicetitan-proxy). Sub-100ms typical. PRICE CAVEAT: QSC prices dynamically — price 0/null does NOT mean free or unpriced. When present, calculated_price is ST\'s most-recent computed sell; the pricing flag marks each item static|dynamic|cost. Never tell the user an item is unpriced.',
   stEndpoint: { method: 'GET', path: 'd1://pb_services+pb_materials+pb_equipment', source: 'd1' },
   zodSchema: {
     code: z.string().optional().describe('Exact pricebook code (e.g. "HUM-120"). Wins over query if both provided.'),
@@ -132,7 +146,7 @@ export const search_pricebook_all: ToolDef<Args> = {
                 status: 'success',
                 count: rows.length,
                 matched_code: variant,
-                items: rows.map((r) => ({ ...r, member_price: r.member_price ?? null, description: r.description ?? '', category: r.category ?? '' })),
+                items: rows.map(withPricing),
                 _source: 'd1',
               };
             }
@@ -150,8 +164,8 @@ export const search_pricebook_all: ToolDef<Args> = {
       ]);
 
       const merged = [...services, ...materials, ...equipment]
-        .map((r) => ({ ...r, member_price: r.member_price ?? null, description: r.description ?? '', category: r.category ?? '', price: r.price ?? 0 }))
-        .sort((a, b) => (b.price || 0) - (a.price || 0))
+        .map(withPricing)
+        .sort((a, b) => ((b.calculated_price ?? b.price) || 0) - ((a.calculated_price ?? a.price) || 0))
         .slice(0, 8);
 
       if (merged.length === 0) {
