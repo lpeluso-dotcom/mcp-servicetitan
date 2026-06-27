@@ -26,7 +26,8 @@ interface FeedRow {
   project_id: number | null;
   customer_id: number | null;
   customer_name: string | null;
-  customer_phone: string | null;
+  // customer_phone omitted: PII with no purpose in a batch opportunity list.
+  // Use customer_snapshot or get_customer_locations for contact info.
   status: string | null;
   follow_up_date: string | null;
   last_follow_up_date: string | null;
@@ -110,7 +111,7 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
 
     const sql =
       `SELECT o.opportunity_id, o.job_id, o.project_id, o.customer_id,
-              o.customer_name, o.customer_phone, o.status,
+              o.customer_name, o.status,
               o.follow_up_date, o.last_follow_up_date, o.follow_ups_count,
               o.estimate_amount, o.sold_estimate_amount, o.open_estimates_count,
               o.job_type_name, o.business_unit, o.technicians_json,
