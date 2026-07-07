@@ -16,13 +16,18 @@ export const get_technician_shifts: ToolDef<Args> = {
     pageSize: z.number().int().positive().max(200).default(50).describe('Page size, max 200'),
   },
   async handler(env, args, { actor, correlation }) {
+    // ST /technician-shifts honors `technicianId` (singular) + `startsOnOrAfter`
+    // + `endsOnOrBefore`. It SILENTLY IGNORES `technicianIds` (plural),
+    // `startsBefore`, and `startsOnOrBefore` — returning the full unfiltered
+    // collection (QUA-694, verified live 2026-07). Map the public args to the
+    // names ST actually recognizes.
     const query: Record<string, unknown> = {
-      technicianIds: args.technicianId,
+      technicianId: args.technicianId,
       page: args.page ?? 1,
       pageSize: args.pageSize ?? 50,
     };
     if (args.startsOnOrAfter) query.startsOnOrAfter = args.startsOnOrAfter;
-    if (args.startsBefore) query.startsBefore = args.startsBefore;
+    if (args.startsBefore) query.endsOnOrBefore = args.startsBefore;
 
     const data = await readST<{ data?: unknown[] }>(
       env,
