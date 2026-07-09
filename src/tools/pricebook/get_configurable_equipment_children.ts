@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 const TENANT_ID = '000000000';
 
@@ -29,4 +30,5 @@ export const get_configurable_equipment_children: ToolDef<Args> = {
     );
     return { equipment: data.data ?? [], _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

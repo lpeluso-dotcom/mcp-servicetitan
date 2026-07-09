@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { readST } from '../../st';
 import { McpError } from '../../errors';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { invoiceId: number }
 
@@ -40,4 +41,5 @@ export const get_invoice_balance: ToolDef<Args> = {
       _source: 'live',
     };
   },
+  transformResult: defaultShaper,
 };

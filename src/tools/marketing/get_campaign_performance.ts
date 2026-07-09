@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { campaignId: number; from?: string; to?: string }
 
@@ -26,4 +27,5 @@ export const get_campaign_performance: ToolDef<Args> = {
     );
     return { performance: data, _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

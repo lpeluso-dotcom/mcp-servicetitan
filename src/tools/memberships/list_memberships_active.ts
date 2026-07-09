@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { customerId?: number; locationId?: number; page?: number; pageSize?: number }
 
@@ -51,4 +52,5 @@ export const list_memberships_active: ToolDef<Args> = {
       _filtered: raw.length !== activeOnly.length ? { received: raw.length, kept: activeOnly.length } : undefined,
     };
   },
+  transformResult: defaultShaper,
 };

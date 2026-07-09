@@ -3,6 +3,7 @@ import { McpError } from '../../errors';
 import { cacheGet } from '../../cache';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { name?: string; phone?: string; email?: string; page?: number; pageSize?: number }
 
@@ -90,4 +91,5 @@ export const find_customer: ToolDef<Args> = {
       return { count: rows.length, customers: rows, _source: 'live' };
     });
   },
+  transformResult: defaultShaper,
 };

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { readST } from '../../st';
 import { McpError } from '../../errors';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { callId: number }
 
@@ -35,4 +36,5 @@ export const get_call: ToolDef<Args> = {
       throw new McpError('upstream_error', `ids filter not honored: asked ${args.callId}, got ${nestedId}`, { correlation });
     return { call: row, _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { customerId: number; active?: boolean }
 
@@ -23,4 +24,5 @@ export const get_customer_locations: ToolDef<Args> = {
     );
     return { locations: data.data ?? [], _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

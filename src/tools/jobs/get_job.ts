@@ -13,6 +13,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { jobId: number }
 
@@ -41,4 +42,5 @@ export const get_job: ToolDef<Args> = {
     const job = await readST(env, ctx, `/jpm/v2/tenant/${tenant}/jobs/${args.jobId}`);
     return { job, _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

@@ -10,6 +10,7 @@
 import { z } from 'zod';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args {
   query: string;
@@ -73,4 +74,5 @@ export const search_pricebook_semantic: ToolDef<Args> = {
       _source: 'vectorize',
     };
   },
+  transformResult: defaultShaper,
 };

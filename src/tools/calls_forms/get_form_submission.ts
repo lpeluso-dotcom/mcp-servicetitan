@@ -3,6 +3,7 @@ import { McpError } from '../../errors';
 import { readD1 } from '../../d1';
 import { readSTPaged } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args {
   formSubmissionId: number;
@@ -83,4 +84,5 @@ export const get_form_submission: ToolDef<Args> = {
     }
     return { submission: match, _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

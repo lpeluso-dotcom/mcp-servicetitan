@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 import { queryD1First } from '../../d1-proxy';
 import type { Env } from '../../env';
 
@@ -124,4 +125,5 @@ export const identify_tech_by_phone: ToolDef<Args> = {
       return { status: 'parse_error', message: `Lookup error: ${String(err)}` };
     }
   },
+  transformResult: defaultShaper,
 };

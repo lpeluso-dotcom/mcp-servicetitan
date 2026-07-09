@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { readST } from '../../st';
 import { cacheGet } from '../../cache';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { businessUnitId?: number; customerId?: number; page?: number; pageSize?: number }
 
@@ -65,4 +66,5 @@ export const list_unpaid_invoices: ToolDef<Args> = {
       return { invoices, _source: 'live' };
     });
   },
+  transformResult: defaultShaper,
 };

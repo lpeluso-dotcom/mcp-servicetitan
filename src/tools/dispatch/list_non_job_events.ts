@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { technicianId?: number; startsOnOrAfter?: string; startsBefore?: string; page?: number; pageSize?: number }
 
@@ -38,4 +39,5 @@ export const list_non_job_events: ToolDef<Args> = {
     );
     return { events: data.data ?? [], _source: 'live' };
   },
+  transformResult: defaultShaper,
 };
