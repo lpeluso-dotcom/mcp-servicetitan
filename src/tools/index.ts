@@ -62,6 +62,12 @@ import { list_open_tasks } from './tasks/list_open_tasks';
 import { list_estimates_job } from './estimates/list_estimates_job';
 import { get_estimate } from './estimates/get_estimate';
 import { dismiss_estimate, sell_estimate, unsell_estimate } from './estimates/update_estimate_status';
+// Phase 4 — Estimate templates (/sales/v2 estimate-templates CRUD)
+import { list_estimate_templates } from './sales/list_estimate_templates';
+import { get_estimate_template } from './sales/get_estimate_template';
+import { create_estimate_template } from './sales/create_estimate_template';
+import { update_estimate_template } from './sales/update_estimate_template';
+import { delete_estimate_template } from './sales/delete_estimate_template';
 // T7 — Dispatch
 import { get_capacity } from './dispatch/get_capacity';
 import { list_technicians_available } from './dispatch/list_technicians_available';
@@ -202,6 +208,9 @@ export const TOOLS: readonly ToolDef<any>[] = [
   get_invoice, list_invoices_job, get_invoice_balance, list_unpaid_invoices,
   // T7 Estimates
   list_estimates_job, get_estimate, dismiss_estimate, sell_estimate, unsell_estimate,
+  // Phase 4 Estimate templates
+  list_estimate_templates, get_estimate_template, create_estimate_template,
+  update_estimate_template, delete_estimate_template,
   // T7 Dispatch
   get_capacity, list_technicians_available, get_technician_shifts, list_non_job_events,
   st_get_capacity_slots,
