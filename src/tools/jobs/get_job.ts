@@ -24,6 +24,13 @@ export const get_job: ToolDef<Args> = {
   zodSchema: {
     jobId: z.number().int().positive().describe('ST job ID'),
   },
+  // Envelope precise (job, _source always present); job itself is a raw ST
+  // job resource — kept permissive (record + nullable) so field drift on the
+  // live ST payload never fails runtime structuredContent validation.
+  outputSchema: {
+    job: z.record(z.string(), z.unknown()).nullable(),
+    _source: z.string(),
+  },
   stEndpoint: {
     method: 'GET',
     path: '/jpm/v2/tenant/{tid}/jobs/{id}',

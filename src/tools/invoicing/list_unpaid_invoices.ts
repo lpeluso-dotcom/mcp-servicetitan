@@ -19,6 +19,13 @@ export const list_unpaid_invoices: ToolDef<Args> = {
     page: z.number().int().positive().default(1).describe('Page number'),
     pageSize: z.number().int().positive().max(200).default(50).describe('Page size, max 200'),
   },
+  // Envelope precise (invoices/_source always present). `invoices` holds raw
+  // ST accounting-invoice resources — kept permissive (record) against live
+  // payload drift.
+  outputSchema: {
+    invoices: z.array(z.record(z.string(), z.unknown())),
+    _source: z.string(),
+  },
   stEndpoint: { method: 'GET', path: '/accounting/v2/tenant/{tid}/invoices', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     const page = args.page ?? 1;

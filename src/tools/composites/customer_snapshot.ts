@@ -54,6 +54,31 @@ export const customer_snapshot: ToolDef<Args> = {
   zodSchema: {
     customerId: z.number().int().positive().describe('ST customer ID'),
   },
+  // L5 composite — envelope keys (customerId/_partial/_failures/_composite/
+  // _source/correlation) are always set by the handler, but every fanout
+  // payload (customer/locations/jobs/memberships/estimates/invoices) is
+  // z.unknown() on purpose: gatherFetches sets a sub-result to `null` on
+  // partial failure (see c10_composites.test.ts), and each success shape is
+  // itself a raw ST resource (object) or list (array) depending on the
+  // endpoint — a strict type here would reject exactly the partial-failure
+  // case this composite exists to report. transformResult (limitArrays +
+  // excludeFields) may also add `${key}_truncated` keys, which the SDK's
+  // default (non-strict) object schema silently tolerates without needing
+  // to be declared here.
+  outputSchema: {
+    customerId: z.number(),
+    customer: z.unknown().optional(),
+    locations: z.unknown().optional(),
+    jobs: z.unknown().optional(),
+    memberships: z.unknown().optional(),
+    estimates: z.unknown().optional(),
+    invoices: z.unknown().optional(),
+    _partial: z.boolean().optional(),
+    _failures: z.array(z.unknown()).optional(),
+    _composite: z.string().optional(),
+    _source: z.string().optional(),
+    correlation: z.string().optional(),
+  },
   async handler(env, args, { actor, correlation }) {
     const { customerId } = args;
 

@@ -20,6 +20,10 @@ export const st_call: ToolDef<Args> = {
   name: 'st_call',
   description: 'Admin-only raw ST API gateway. Applies 4 path/body corrections automatically: /task-management/ → /taskmanagement/, tenant auto-inject, isConfigurable → isConfigurableEquipment, useStaticPrice → useStaticPrices. GET → /api/st/read. Non-GET defaults to dryRun=true → token → dryRun=false to write. ODATA paths (/$query) pass through as-is.',
   adminOnly: true,
+  // isWrite: this gateway executes caller-chosen POST/PATCH/PUT/DELETE against ST, so it must
+  // classify as a write (conservative annotations: readOnly=false, destructive=true). Role
+  // filtering already excludes it from default/readonly/lockdown via adminOnly.
+  isWrite: true,
   zodSchema: {
     method: z.enum(['GET', 'POST', 'PATCH', 'PUT', 'DELETE']).describe('HTTP method'),
     path: z.string().min(1).describe('ST API path starting with / (tenant auto-injected if omitted)'),

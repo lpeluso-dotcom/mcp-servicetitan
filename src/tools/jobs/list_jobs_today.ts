@@ -72,6 +72,15 @@ export const list_jobs_today: ToolDef<Args> = {
     page: z.number().int().positive().optional().describe('Deprecated/ignored — pagination is automatic.'),
     pageSize: z.number().int().positive().max(200).optional().describe('Deprecated/ignored — pagination is automatic.'),
   },
+  // Envelope precise (jobs/date/_source always present; _warnings only when a
+  // businessUnitName/technicianName resolution was ambiguous). `jobs` holds
+  // raw ST job resources — kept permissive against live payload drift.
+  outputSchema: {
+    jobs: z.array(z.record(z.string(), z.unknown())),
+    date: z.string(),
+    _source: z.string(),
+    _warnings: z.array(z.string()).optional(),
+  },
   // Primary read is now the appointments endpoint (scheduled-date source of truth).
   stEndpoint: { method: 'GET', path: '/jpm/v2/tenant/{tid}/appointments', source: 'live' },
   async handler(env, args, { actor, correlation }) {

@@ -121,6 +121,19 @@ export const search_pricebook_all: ToolDef<Args> = {
     code: z.string().optional().describe('Exact pricebook code (e.g. "HUM-120"). Wins over query if both provided.'),
     query: z.string().min(1).max(100).optional().describe('Free-text term to fuzzy-match against name, description, or category. Tech slang should be translated by the caller (e.g. "Navien" → "tankless water heater").'),
   },
+  // Envelope precise (status/count/items/_source always present; matched_code
+  // only on a code-lookup hit, message only on not_found). `items` rows come
+  // from withPricing() over pb_services/pb_materials/pb_equipment — kept
+  // permissive (record) so a D1 schema/column change doesn't fail runtime
+  // structuredContent validation.
+  outputSchema: {
+    status: z.string(),
+    count: z.number(),
+    items: z.array(z.record(z.string(), z.unknown())),
+    matched_code: z.string().optional(),
+    message: z.string().optional(),
+    _source: z.string(),
+  },
   async handler(env, args, { correlation }) {
     const code = args.code?.trim();
     const query = args.query?.trim();

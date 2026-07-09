@@ -16,6 +16,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Env } from './env';
 import { TOOLS, toolsForRole } from './tools/index';
 import { registerTool, type RequestContext } from './tool-registry';
+import { registerPrompts } from './prompts/index';
+import { registerResultResource } from './resources/results';
+import { registerCatalogResources } from './resources/catalogs';
 import { resolveAuth, verifyConnectorToken } from './auth';
 import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
@@ -206,7 +209,10 @@ const READONLY_INSTRUCTIONS = [
 // ─── Per-request McpServer build ──────────────────────────────
 // Required per CF docs: post-SDK-1.26.0 a shared global McpServer is a
 // known security vuln (cross-request state bleed). Build one per request.
-function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: RequestContext): McpServer {
+// Exported (in addition to being used internally below) so the protocol-level
+// integration test can drive a real McpServer through an in-memory MCP client
+// without duplicating the registration wiring. See src/__tests__/mcp-protocol.test.ts.
+export function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: RequestContext): McpServer {
   // The read-only connector (Jessica) gets a branded name + inline instructions; every other
   // caller keeps the historical surface unchanged.
   const readonly = reqCtx.role === 'readonly';
@@ -221,6 +227,9 @@ function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: RequestContext
   for (const tool of visible) {
     registerTool(server, tool, env, execCtx, reqCtx);
   }
+  registerPrompts(server, env);
+  registerResultResource(server, env);
+  registerCatalogResources(server, env);
   return server;
 }
 

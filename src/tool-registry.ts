@@ -20,6 +20,7 @@ import type { ToolDef } from './tools/index';
 import { newCorrelationId } from './auth';
 import { McpError } from './errors';
 import * as obs from './obs';
+import { offloadIfLarge } from './resources/results';
 
 export interface RequestContext {
   actor: string;
@@ -72,6 +73,39 @@ export function redactPayload(value: unknown, depth = 0): unknown {
 }
 
 /**
+ * Derive spec-correct MCP tool annotations from a ToolDef.
+ *
+ * All fields are HINTS per the MCP spec — clients must not rely on them for
+ * security decisions — but they should still be accurate:
+ *   - readOnlyHint:      true iff the tool never modifies ServiceTitan state.
+ *   - destructiveHint:   the spec DEFAULTS this to true when omitted, so every
+ *                        write must set it explicitly. Additive creates (POST)
+ *                        are NOT destructive; PATCH/PUT/DELETE modify existing
+ *                        data and are.
+ *   - idempotentHint:    only PUT/DELETE are canonically idempotent HTTP
+ *                        methods — POST (create) and PATCH (partial update)
+ *                        are not guaranteed idempotent, so both are false.
+ *   - openWorldHint:     always false — a ServiceTitan tenant is a closed,
+ *                        fixed entity set, not an open-ended web/search tool.
+ */
+function deriveAnnotations(tool: ToolDef): {
+  title: string;
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+} {
+  const method = tool.stEndpoint?.method ?? 'GET';
+  return {
+    title: tool.title ?? tool.name.replace(/_/g, ' '),
+    readOnlyHint: !tool.isWrite,
+    destructiveHint: tool.isWrite ? method !== 'POST' : false,
+    idempotentHint: tool.isWrite ? ['PUT', 'DELETE'].includes(method) : true,
+    openWorldHint: false,
+  };
+}
+
+/**
  * Register a tool on the McpServer, wrapping its handler with the full
  * observability + error-handling envelope.
  */
@@ -82,10 +116,20 @@ export function registerTool(
   execCtx: ExecutionContext,
   reqCtx: RequestContext
 ): void {
-  server.tool(
+  // Compute the merged annotations ONCE: method-derived defaults, then the
+  // per-tool overrides (tool.annotations) layered on top. The wire `title`
+  // reuses annotations.title so it can't drift from the annotation copy.
+  const annotations = { ...deriveAnnotations(tool), ...(tool.annotations ?? {}) };
+
+  server.registerTool(
     tool.name,
-    tool.description,
-    tool.zodSchema,
+    {
+      title: annotations.title,
+      description: tool.description,
+      inputSchema: tool.zodSchema,
+      ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
+      annotations,
+    },
     async (args: Record<string, unknown>) => {
       const correlation = newCorrelationId();
       const started = Date.now();
@@ -138,9 +182,17 @@ export function registerTool(
         );
         emitMetric(env, execCtx, tool.name, 'ok', latency, reqCtx);
 
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify(result) }],
-        };
+        // Gated offload: below RESULT_THRESHOLD chars this is byte-identical
+        // to the prior inline behavior (same text content block + same
+        // structuredContent wrapping rule, now factored into
+        // wrapStructuredContent so there is exactly one implementation of
+        // that rule). Above threshold, the full payload is stashed in KV and
+        // a resource_link is returned instead of inlining it. The
+        // hasOutputSchema flag keeps structuredContent schema-valid for
+        // outputSchema'd tools (the SDK validates it at runtime). See
+        // src/resources/results.ts.
+        const shaped = await offloadIfLarge(env, correlation, result, Boolean(tool.outputSchema));
+        return { content: shaped.content, structuredContent: shaped.structuredContent };
       } catch (err) {
         const latency = Date.now() - started;
         const mcpErr =

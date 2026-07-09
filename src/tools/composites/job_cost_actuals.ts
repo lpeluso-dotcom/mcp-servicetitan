@@ -104,6 +104,30 @@ export const job_cost_actuals: ToolDef<Args> = {
       .optional()
       .describe(`Loaded labor cost per hour (default $${DEFAULT_BURDEN_RATE}).`),
   },
+  // L5 composite — jobId is always present; everything else is optional/
+  // permissive on purpose. `job` can be null (no matching D1 row), `invoice`
+  // can be null (no matching live invoice or a failed fanout — see
+  // _partial/_failures), and the D1 row arrays (timesheets/appointments/
+  // assignments/estimates) are our own SELECT shapes but kept as
+  // record(unknown) so a D1 schema tweak doesn't fail runtime
+  // structuredContent validation. `summary` is fully computed by this
+  // handler but still typed loosely for the same reason.
+  outputSchema: {
+    jobId: z.number(),
+    job: z.unknown().optional(),
+    summary: z.record(z.string(), z.unknown()).optional(),
+    per_technician: z.array(z.record(z.string(), z.unknown())).optional(),
+    timesheets: z.array(z.record(z.string(), z.unknown())).optional(),
+    appointments: z.array(z.record(z.string(), z.unknown())).optional(),
+    assignments: z.array(z.record(z.string(), z.unknown())).optional(),
+    estimates: z.array(z.record(z.string(), z.unknown())).optional(),
+    invoice: z.unknown().optional(),
+    _partial: z.boolean().optional(),
+    _failures: z.array(z.unknown()).optional(),
+    _composite: z.string().optional(),
+    _source: z.string().optional(),
+    correlation: z.string().optional(),
+  },
   stEndpoint: { method: 'GET', path: '/jpm/v2/tenant/{tid}/jobs/{id}', source: 'mixed' },
   async handler(env, args, { actor, correlation }) {
     const { jobId } = args;
