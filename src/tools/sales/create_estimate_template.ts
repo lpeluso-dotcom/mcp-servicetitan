@@ -19,8 +19,8 @@
 //      value. The real shape of this field is UNRESOLVED. Root-causing it
 //      needs a live ST UI network capture (Playwright + an authenticated ST
 //      session — see the st-internal-api skill) rather than further blind
-//      guessing against production. Filed as a follow-up (QUA-776).
-// UNTIL QUA-776 RESOLVES THIS: calling this tool with dryRun=false WILL FAIL
+//      guessing against production. Filed as a follow-up (QUA-781).
+// UNTIL QUA-781 RESOLVES THIS: calling this tool with dryRun=false WILL FAIL
 // with a live 400 from ST. dryRun=true (the default) is safe and useful for
 // previewing the request shape; do not attempt a live write yet.
 import { z } from 'zod';
@@ -83,8 +83,8 @@ export const create_estimate_template = defineWriteTool<Args>({
     "those are ST-computed/denormalized from each item's sku, not caller-supplied. allowDiscounts on an item " +
     'defaults to true when omitted (QSC convention). dryRun=true (default) → token → dryRun=false to write. ' +
     '⚠ KNOWN-BROKEN as of 2026-07-09: live-verified against prod, ST additionally requires a "model" field ' +
-    'whose real shape is unresolved (see QUA-776) — dryRun=false WILL currently fail with a live 400 from ST. ' +
-    'dryRun=true previews are safe; do not attempt a live write until QUA-776 resolves the model-field shape.',
+    'whose real shape is unresolved (see QUA-781) — dryRun=false WILL currently fail with a live 400 from ST. ' +
+    'dryRun=true previews are safe; do not attempt a live write until QUA-781 resolves the model-field shape.',
   zodSchema: {
     name: z.string().min(1).describe('Template display name'),
     internalName: z.string().min(1).describe('Internal-only name (not shown to customers). REQUIRED by ST at create time (live-verified 2026-07-09) despite being optional on GET.'),
