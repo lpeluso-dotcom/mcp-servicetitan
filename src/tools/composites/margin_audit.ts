@@ -58,7 +58,10 @@ export const margin_audit: ToolDef<Args> = {
       headers,
       `/jpm/v2/tenant/${TENANT_ID}/jobs`,
       {
-        businessUnitIds: String(resolvedId),
+        // ST's /jpm/v2/tenant/{tid}/jobs honors the SINGULAR businessUnitId
+        // param but silently ignores the plural businessUnitIds (returns
+        // jobs across every BU, unfiltered) — live-verified 2026-07-09.
+        businessUnitId: resolvedId,
         completedOnOrAfter: from,
         completedBefore: to,
       }
