@@ -34,6 +34,8 @@ import { get_configurable_equipment_children } from './pricebook/get_configurabl
 import { list_service_categories } from './pricebook/list_service_categories';
 // Miss Dawn adapter — merged pricebook search across pb_services + pb_materials + pb_equipment
 import { search_pricebook_all } from './pricebook/search_pricebook_all';
+// Vectorize semantic search — natural-language pricebook lookup
+import { search_pricebook_semantic } from './pricebook/search_pricebook_semantic';
 // C10-C12 — L5 Composites
 import { customer_snapshot } from './composites/customer_snapshot';
 import { pricebook_health_check_services } from './composites/pricebook_health_check_services';
@@ -175,7 +177,7 @@ export const TOOLS: readonly ToolDef<any>[] = [
   // T6 Pricebook
   search_pricebook_services, get_service_details, search_materials,
   get_configurable_equipment_children, list_service_categories,
-  search_pricebook_all,
+  search_pricebook_all, search_pricebook_semantic,
   // T6 Invoicing
   get_invoice, list_invoices_job, get_invoice_balance, list_unpaid_invoices,
   // T7 Estimates
