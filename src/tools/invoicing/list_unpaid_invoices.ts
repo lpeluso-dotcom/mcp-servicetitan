@@ -50,7 +50,7 @@ export const list_unpaid_invoices: ToolDef<Args> = {
         '/accounting/v2/tenant/000000000/invoices',
         query,
       );
-      const invoices = (data.data ?? []).filter((inv) => (inv.balance ?? 0) !== 0);
+      const invoices = (data.data ?? []).filter((inv) => Number(inv.balance ?? 0) !== 0);
       return { invoices, _source: 'live' };
     });
   },

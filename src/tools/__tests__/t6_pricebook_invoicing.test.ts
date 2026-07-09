@@ -306,4 +306,14 @@ describe('list_unpaid_invoices', () => {
 
     expect(result.invoices.map((i: any) => i.id)).toEqual([2, 4]);
   });
+
+  it('excludes string "0.00" balances', async () => {
+    const env = makeEnv(liveOk([
+      { id: 1, balance: '0.00' },
+      { id: 2, balance: '150.00' },
+      { id: 3, balance: '0' },
+    ]));
+    const result: any = await list_unpaid_invoices.handler(env, {}, CTX);
+    expect(result.invoices.map((i: any) => i.id)).toEqual([2]);
+  });
 });
