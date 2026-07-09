@@ -227,7 +227,7 @@ export function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: Request
   for (const tool of visible) {
     registerTool(server, tool, env, execCtx, reqCtx);
   }
-  registerPrompts(server);
+  registerPrompts(server, env);
   registerResultResource(server, env);
   registerCatalogResources(server, env);
   return server;

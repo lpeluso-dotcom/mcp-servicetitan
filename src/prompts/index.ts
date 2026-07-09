@@ -24,6 +24,9 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { completable } from '@modelcontextprotocol/sdk/server/completable.js';
+import type { Env } from '../env';
+import { listBusinessUnits } from '../name-cache';
 
 type PromptMessage = {
   role: 'user';
@@ -177,11 +180,125 @@ export const PROMPTS: readonly PromptDef[] = [
   },
 ] as const;
 
-export function registerPrompts(server: McpServer): void {
+// ── Argument completions (Task 2.6) ─────────────────────────────────────
+//
+// Two SDK quirks (confirmed empirically against the installed SDK — see
+// node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js — no public
+// doc covers this) drive the shape below:
+//
+// 1. completable(schema, complete) decorates a zod schema IN PLACE with a
+//    non-configurable symbol property. Calling it twice on the SAME schema
+//    object throws ("Cannot redefine property"). registerPrompts() runs on
+//    every request (buildServer builds a fresh McpServer per request — see
+//    src/index.ts), so every completable-wrapped schema must be a BRAND
+//    NEW object each call — never the shared PROMPTS[].argsSchema
+//    reference — or the second request throws.
+//
+// 2. For an OPTIONAL arg (all 3 of ours are), the SDK's two completion
+//    code paths disagree about where the decoration must live:
+//      - _createRegisteredPrompt's hasCompletable gate (decides whether to
+//        enable the `completions` capability AT ALL) unwraps ONE
+//        ZodOptional layer and checks the INNER type:
+//          `field instanceof ZodOptional ? field._def.innerType : field`
+//      - handlePromptCompletion (the actual per-request dispatch) does
+//        NOT unwrap — it checks isCompletable() on the field EXACTLY as
+//        stored in the shape.
+//    completable(base.optional(), fn) satisfies #2 but not #1 (decoration
+//    sits on the outer ZodOptional; unwrapping to the inner loses it —
+//    the whole server ends up with completions disabled: "Method not
+//    found"). completable(base, fn).optional() satisfies #1 but not #2
+//    (decoration sits on the inner type; the outer ZodOptional stored in
+//    the shape isn't decorated — completion silently returns no values).
+//    completableOptional() below double-decorates: the inner AND the
+//    optional wrapper around it, so both paths find what they need.
+function completableOptional<T extends z.ZodTypeAny>(base: T, complete: CompleteFn, description: string): z.ZodTypeAny {
+  // completable()'s declared CompleteCallback<T> is generic on the WRAPPED
+  // schema's zod input type (e.g. `unknown` for z.coerce.number(), since
+  // coercion accepts any input). At runtime the callback only ever
+  // receives the raw wire STRING (MCP's CompleteRequest.argument.value is
+  // always a string, regardless of the arg's own coercion) — CompleteFn
+  // reflects that real contract, hence the cast at each completable() call.
+  const decoratedInner = completable(base, complete as unknown as Parameters<typeof completable<T>>[1]);
+  const wrapped = decoratedInner.optional().describe(description);
+  return completable(wrapped, complete as unknown as Parameters<typeof completable<typeof wrapped>>[1]);
+}
+
+/**
+ * completion/complete always hands the callback the raw typed-so-far
+ * STRING (per MCP's CompleteRequest.argument.value), regardless of the
+ * arg's own coercion/output type — so every completion callback below is
+ * typed on `value: string` and returns `string[]`.
+ */
+type CompleteFn = (value: string, context?: { arguments?: Record<string, string> }) => Promise<string[]>;
+
+const MAX_COMPLETIONS = 20;
+
+/** Case-insensitive prefix-match completion over a fixed static option list. */
+export function staticCompletion(options: readonly string[]): CompleteFn {
+  return async (value: string) => {
+    const v = (value ?? '').trim().toLowerCase();
+    if (!v) return options.slice(0, MAX_COMPLETIONS);
+    return options.filter((o) => o.toLowerCase().startsWith(v)).slice(0, MAX_COMPLETIONS);
+  };
+}
+
+export const WINDOW_OPTIONS = ['7d', '30d', '60d', '90d'] as const;
+export const DAYS_BACK_OPTIONS = ['7', '14', '30', '60'] as const;
+
+/**
+ * ar-chase.businessUnitId completion: businessUnitId coerces to a number
+ * (z.coerce.number()), so the completion returns numeric-id STRINGS (the
+ * form the arg itself parses cleanly), filtered by the typed prefix
+ * matching either the BU name (case-insensitive) or the id itself. Backed
+ * by listBusinessUnits() (KV-cached, D1 `business_units` source) — never
+ * throws; an upstream failure just yields no BUs to filter, so this
+ * degrades to an empty completion list rather than breaking the prompt.
+ */
+export function businessUnitIdCompletion(env: Env): CompleteFn {
+  return async (value: string) => {
+    const bus = await listBusinessUnits(env);
+    const v = (value ?? '').trim().toLowerCase();
+    const matches = v
+      ? bus.filter((b) => b.name.toLowerCase().includes(v) || String(b.id).includes(v))
+      : bus;
+    return matches.slice(0, MAX_COMPLETIONS).map((b) => String(b.id));
+  };
+}
+
+export function registerPrompts(server: McpServer, env: Env): void {
   for (const p of PROMPTS) {
+    const argsSchema: Record<string, z.ZodTypeAny> = { ...p.argsSchema };
+
+    // Each branch builds a BRAND NEW base schema (z.coerce.number() /
+    // z.string()) rather than reusing/mutating p.argsSchema's shared
+    // object — required by quirk #1 above. The original arg's `.describe`
+    // text is read (not mutated) off the shared schema so prompts/list
+    // metadata is unchanged.
+    if (p.name === 'ar-chase' && argsSchema.businessUnitId) {
+      argsSchema.businessUnitId = completableOptional(
+        z.coerce.number(),
+        businessUnitIdCompletion(env),
+        argsSchema.businessUnitId.description ?? '',
+      );
+    }
+    if (p.name === 'quote-follow-up' && argsSchema.daysBack) {
+      argsSchema.daysBack = completableOptional(
+        z.coerce.number(),
+        staticCompletion(DAYS_BACK_OPTIONS),
+        argsSchema.daysBack.description ?? '',
+      );
+    }
+    if (p.name === 'membership-outreach' && argsSchema.window) {
+      argsSchema.window = completableOptional(
+        z.string(),
+        staticCompletion(WINDOW_OPTIONS),
+        argsSchema.window.description ?? '',
+      );
+    }
+
     server.registerPrompt(
       p.name,
-      { title: p.title, description: p.description, argsSchema: p.argsSchema },
+      { title: p.title, description: p.description, argsSchema },
       (args: unknown) => ({ messages: p.build(args) })
     );
   }
