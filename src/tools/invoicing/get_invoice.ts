@@ -9,6 +9,13 @@ export const get_invoice: ToolDef<Args> = {
   name: 'get_invoice',
   description: 'Get full invoice details including line items and totals. Source: live ST (accounting invoices, fetched by id via the list endpoint — ST has no /invoices/{id} route).',
   zodSchema: { invoiceId: z.number().int().positive().describe('ST invoice ID') },
+  // Envelope precise (invoice/_source always present on success — not_found
+  // throws before returning). `invoice` is a raw ST accounting-invoice
+  // resource — kept permissive (record + nullable) against live payload drift.
+  outputSchema: {
+    invoice: z.record(z.string(), z.unknown()).nullable(),
+    _source: z.string(),
+  },
   stEndpoint: { method: 'GET', path: '/accounting/v2/tenant/{tid}/invoices', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     const data = await readST<{ data?: unknown[] }>(

@@ -11,6 +11,13 @@ export const get_estimate: ToolDef<Args> = {
   zodSchema: {
     estimateId: z.number().int().positive().describe('ST estimate ID'),
   },
+  // Envelope precise (estimate/_source always present). The handler itself
+  // types `estimate` as `readST<unknown>` — the live ST payload shape isn't
+  // locally guaranteed, so this stays fully permissive (z.unknown()).
+  outputSchema: {
+    estimate: z.unknown(),
+    _source: z.string(),
+  },
   stEndpoint: { method: 'GET', path: '/sales/v2/tenant/{tid}/estimates/{estimateId}', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     const data = await readST<unknown>(

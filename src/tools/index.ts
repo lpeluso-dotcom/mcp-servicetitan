@@ -151,7 +151,21 @@ export interface ToolDef<Args = Record<string, unknown>> {
   zodSchema: z.ZodRawShape;
   /** Optional human-readable display title (MCP `title` field). Falls back to name.replace(/_/g, ' '). */
   title?: string;
-  /** Optional output schema — same shape convention as zodSchema. Passed through to registerTool's outputSchema. */
+  /**
+   * Optional output schema — same shape convention as zodSchema (a
+   * ZodRawShape, not a z.object(...)). Passed through to registerTool's
+   * outputSchema. The installed MCP SDK validates `structuredContent`
+   * against this schema at RUNTIME on every call (`validateToolOutput`) —
+   * a mismatch fails the tool call in production, not just at typecheck —
+   * so schemas must be lenient: type the envelope (top-level keys the
+   * handler returns) precisely, but keep nested ST payloads permissive
+   * (`.passthrough()` on objects, `z.record(z.string(), z.unknown())` /
+   * `z.unknown()` for fields whose shape isn't locally guaranteed). Tools
+   * whose handler returns a bare array or primitive must shape their
+   * outputSchema as `{ result: ... }` to match the registry's
+   * structuredContent wrap rule (see tool-registry.ts) — a raw
+   * array/primitive is not a valid top-level outputSchema shape.
+   */
   outputSchema?: z.ZodRawShape;
   /** Optional per-tool annotation overrides — merged OVER the method-derived defaults in tool-registry (e.g. a POST that mutates existing state can force destructiveHint:true). */
   annotations?: Partial<{ title: string; readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean }>;

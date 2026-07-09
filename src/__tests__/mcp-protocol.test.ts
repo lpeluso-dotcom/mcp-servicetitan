@@ -111,4 +111,49 @@ describe('MCP protocol layer — buildServer via in-memory client', () => {
     expect(result.structuredContent).toBeDefined();
     expect(typeof result.structuredContent).toBe('object');
   });
+
+  // Phase 2 Task 2.2 — real safety net for the top-10 outputSchema rollout.
+  // Everything above proves the tool CAN return structuredContent; this
+  // block proves the SDK's own runtime outputSchema validation
+  // (`validateToolOutput` in @modelcontextprotocol/sdk) does NOT reject a
+  // real call for tools that now carry an outputSchema. If any of these
+  // schemas were too strict, the call below would come back with
+  // isError:true (an "Output validation error: ..." McpError), not a
+  // handler-level failure — so a green isError:false here is the actual
+  // proof the schema is safe to ship.
+  describe('outputSchema — real registration path (top-10 tools)', () => {
+    it('get_job: tools/call succeeds and structuredContent passes runtime outputSchema validation', async () => {
+      const reqCtx: RequestContext = { actor: 'test-mcp-protocol', role: 'default' };
+      const { client } = await connectedClient(reqCtx);
+
+      const result = await client.callTool({ name: 'get_job', arguments: { jobId: 123 } });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toBeDefined();
+      expect((result.structuredContent as any).job).toBeDefined();
+      expect((result.structuredContent as any)._source).toBe('live');
+    });
+
+    it('find_customer: tools/call succeeds and structuredContent passes runtime outputSchema validation', async () => {
+      const reqCtx: RequestContext = { actor: 'test-mcp-protocol', role: 'default' };
+      const { client } = await connectedClient(reqCtx);
+
+      const result = await client.callTool({ name: 'find_customer', arguments: { name: 'Fixture' } });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toBeDefined();
+      expect(Array.isArray((result.structuredContent as any).customers)).toBe(true);
+    });
+
+    it('list_unpaid_invoices: tools/call succeeds and structuredContent passes runtime outputSchema validation', async () => {
+      const reqCtx: RequestContext = { actor: 'test-mcp-protocol', role: 'default' };
+      const { client } = await connectedClient(reqCtx);
+
+      const result = await client.callTool({ name: 'list_unpaid_invoices', arguments: {} });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent).toBeDefined();
+      expect(Array.isArray((result.structuredContent as any).invoices)).toBe(true);
+    });
+  });
 });
