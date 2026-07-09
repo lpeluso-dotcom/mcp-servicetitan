@@ -181,18 +181,30 @@ describe('get_call', () => {
     expect(schema.safeParse({}).success).toBe(false);
   });
 
-  it('fetches a call by ID', async () => {
-    const env = makeEnv(liveOkDirect({ id: 88, duration: 120 }));
-    const result: any = await get_call.handler(env, { callId: 88 }, CTX);
-    expect(result.call).toBeDefined();
+  it('fetches via ?ids= and unwraps data[0] (call nests under leadCall)', async () => {
+    let captured = '';
+    const env = makeEnv(async (url: string) => {
+      captured = url;
+      return new Response(JSON.stringify({ data: [{ id: 0, jobNumber: 123, leadCall: { id: 260956, duration: 120 } }] }), { status: 200 });
+    });
+    const result: any = await get_call.handler(env, { callId: 260956 }, CTX);
+    const endpoint = new URL(captured).searchParams.get('endpoint')!;
+    expect(endpoint).toBe('/telecom/v3/tenant/000000000/calls?ids=260956');
+    expect(result.call).toEqual({ id: 0, jobNumber: 123, leadCall: { id: 260956, duration: 120 } });
+    expect(result._source).toBe('live');
   });
 
-  it('calls telecom calls endpoint with ID', async () => {
-    const env = makeEnv(liveOkDirect({ id: 88 }));
-    await get_call.handler(env, { callId: 88 }, CTX);
-    const [url] = env.ST_PROXY.fetch.mock.calls[0];
-    expect(url).toContain('88');
-    expect(url).toContain('call');
+  it('throws not_found when ids filter returns empty', async () => {
+    const env = makeEnv(liveOk([]));
+    await expect(get_call.handler(env, { callId: 999 }, CTX)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  // Guard against ST silently ignoring the ids param — the top-level `id` on
+  // this row is always 0/meaningless, so the guard must compare against the
+  // NESTED leadCall.id, not the row's own id.
+  it('rejects when ids filter is not honored (wrong nested leadCall.id)', async () => {
+    const env = makeEnv(liveOk([{ id: 0, leadCall: { id: 999 } }]));
+    await expect(get_call.handler(env, { callId: 260956 }, CTX)).rejects.toThrow(/ids filter not honored/);
   });
 });
 

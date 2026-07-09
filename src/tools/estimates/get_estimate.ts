@@ -4,6 +4,7 @@ import type { ToolDef } from '../index';
 
 interface Args { estimateId: number }
 
+// verified 2026-07-09: /sales/v2 estimates/{id} route EXISTS (logical 404 "Estimate ID = X was not found" on missing ids) — not in the no-by-id-route class.
 export const get_estimate: ToolDef<Args> = {
   name: 'get_estimate',
   description: 'Get full details for a single estimate including line items and status. Source: D1 (estimates nightly-synced).',
