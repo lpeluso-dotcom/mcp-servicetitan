@@ -181,20 +181,57 @@ describe('get_call', () => {
     expect(schema.safeParse({}).success).toBe(false);
   });
 
-  it('fetches a call by ID', async () => {
-    const env = makeEnv(liveOkDirect({ id: 88, duration: 120 }));
-    const result: any = await get_call.handler(env, { callId: 88 }, CTX);
-    expect(result.call).toBeDefined();
+  it('fetches via ?ids= and unwraps data[0] (call nests under leadCall)', async () => {
+    let captured = '';
+    const env = makeEnv(async (url: string) => {
+      captured = url;
+      return new Response(JSON.stringify({ data: [{ id: 0, jobNumber: 123, leadCall: { id: 260956, duration: 120 } }] }), { status: 200 });
+    });
+    const result: any = await get_call.handler(env, { callId: 260956 }, CTX);
+    const endpoint = new URL(captured).searchParams.get('endpoint')!;
+    expect(endpoint).toBe('/telecom/v3/tenant/000000000/calls?ids=260956');
+    expect(result.call).toEqual({ id: 0, jobNumber: 123, leadCall: { id: 260956, duration: 120 } });
+    expect(result._source).toBe('live');
   });
 
-  it('calls telecom calls endpoint with ID', async () => {
-    const env = makeEnv(liveOkDirect({ id: 88 }));
-    await get_call.handler(env, { callId: 88 }, CTX);
-    const [url] = env.ST_PROXY.fetch.mock.calls[0];
-    expect(url).toContain('88');
-    expect(url).toContain('call');
+  it('throws not_found when ids filter returns empty', async () => {
+    const env = makeEnv(liveOk([]));
+    await expect(get_call.handler(env, { callId: 999 }, CTX)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  // Guard against ST silently ignoring the ids param — the top-level `id` on
+  // this row is always 0/meaningless, so the guard must compare against the
+  // NESTED leadCall.id, not the row's own id.
+  it('rejects when ids filter is not honored (wrong nested leadCall.id)', async () => {
+    const env = makeEnv(liveOk([{ id: 0, leadCall: { id: 999 } }]));
+    await expect(get_call.handler(env, { callId: 260956 }, CTX)).rejects.toThrow(/ids filter not honored/);
   });
 });
+
+// Combined D1 (readD1 -> /api/sql/read) + live ST (readST/readSTPaged ->
+// /api/st/read) env mock for get_form_submission, which is D1-first with an
+// optional live fallback scan.
+function envD1AndLive(
+  sqlHandler: (body: { sql: string; params: unknown[] }) => any,
+  liveHandler?: (url: string) => any,
+): any {
+  const fetcher = vi.fn(async (url: any, init?: RequestInit) => {
+    const urlStr = String(url);
+    if (urlStr.includes('/api/sql/read')) {
+      const body = init?.body ? JSON.parse(init.body as string) : { sql: '', params: [] };
+      return new Response(JSON.stringify(sqlHandler(body)), { status: 200 });
+    }
+    if (urlStr.includes('/api/st/read')) {
+      return new Response(JSON.stringify(liveHandler ? liveHandler(urlStr) : { data: [] }), { status: 200 });
+    }
+    throw new Error(`unexpected URL: ${urlStr}`);
+  });
+  return {
+    ST_PROXY: { fetch: fetcher },
+    MCP_SYNC_KEY: 'test-key',
+    MCP_SERVICE_VERSION: '0.0.0-test',
+  };
+}
 
 describe('get_form_submission', () => {
   it('requires formSubmissionId', async () => {
@@ -202,17 +239,48 @@ describe('get_form_submission', () => {
     expect(schema.safeParse({}).success).toBe(false);
   });
 
-  it('fetches a form submission', async () => {
-    const env = makeEnv(liveOkDirect({ id: 55, formId: 3 }));
-    const result: any = await get_form_submission.handler(env, { formSubmissionId: 55 }, CTX);
-    expect(result.formSubmission).toBeDefined();
+  it('D1 hit returns the submission with _source d1', async () => {
+    const env = envD1AndLive(() => ({
+      success: true,
+      results: [{
+        submission_id: 8479, form_id: 7752, form_name: 'Lead Intake', status: 'Complete',
+        submitted_on: '2026-06-01T10:00:00Z', submitted_by_id: 501,
+        owners_json: null, units_json: null, synced_at: '2026-07-01T00:00:00Z',
+      }],
+    }));
+    const result: any = await get_form_submission.handler(env, { formSubmissionId: 8479 }, CTX);
+    expect(result.submission.submission_id).toBe(8479);
+    expect(result._source).toBe('d1');
   });
 
-  it('note: form submissions return unit IDs not equipment IDs (documented)', async () => {
-    const env = makeEnv(liveOkDirect({ id: 55, units: [{ unitId: 1 }] }));
-    const result: any = await get_form_submission.handler(env, { formSubmissionId: 55 }, CTX);
-    // Just verify we get the raw submission back (unit ID join is done at composite layer)
-    expect(result.formSubmission).toBeDefined();
+  it('D1 miss + formId falls back to a live scan matched on submission id (formIds= pinned)', async () => {
+    let capturedUrl = '';
+    const env = envD1AndLive(
+      () => ({ success: true, results: [] }),
+      (url) => {
+        capturedUrl = url;
+        return { data: [{ id: 8479, formId: 7752 }, { id: 8480, formId: 7752 }], hasMore: false, page: 1, pageSize: 200 };
+      },
+    );
+    const result: any = await get_form_submission.handler(env, { formSubmissionId: 8479, formId: 7752 }, CTX);
+    const endpoint = new URL(capturedUrl).searchParams.get('endpoint')!;
+    expect(endpoint).toContain('formIds=7752');
+    expect(result.submission).toEqual({ id: 8479, formId: 7752 });
+    expect(result._source).toBe('live');
+  });
+
+  it('D1 miss + no formId throws not_found mentioning formId is required for live lookup', async () => {
+    const env = envD1AndLive(() => ({ success: true, results: [] }));
+    await expect(get_form_submission.handler(env, { formSubmissionId: 999 }, CTX)).rejects.toThrow(/formId/);
+    await expect(get_form_submission.handler(env, { formSubmissionId: 999 }, CTX)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('D1 miss + formId, live scan no match -> not_found', async () => {
+    const env = envD1AndLive(
+      () => ({ success: true, results: [] }),
+      () => ({ data: [{ id: 1111, formId: 7752 }], hasMore: false }),
+    );
+    await expect(get_form_submission.handler(env, { formSubmissionId: 8479, formId: 7752 }, CTX)).rejects.toMatchObject({ code: 'not_found' });
   });
 });
 

@@ -175,17 +175,43 @@ describe('get_invoice', () => {
   });
 
   it('fetches invoice by ID', async () => {
-    const env = makeEnv(liveOk({ id: 200, total: 350.00 }));
+    const env = makeEnv(liveOk([{ id: 200, total: 350.00 }]));
     const result: any = await get_invoice.handler(env, { invoiceId: 200 }, CTX);
     expect(result.invoice).toBeDefined();
   });
 
   it('calls accounting invoices endpoint with ID', async () => {
-    const env = makeEnv(liveOk({ id: 200 }));
+    const env = makeEnv(liveOk([{ id: 200 }]));
     await get_invoice.handler(env, { invoiceId: 200 }, CTX);
     const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('200');
     expect(url).toContain('invoice');
+  });
+
+  it('get_invoice fetches via ?ids= and unwraps data[0]', async () => {
+    let captured = '';
+    const env = makeEnv(async (url: string) => {
+      captured = url;
+      return new Response(JSON.stringify({ data: [{ id: 279340, total: '150.00' }] }), { status: 200 });
+    });
+    const result: any = await get_invoice.handler(env, { invoiceId: 279340 }, CTX);
+    const endpoint = new URL(captured).searchParams.get('endpoint')!;
+    expect(endpoint).toBe('/accounting/v2/tenant/000000000/invoices?ids=279340');
+    expect(result.invoice).toEqual({ id: 279340, total: '150.00' });
+  });
+
+  it('get_invoice throws not_found when ids filter returns empty', async () => {
+    const env = makeEnv(liveOk([]));
+    await expect(get_invoice.handler(env, { invoiceId: 999 }, CTX)).rejects.toThrow(/not found/i);
+    await expect(get_invoice.handler(env, { invoiceId: 999 }, CTX)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  // Guard against ST silently ignoring the ids param (documented history of
+  // silently-ignored params on this endpoint — see balanceExcludeZero in
+  // list_unpaid_invoices). data[0] must actually BE the requested invoice.
+  it('get_invoice rejects when ids filter is not honored (wrong invoice in data[0])', async () => {
+    const env = makeEnv(liveOk([{ id: 999, total: '1.00' }]));
+    await expect(get_invoice.handler(env, { invoiceId: 279340 }, CTX)).rejects.toThrow(/ids filter not honored/);
   });
 });
 
@@ -220,18 +246,43 @@ describe('get_invoice_balance', () => {
   });
 
   it('fetches invoice balance (not /payments/ endpoint)', async () => {
-    const env = makeEnv(liveOk({ id: 200, balance: 150.00, total: 350.00 }));
+    const env = makeEnv(liveOk([{ id: 200, balance: 150.00, total: 350.00 }]));
     const result: any = await get_invoice_balance.handler(env, { invoiceId: 200 }, CTX);
     expect(result.balance).toBeDefined();
     expect(result.balance.invoiceId).toBe(200);
   });
 
   it('calls invoices endpoint (T9: not /payments/)', async () => {
-    const env = makeEnv(liveOk({ id: 200, balance: 0 }));
+    const env = makeEnv(liveOk([{ id: 200, balance: 0 }]));
     await get_invoice_balance.handler(env, { invoiceId: 200 }, CTX);
     const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('invoice');
     expect(url).not.toContain('payment');
+  });
+
+  it('get_invoice_balance fetches via ?ids= and reads balance off data[0]', async () => {
+    let captured = '';
+    const env = makeEnv(async (url: string) => {
+      captured = url;
+      return new Response(JSON.stringify({ data: [{ id: 279340, total: '150.00', balance: '25.00', payments: [] }] }), { status: 200 });
+    });
+    const result: any = await get_invoice_balance.handler(env, { invoiceId: 279340 }, CTX);
+    const endpoint = new URL(captured).searchParams.get('endpoint')!;
+    expect(endpoint).toBe('/accounting/v2/tenant/000000000/invoices?ids=279340');
+    expect(result.balance).toMatchObject({ invoiceId: 279340, total: '150.00', balance: '25.00' });
+  });
+
+  it('get_invoice_balance throws not_found when ids filter returns empty', async () => {
+    const env = makeEnv(liveOk([]));
+    await expect(get_invoice_balance.handler(env, { invoiceId: 999 }, CTX)).rejects.toThrow(/not found/i);
+    await expect(get_invoice_balance.handler(env, { invoiceId: 999 }, CTX)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  // Same ids-honored guard as get_invoice — silently returning an arbitrary
+  // invoice's balance would be silently wrong financial data.
+  it('get_invoice_balance rejects when ids filter is not honored (wrong invoice in data[0])', async () => {
+    const env = makeEnv(liveOk([{ id: 999, total: '1.00', balance: '1.00', payments: [] }]));
+    await expect(get_invoice_balance.handler(env, { invoiceId: 279340 }, CTX)).rejects.toThrow(/ids filter not honored/);
   });
 });
 
@@ -254,5 +305,49 @@ describe('list_unpaid_invoices', () => {
     const [url] = env.ST_PROXY.fetch.mock.calls[0];
     // ST uses "outstanding" balance filter — endpoint must filter non-zero balance
     expect(url).toContain('invoice');
+  });
+
+  // QUA-649: ST's /accounting/v2/tenant/{tid}/invoices endpoint silently
+  // ignores balanceExcludeZero — it isn't a real filter param there (confirmed
+  // against the D1 mirror: ~1,060 real unpaid invoices exist vs. this tool
+  // returning legacy $0-balance rows). The endpoint returns everything
+  // regardless of what we ask it to filter, so the tool must filter client-side
+  // the same way list_jobs_today's ET-appointments fix (PR #41) does for its
+  // own silently-ignored params.
+  it('drops $0-balance invoices client-side even though ST returns them anyway', async () => {
+    const env = makeEnv(
+      liveOk([
+        { id: 1, balance: 0 },
+        { id: 2, balance: 128.5 },
+        { id: 3, balance: 0 },
+        { id: 4, balance: 42 },
+      ]),
+    );
+
+    const result: any = await list_unpaid_invoices.handler(env, {}, CTX);
+
+    expect(result.invoices.map((i: any) => i.id)).toEqual([2, 4]);
+  });
+
+  it('excludes string "0.00" balances', async () => {
+    const env = makeEnv(liveOk([
+      { id: 1, balance: '0.00' },
+      { id: 2, balance: '150.00' },
+      { id: 3, balance: '0' },
+    ]));
+    const result: any = await list_unpaid_invoices.handler(env, {}, CTX);
+    expect(result.invoices.map((i: any) => i.id)).toEqual([2]);
+  });
+
+  // NaN fail-open: a malformed balance must stay VISIBLE rather than be
+  // silently hidden — hiding a possibly-unpaid invoice is the worse failure.
+  it('keeps rows with malformed (non-numeric) balance visible', async () => {
+    const env = makeEnv(liveOk([
+      { id: 1, balance: 'abc' },
+      { id: 2, balance: '0.00' },
+      { id: 3, balance: '75.00' },
+    ]));
+    const result: any = await list_unpaid_invoices.handler(env, {}, CTX);
+    expect(result.invoices.map((i: any) => i.id)).toEqual([1, 3]);
   });
 });

@@ -68,7 +68,8 @@ export async function readST<T = unknown>(
   // not reliably substitute on this path in prod; resolving up front is robust
   // and independent of that wrapper. No-op when ST_TENANT_ID is the placeholder
   // (dev/test), so existing 000000000 URL assertions still hold.
-  const url = buildUrl(rewriteTenantPlaceholders(env, endpoint), query);
+  const resolved = rewriteTenantPlaceholders(env, endpoint);
+  const url = buildUrl(resolved, query);
   const resp = await env.ST_PROXY.fetch(url, {
     headers: authHeaders(env, ctx.correlation, ctx.actor),
   });
@@ -76,7 +77,7 @@ export async function readST<T = unknown>(
     const body = await resp.text().catch(() => '');
     throw new McpError(
       mapUpstreamStatus(resp.status),
-      `readST ${resp.status} on ${endpoint}: ${body.slice(0, 200)}`,
+      `readST ${resp.status} on ${resolved}: ${body.slice(0, 200)}`,
       { correlation: ctx.correlation },
     );
   }
@@ -95,7 +96,8 @@ export async function readSTPost<T = unknown>(
   endpoint: string,
   body: unknown,
 ): Promise<T> {
-  const url = buildUrl(rewriteTenantPlaceholders(env, endpoint));
+  const resolved = rewriteTenantPlaceholders(env, endpoint);
+  const url = buildUrl(resolved);
   const resp = await env.ST_PROXY.fetch(url, {
     method: 'POST',
     headers: { ...authHeaders(env, ctx.correlation, ctx.actor), 'content-type': 'application/json' },
@@ -105,7 +107,7 @@ export async function readSTPost<T = unknown>(
     const text = await resp.text().catch(() => '');
     throw new McpError(
       mapUpstreamStatus(resp.status),
-      `readSTPost ${resp.status} on ${endpoint}: ${text.slice(0, 200)}`,
+      `readSTPost ${resp.status} on ${resolved}: ${text.slice(0, 200)}`,
       { correlation: ctx.correlation },
     );
   }
