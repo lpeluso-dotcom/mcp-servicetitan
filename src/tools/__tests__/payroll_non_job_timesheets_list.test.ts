@@ -16,10 +16,13 @@
 //     ignored — ST returns the byte-identical unfiltered page regardless
 //     of value (tested employeeIds=15362, 15617, 999999999, comma-joined,
 //     bracket form — all identical to the unfiltered baseline). Same for
-//     timesheetCodeId/timesheetCodeIds. Per the "STOP and report rather
-//     than guessing" rule, this tool now REJECTS employeeId/timesheetCodeId
-//     with a clear validation_error instead of either 409ing or silently
-//     returning an unfiltered page that looks filtered.
+//     timesheetCodeId/timesheetCodeIds. Per code-review, this mirrors the
+//     established list_unpaid_invoices.ts pattern for a genuinely-broken ST
+//     filter: fetch the (unfiltered) page and filter employeeId/
+//     timesheetCodeId CLIENT-SIDE, with a documented completeness caveat
+//     (page/pageSize still apply server-side to the unfiltered set, so a
+//     page can come back with fewer matches — or zero — than pageSize even
+//     when more exist on other pages). Neither arg is ever forwarded to ST.
 //   - startsOnOrAfter/endsOnOrBefore are ignored by this endpoint;
 //     modifiedOnOrAfter/modifiedOnOrBefore are honored. fromDate/toDate now
 //     map to those.
@@ -176,17 +179,91 @@ describe('payroll_non_job_timesheets_list — filter preservation', () => {
       toDate: { value: '2024-04-30', expect: 'forwarded_query', key: 'modifiedOnOrBefore' },
     });
   });
+});
 
-  it('rejects employeeId — ST has no working employee filter on this endpoint (409 singular, silently-ignored plural, live-verified 2026-07-09)', async () => {
-    await assertFilterPreservation(payroll_non_job_timesheets_list, {
-      employeeId: { value: 42, expect: 'rejected_or_skipped' },
-    });
+// Mixed-employee/mixed-timesheet-code page used by the client-side filter
+// tests below. ST has no working server-side filter for either dimension
+// (verified live 2026-07-09 — see header note), so the tool fetches this
+// page unfiltered and filters employeeId/timesheetCodeId itself, mirroring
+// list_unpaid_invoices.ts's balance!=0 client-side filter pattern.
+function mixedPageEnv() {
+  const fetcher = vi.fn(async () =>
+    new Response(
+      JSON.stringify({
+        data: [
+          { id: 1, employeeId: 42, timesheetCodeId: 8, startedOn: '2024-04-10T09:00:00Z', endedOn: '2024-04-10T10:00:00Z' },
+          { id: 2, employeeId: 42, timesheetCodeId: 9, startedOn: '2024-04-10T09:00:00Z', endedOn: '2024-04-10T10:00:00Z' },
+          { id: 3, employeeId: 43, timesheetCodeId: 8, startedOn: '2024-04-10T09:00:00Z', endedOn: '2024-04-10T10:00:00Z' },
+          { id: 4, employeeId: 43, timesheetCodeId: 9, startedOn: '2024-04-10T09:00:00Z', endedOn: '2024-04-10T10:00:00Z' },
+        ],
+        hasMore: true,
+      }),
+      { status: 200 },
+    ),
+  );
+  return {
+    ST_TENANT_ID: '000000000',
+    ST_PROXY: { fetch: fetcher },
+    MCP_SYNC_KEY: 'k',
+  } as any;
+}
+
+describe('payroll_non_job_timesheets_list — client-side employeeId/timesheetCodeId filtering', () => {
+  it('filters to only rows matching employeeId', async () => {
+    const env = mixedPageEnv();
+    const out = (await payroll_non_job_timesheets_list.handler(
+      env,
+      { employeeId: 42 },
+      { actor: 'test', correlation: 'c1' },
+    )) as any;
+    expect(out.timesheets.map((t: any) => t.id)).toEqual([1, 2]);
+    expect(out.count).toBe(2);
   });
 
-  it('rejects timesheetCodeId — ST silently ignores timesheetCodeId/timesheetCodeIds on this endpoint (live-verified 2026-07-09)', async () => {
-    await assertFilterPreservation(payroll_non_job_timesheets_list, {
-      timesheetCodeId: { value: 103, expect: 'rejected_or_skipped' },
-    });
+  it('filters to only rows matching timesheetCodeId', async () => {
+    const env = mixedPageEnv();
+    const out = (await payroll_non_job_timesheets_list.handler(
+      env,
+      { timesheetCodeId: 8 },
+      { actor: 'test', correlation: 'c1' },
+    )) as any;
+    expect(out.timesheets.map((t: any) => t.id)).toEqual([1, 3]);
+    expect(out.count).toBe(2);
+  });
+
+  it('ANDs employeeId + timesheetCodeId when both are given', async () => {
+    const env = mixedPageEnv();
+    const out = (await payroll_non_job_timesheets_list.handler(
+      env,
+      { employeeId: 42, timesheetCodeId: 8 },
+      { actor: 'test', correlation: 'c1' },
+    )) as any;
+    expect(out.timesheets.map((t: any) => t.id)).toEqual([1]);
+    expect(out.count).toBe(1);
+  });
+
+  it('never forwards employeeId/timesheetCodeId to ST — filtering is client-side only', async () => {
+    const env = mixedPageEnv();
+    await payroll_non_job_timesheets_list.handler(
+      env,
+      { employeeId: 42, timesheetCodeId: 8 },
+      { actor: 'test', correlation: 'c1' },
+    );
+    const calledUrl = (env.ST_PROXY.fetch as any).mock.calls[0][0];
+    expect(calledUrl).not.toContain('employeeId');
+    expect(calledUrl).not.toContain('timesheetCodeId');
+  });
+
+  it('keeps has_more as ST raw page-level hasMore (unfiltered) — known completeness tradeoff, same as list_unpaid_invoices', async () => {
+    const env = mixedPageEnv();
+    const out = (await payroll_non_job_timesheets_list.handler(
+      env,
+      { employeeId: 999999 }, // matches nothing on this page
+      { actor: 'test', correlation: 'c1' },
+    )) as any;
+    expect(out.timesheets).toEqual([]);
+    expect(out.count).toBe(0);
+    expect(out.has_more).toBe(true); // raw ST hasMore, not filtered-completeness aware
   });
 });
 

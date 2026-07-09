@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { McpError } from '../../errors';
 import { defaultShaper } from '../../response-shape';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
@@ -72,7 +71,7 @@ const MAX_PAGESIZE = 100;
 export const payroll_non_job_timesheets_list: ToolDef<Args> = {
   name: 'payroll_non_job_timesheets_list',
   description:
-    'List ServiceTitan non-job timesheets (meeting/training/admin time). Filter by modified-date window (fromDate/toDate map to modifiedOnOrAfter/modifiedOnOrBefore — ST ignores startsOnOrAfter/endsOnOrBefore on this endpoint). employeeId/timesheetCodeId are NOT filterable server-side on this ST endpoint (live-verified 2026-07-09: the singular employeeId 409s, and every plural/alternate form tried is silently ignored) — passing either throws; filter client-side on the returned employee_id/timesheet_code_id fields instead. Source: live ST.',
+    'List ServiceTitan non-job timesheets (meeting/training/admin time). Filter by modified-date window (fromDate/toDate map to modifiedOnOrAfter/modifiedOnOrBefore — ST ignores startsOnOrAfter/endsOnOrBefore on this endpoint). employeeId/timesheetCodeId are filtered CLIENT-SIDE — ST has no working server-side filter for either on this endpoint (live-verified 2026-07-09: employeeId singular 409s, every plural/alternate form tried is a silent no-op) — so page/pageSize apply to the UNFILTERED set and a page can come back with fewer matches (or zero) than pageSize even when more exist on other pages. Source: live ST.',
   zodSchema: {
     employeeId: z
       .number()
@@ -80,7 +79,7 @@ export const payroll_non_job_timesheets_list: ToolDef<Args> = {
       .positive()
       .optional()
       .describe(
-        'NOT FILTERABLE server-side on this endpoint (live-verified 2026-07-09: employeeId singular 409s "Employee type was not specified"; employeeIds/technicianId(s)/ids plural forms are all silently ignored — identical unfiltered page regardless of value). Passing this arg throws immediately; filter client-side on the returned employee_id field instead.',
+        'Filter to one employee. Applied CLIENT-SIDE after fetch — ST has no working server-side filter on this endpoint (live-verified 2026-07-09: employeeId singular 409s "Employee type was not specified"; employeeIds/technicianId(s)/ids plural forms are all silently ignored). page/pageSize still apply server-side to the UNFILTERED set, so a page can come back with fewer matches (or zero) than pageSize even when more exist on other pages — page through if needed.',
       ),
     timesheetCodeId: z
       .number()
@@ -88,7 +87,7 @@ export const payroll_non_job_timesheets_list: ToolDef<Args> = {
       .positive()
       .optional()
       .describe(
-        'NOT FILTERABLE server-side on this endpoint (live-verified 2026-07-09: timesheetCodeId and timesheetCodeIds are both silently ignored — identical unfiltered page regardless of value). Passing this arg throws immediately; filter client-side on the returned timesheet_code_id field instead.',
+        'Filter to one timesheet code. Applied CLIENT-SIDE after fetch — ST silently ignores timesheetCodeId/timesheetCodeIds server-side on this endpoint (live-verified 2026-07-09). page/pageSize still apply server-side to the UNFILTERED set, so a page can come back with fewer matches (or zero) than pageSize even when more exist on other pages — page through if needed.',
       ),
     fromDate: z
       .string()
@@ -113,31 +112,6 @@ export const payroll_non_job_timesheets_list: ToolDef<Args> = {
   },
   stEndpoint: { method: 'GET', path: '/payroll/v2/tenant/{tid}/non-job-timesheets', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    // Both filters are provably unsupported by ST on this endpoint (see
-    // live-probe notes above and in the test file). Reject loudly rather
-    // than either 409ing (employeeId) or silently returning an unfiltered
-    // page that looks filtered (timesheetCodeId) — the same silent-drop
-    // class of bug QUA-694 caught elsewhere in this tool surface.
-    if (args.employeeId !== undefined) {
-      throw new McpError(
-        'validation_error',
-        `payroll_non_job_timesheets_list: employeeId cannot be honored — ST's non-job-timesheets endpoint has no ` +
-          `working employee filter (singular 409s "Employee type was not specified"; plural employeeIds is ` +
-          `silently ignored, verified live 2026-07-09). Omit employeeId and filter client-side on the returned ` +
-          `employee_id field.`,
-        { correlation },
-      );
-    }
-    if (args.timesheetCodeId !== undefined) {
-      throw new McpError(
-        'validation_error',
-        `payroll_non_job_timesheets_list: timesheetCodeId cannot be honored — ST's non-job-timesheets endpoint ` +
-          `silently ignores timesheetCodeId/timesheetCodeIds (verified live 2026-07-09). Omit timesheetCodeId ` +
-          `and filter client-side on the returned timesheet_code_id field.`,
-        { correlation },
-      );
-    }
-
     const page = args.page ?? 1;
     const pageSize = Math.min(args.pageSize ?? DEFAULT_PAGESIZE, MAX_PAGESIZE);
     const query: Record<string, unknown> = {
@@ -153,9 +127,27 @@ export const payroll_non_job_timesheets_list: ToolDef<Args> = {
       `/payroll/v2/tenant/${env.ST_TENANT_ID}/non-job-timesheets`,
       query,
     );
+
+    // employeeId/timesheetCodeId have no working server-side filter on this
+    // ST endpoint (live-verified 2026-07-09 — employeeId singular 409s,
+    // every plural/alternate form of both is a silent no-op). Neither is
+    // ever forwarded to ST; instead we filter the fetched page client-side,
+    // mirroring list_unpaid_invoices.ts's balance!=0 pattern for a
+    // genuinely-broken ST filter. Known tradeoff carried over from that
+    // same pattern: page/pageSize apply server-side to the UNFILTERED set,
+    // so a page can come back with fewer matches (or zero) than pageSize
+    // even when more exist on other pages.
+    let timesheets = (data.data ?? []).map(slim);
+    if (args.employeeId !== undefined) {
+      timesheets = timesheets.filter((t) => t.employee_id === args.employeeId);
+    }
+    if (args.timesheetCodeId !== undefined) {
+      timesheets = timesheets.filter((t) => t.timesheet_code_id === args.timesheetCodeId);
+    }
+
     return {
-      count: (data.data ?? []).length,
-      timesheets: (data.data ?? []).map(slim),
+      count: timesheets.length,
+      timesheets,
       has_more: !!data.hasMore,
       _source: 'live',
     };
