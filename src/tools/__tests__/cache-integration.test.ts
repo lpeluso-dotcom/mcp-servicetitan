@@ -120,7 +120,10 @@ describe('cache integration — list_service_categories', () => {
 
 describe('cache integration — list_unpaid_invoices', () => {
   it('hits live ST on cache miss', async () => {
-    const env = makeEnv(liveOk([{ id: 1 }]));
+    // balance must be non-zero — QUA-649's client-side filter (added because
+    // ST silently ignores balanceExcludeZero) drops $0-balance rows, and this
+    // fixture predates that fix.
+    const env = makeEnv(liveOk([{ id: 1, balance: 75 }]));
     const result: any = await list_unpaid_invoices.handler(env, {}, CTX);
     expect(result.invoices).toHaveLength(1);
     expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);

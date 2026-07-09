@@ -255,4 +255,26 @@ describe('list_unpaid_invoices', () => {
     // ST uses "outstanding" balance filter — endpoint must filter non-zero balance
     expect(url).toContain('invoice');
   });
+
+  // QUA-649: ST's /accounting/v2/tenant/{tid}/invoices endpoint silently
+  // ignores balanceExcludeZero — it isn't a real filter param there (confirmed
+  // against the D1 mirror: ~1,060 real unpaid invoices exist vs. this tool
+  // returning legacy $0-balance rows). The endpoint returns everything
+  // regardless of what we ask it to filter, so the tool must filter client-side
+  // the same way list_jobs_today's ET-appointments fix (PR #41) does for its
+  // own silently-ignored params.
+  it('drops $0-balance invoices client-side even though ST returns them anyway', async () => {
+    const env = makeEnv(
+      liveOk([
+        { id: 1, balance: 0 },
+        { id: 2, balance: 128.5 },
+        { id: 3, balance: 0 },
+        { id: 4, balance: 42 },
+      ]),
+    );
+
+    const result: any = await list_unpaid_invoices.handler(env, {}, CTX);
+
+    expect(result.invoices.map((i: any) => i.id)).toEqual([2, 4]);
+  });
 });
