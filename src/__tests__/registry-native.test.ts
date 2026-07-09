@@ -95,6 +95,43 @@ const destructiveWriteTool: ToolDef<Record<string, unknown>> = {
   },
 };
 
+const putWriteTool: ToolDef<Record<string, unknown>> = {
+  name: 'fixture_put_write_tool',
+  description: 'A PUT (full-replace) write fixture tool',
+  zodSchema: {},
+  isWrite: true,
+  stEndpoint: { method: 'PUT', path: '/fixture/{id}', source: 'live' },
+  async handler() {
+    return { replaced: true };
+  },
+};
+
+const deleteWriteTool: ToolDef<Record<string, unknown>> = {
+  name: 'fixture_delete_write_tool',
+  description: 'A DELETE write fixture tool',
+  zodSchema: {},
+  isWrite: true,
+  stEndpoint: { method: 'DELETE', path: '/fixture/{id}', source: 'live' },
+  async handler() {
+    return { deleted: true };
+  },
+};
+
+// An otherwise-additive POST write whose default destructiveHint:false is
+// overridden to true via the per-tool annotations override — proves the merge
+// mechanism (used by hold_appointment, which POSTs but mutates existing state).
+const overriddenPostWriteTool: ToolDef<Record<string, unknown>> = {
+  name: 'fixture_overridden_post_write_tool',
+  description: 'A POST write that overrides destructiveHint to true',
+  zodSchema: {},
+  isWrite: true,
+  stEndpoint: { method: 'POST', path: '/fixture/{id}/hold', source: 'live' },
+  annotations: { destructiveHint: true },
+  async handler() {
+    return { held: true };
+  },
+};
+
 // A non-object result (array) — exercises the structuredContent wrap rule:
 // "if result is not a non-null object, wrap it as { result } for
 // structuredContent ONLY (leave the text block as raw JSON.stringify unchanged)".
@@ -141,13 +178,47 @@ describe('registerTool — native SDK config-object registration', () => {
     expect(annotations!.openWorldHint).toBe(false);
   });
 
-  it('destructive write (PATCH): readOnlyHint=false, destructiveHint=true, openWorldHint=false', () => {
+  it('destructive write (PATCH): readOnlyHint=false, destructiveHint=true, idempotentHint=false, openWorldHint=false', () => {
     const { server, registrations } = makeStubServer();
     registerTool(server, destructiveWriteTool, makeEnv(), execCtx, reqCtx);
     const { annotations } = registrations[0].config;
     expect(annotations!.readOnlyHint).toBe(false);
     // PATCH modifies existing data — destructive.
     expect(annotations!.destructiveHint).toBe(true);
+    // PATCH (partial update) is not a canonically idempotent HTTP method.
+    expect(annotations!.idempotentHint).toBe(false);
+    expect(annotations!.openWorldHint).toBe(false);
+  });
+
+  it('PUT write: destructiveHint=true, idempotentHint=true (PUT is idempotent full-replace)', () => {
+    const { server, registrations } = makeStubServer();
+    registerTool(server, putWriteTool, makeEnv(), execCtx, reqCtx);
+    const { annotations } = registrations[0].config;
+    expect(annotations!.readOnlyHint).toBe(false);
+    expect(annotations!.destructiveHint).toBe(true);
+    expect(annotations!.idempotentHint).toBe(true);
+    expect(annotations!.openWorldHint).toBe(false);
+  });
+
+  it('DELETE write: destructiveHint=true, idempotentHint=true (DELETE is idempotent)', () => {
+    const { server, registrations } = makeStubServer();
+    registerTool(server, deleteWriteTool, makeEnv(), execCtx, reqCtx);
+    const { annotations } = registrations[0].config;
+    expect(annotations!.readOnlyHint).toBe(false);
+    expect(annotations!.destructiveHint).toBe(true);
+    expect(annotations!.idempotentHint).toBe(true);
+    expect(annotations!.openWorldHint).toBe(false);
+  });
+
+  it('per-tool annotations override wins over derived defaults (POST write forced destructive)', () => {
+    const { server, registrations } = makeStubServer();
+    registerTool(server, overriddenPostWriteTool, makeEnv(), execCtx, reqCtx);
+    const { annotations } = registrations[0].config;
+    // Derived default for a POST write is destructiveHint:false; the override
+    // flips it to true. Non-overridden fields keep their derived values.
+    expect(annotations!.destructiveHint).toBe(true);
+    expect(annotations!.readOnlyHint).toBe(false);
+    expect(annotations!.idempotentHint).toBe(false);
     expect(annotations!.openWorldHint).toBe(false);
   });
 
@@ -187,6 +258,8 @@ describe('registerTool — native SDK config-object registration', () => {
     expect(parsed).toEqual({ ok: true, value: 1 });
 
     expect(result.structuredContent).toEqual({ ok: true, value: 1 });
+    // For an object result the structuredContent is exactly the parsed text.
+    expect(result.structuredContent).toEqual(parsed);
   });
 
   it('wraps non-object (array) results as { result } for structuredContent only — text stays raw JSON', async () => {

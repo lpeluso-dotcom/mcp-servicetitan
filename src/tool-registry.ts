@@ -115,14 +115,19 @@ export function registerTool(
   execCtx: ExecutionContext,
   reqCtx: RequestContext
 ): void {
+  // Compute the merged annotations ONCE: method-derived defaults, then the
+  // per-tool overrides (tool.annotations) layered on top. The wire `title`
+  // reuses annotations.title so it can't drift from the annotation copy.
+  const annotations = { ...deriveAnnotations(tool), ...(tool.annotations ?? {}) };
+
   server.registerTool(
     tool.name,
     {
-      title: tool.title ?? tool.name.replace(/_/g, ' '),
+      title: annotations.title,
       description: tool.description,
       inputSchema: tool.zodSchema,
       ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
-      annotations: deriveAnnotations(tool),
+      annotations,
     },
     async (args: Record<string, unknown>) => {
       const correlation = newCorrelationId();
@@ -187,7 +192,10 @@ export function registerTool(
             : { result };
 
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+          // `?? null` guards against a stray `undefined` result — JSON.stringify(undefined)
+          // is itself undefined, which would emit an invalid text block. structuredContent
+          // already wraps null/undefined via the { result } branch computed above.
+          content: [{ type: 'text' as const, text: JSON.stringify(result ?? null) }],
           structuredContent,
         };
       } catch (err) {

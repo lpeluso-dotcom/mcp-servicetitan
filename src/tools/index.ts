@@ -153,6 +153,8 @@ export interface ToolDef<Args = Record<string, unknown>> {
   title?: string;
   /** Optional output schema — same shape convention as zodSchema. Passed through to registerTool's outputSchema. */
   outputSchema?: z.ZodRawShape;
+  /** Optional per-tool annotation overrides — merged OVER the method-derived defaults in tool-registry (e.g. a POST that mutates existing state can force destructiveHint:true). */
+  annotations?: Partial<{ title: string; readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean }>;
   /** True for tools that modify state (writes). Informs registry + future role checks. */
   isWrite?: boolean;
   /** True for tools only registered when caller role === 'admin' (F1 placeholder; full gate in F2). */
