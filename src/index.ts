@@ -18,6 +18,7 @@ import { TOOLS, toolsForRole } from './tools/index';
 import { registerTool, type RequestContext } from './tool-registry';
 import { registerPrompts } from './prompts/index';
 import { registerResultResource } from './resources/results';
+import { registerCatalogResources } from './resources/catalogs';
 import { resolveAuth, verifyConnectorToken } from './auth';
 import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
@@ -228,6 +229,7 @@ export function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: Request
   }
   registerPrompts(server);
   registerResultResource(server, env);
+  registerCatalogResources(server, env);
   return server;
 }
 
