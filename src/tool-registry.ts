@@ -20,6 +20,7 @@ import type { ToolDef } from './tools/index';
 import { newCorrelationId } from './auth';
 import { McpError } from './errors';
 import * as obs from './obs';
+import { offloadIfLarge } from './resources/results';
 
 export interface RequestContext {
   actor: string;
@@ -181,23 +182,15 @@ export function registerTool(
         );
         emitMetric(env, execCtx, tool.name, 'ok', latency, reqCtx);
 
-        // structuredContent must be an object per the MCP spec. Most tool
-        // results already are (the common case); a bare array/primitive gets
-        // wrapped for structuredContent ONLY — the text block stays the raw
-        // JSON.stringify(result) unchanged, for back-compat with existing
-        // callers that parse content[0].text directly.
-        const structuredContent =
-          result !== null && typeof result === 'object' && !Array.isArray(result)
-            ? (result as Record<string, unknown>)
-            : { result };
-
-        return {
-          // `?? null` guards against a stray `undefined` result — JSON.stringify(undefined)
-          // is itself undefined, which would emit an invalid text block. structuredContent
-          // already wraps null/undefined via the { result } branch computed above.
-          content: [{ type: 'text' as const, text: JSON.stringify(result ?? null) }],
-          structuredContent,
-        };
+        // Gated offload: below RESULT_THRESHOLD bytes this is byte-identical
+        // to the prior inline behavior (same text content block + same
+        // structuredContent wrapping rule, now factored into
+        // wrapStructuredContent so there is exactly one implementation of
+        // that rule). Above threshold, the full payload is stashed in KV and
+        // a resource_link is returned instead of inlining it. See
+        // src/resources/results.ts.
+        const shaped = await offloadIfLarge(env, correlation, result);
+        return { content: shaped.content, structuredContent: shaped.structuredContent };
       } catch (err) {
         const latency = Date.now() - started;
         const mcpErr =
