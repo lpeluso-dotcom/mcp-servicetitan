@@ -140,10 +140,49 @@ describe('get_job', () => {
 });
 
 describe('list_jobs_today', () => {
-  it('fetches today\'s jobs without required params', async () => {
-    const env = makeEnv(liveOk([{ id: 1 }, { id: 2 }]));
+  // Two-call flow: drain today's appointments (by ET start window) → batch the parent jobs by id.
+  function jobsTodayFetch(appointments: any[], jobs: any[]) {
+    return async (url: string) => {
+      if (url.includes('appointments')) {
+        return new Response(JSON.stringify({ data: appointments, hasMore: false }), { status: 200 });
+      }
+      if (url.includes('jobs')) {
+        return new Response(JSON.stringify({ data: jobs, hasMore: false }), { status: 200 });
+      }
+      throw new Error(`unexpected url: ${url}`);
+    };
+  }
+
+  it('lists today\'s jobs via appointments→jobs and dedupes shared jobs', async () => {
+    const env = makeEnv(jobsTodayFetch(
+      [{ id: 11, jobId: 100 }, { id: 12, jobId: 100 }, { id: 13, jobId: 200 }], // job 100 has 2 appts
+      [{ id: 100, jobStatus: 'Scheduled', businessUnitId: 1 }, { id: 200, jobStatus: 'InProgress', businessUnitId: 2 }],
+    ));
     const result: any = await list_jobs_today.handler(env, {}, CTX);
-    expect(Array.isArray(result.jobs)).toBe(true);
+    expect(result.jobs.map((j: any) => j.id).sort()).toEqual([100, 200]);
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(2); // appointments + jobs
+    const urls = env.ST_PROXY.fetch.mock.calls.map((c: any[]) => decodeURIComponent(c[0]));
+    // appointments queried by start window (NOT the jobs endpoint with bogus scheduled* params)
+    expect(urls.some((u: string) => u.includes('/appointments') && u.includes('startsOnOrAfter'))).toBe(true);
+    // jobs fetched by the deduped id set (comma may be %2C-encoded in the URL)
+    expect(urls.some((u: string) => u.includes('/jobs') && u.includes('ids=') && u.includes('100') && u.includes('200'))).toBe(true);
+  });
+
+  it('filters by status client-side', async () => {
+    const env = makeEnv(jobsTodayFetch(
+      [{ id: 1, jobId: 100 }, { id: 2, jobId: 200 }],
+      [{ id: 100, jobStatus: 'Scheduled', businessUnitId: 1 }, { id: 200, jobStatus: 'Completed', businessUnitId: 1 }],
+    ));
+    const result: any = await list_jobs_today.handler(env, { status: 'Scheduled' }, CTX);
+    expect(result.jobs).toHaveLength(1);
+    expect(result.jobs[0].id).toBe(100);
+  });
+
+  it('returns empty (and skips the jobs call) when there are no appointments today', async () => {
+    const env = makeEnv(jobsTodayFetch([], [{ id: 999 }]));
+    const result: any = await list_jobs_today.handler(env, {}, CTX);
+    expect(result.jobs).toEqual([]);
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1); // only appointments
   });
 });
 
