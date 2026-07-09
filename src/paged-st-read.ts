@@ -21,6 +21,7 @@
 import type { Env } from './env';
 import { extractStData } from './composite-helpers';
 import { familyFromEndpoint, checkRateLimit, reportBackoff } from './rate-limit-guard';
+import { rewriteTenantPlaceholders } from './tenant';
 
 export interface PagedReadOptions {
   pageSize?: number;
@@ -90,7 +91,14 @@ export async function pagedStRead<T = unknown>(
   const maxPages = opts.maxPages ?? DEFAULT_MAX_PAGES;
   const startPage = opts.startPage ?? 1;
   const retries = opts.retries ?? DEFAULT_RETRIES;
-  const family = familyFromEndpoint(endpointPath);
+  // Resolve the /tenant/000000000/ placeholder to the real ST_TENANT_ID ONCE,
+  // here, mirroring st.ts's readST/readSTPost. buildPageUrl previously used
+  // endpointPath verbatim, so callers passing the standard placeholder
+  // pattern (e.g. margin_audit's `/jpm/v2/tenant/000000000/jobs`) sent the
+  // literal placeholder to ST, which 403'd with "Resource owner validation
+  // failed". No-op when ST_TENANT_ID is unset/placeholder (dev/test).
+  const resolvedPath = rewriteTenantPlaceholders(env, endpointPath);
+  const family = familyFromEndpoint(resolvedPath);
 
   const items: T[] = [];
   const warnings: string[] = [];
@@ -104,7 +112,7 @@ export async function pagedStRead<T = unknown>(
       break;
     }
 
-    const url = buildPageUrl(endpointPath, query, page, pageSize);
+    const url = buildPageUrl(resolvedPath, query, page, pageSize);
     let attempt = 0;
     let pageResult: RawPageShape | null = null;
     let pageFailure: PagedReadFailure | null = null;
