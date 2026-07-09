@@ -262,6 +262,31 @@ describe('margin_audit', () => {
     expect(result.pageCount).toBe(20); // default maxPages
     expect(result.jobCount).toBe(4000);
   });
+
+  // Live-verified 2026-07-09: /jpm/v2/tenant/{tid}/jobs honors the SINGULAR
+  // businessUnitId query param but silently ignores the plural
+  // businessUnitIds (returns jobs across every BU, unfiltered). The tool
+  // was sending the plural, so margin_audit computed margin over the whole
+  // company instead of the requested BU.
+  it('queries jobs with the singular businessUnitId param (plural businessUnitIds is silently ignored by ST)', async () => {
+    const urls: string[] = [];
+    const env = makeEnv(async (url: string) => {
+      if (url.includes('/api/st/read')) urls.push(url);
+      if (!url.includes('/api/st/read')) return new Response('{}', { status: 200 });
+      return new Response(JSON.stringify({ data: [], hasMore: false }), { status: 200 });
+    });
+    await margin_audit.handler(
+      env,
+      { businessUnitId: 100003, from: '2026-01-01', to: '2026-03-31' },
+      CTX
+    );
+    const jobsCalls = urls.filter((u) => u.includes('%2Fjobs%3F') || u.includes('/jobs?'));
+    expect(jobsCalls.length).toBeGreaterThan(0);
+    for (const u of jobsCalls) {
+      expect(u).toContain('businessUnitId%3D100003');
+      expect(u).not.toContain('businessUnitIds%3D');
+    }
+  });
 });
 
 describe('membership_outreach_list', () => {
