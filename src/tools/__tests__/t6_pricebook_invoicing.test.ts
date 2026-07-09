@@ -175,17 +175,34 @@ describe('get_invoice', () => {
   });
 
   it('fetches invoice by ID', async () => {
-    const env = makeEnv(liveOk({ id: 200, total: 350.00 }));
+    const env = makeEnv(liveOk([{ id: 200, total: 350.00 }]));
     const result: any = await get_invoice.handler(env, { invoiceId: 200 }, CTX);
     expect(result.invoice).toBeDefined();
   });
 
   it('calls accounting invoices endpoint with ID', async () => {
-    const env = makeEnv(liveOk({ id: 200 }));
+    const env = makeEnv(liveOk([{ id: 200 }]));
     await get_invoice.handler(env, { invoiceId: 200 }, CTX);
     const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('200');
     expect(url).toContain('invoice');
+  });
+
+  it('get_invoice fetches via ?ids= and unwraps data[0]', async () => {
+    let captured = '';
+    const env = makeEnv(async (url: string) => {
+      captured = url;
+      return new Response(JSON.stringify({ data: [{ id: 279340, total: '150.00' }] }), { status: 200 });
+    });
+    const result: any = await get_invoice.handler(env, { invoiceId: 279340 }, CTX);
+    const endpoint = new URL(captured).searchParams.get('endpoint')!;
+    expect(endpoint).toBe('/accounting/v2/tenant/000000000/invoices?ids=279340');
+    expect(result.invoice).toEqual({ id: 279340, total: '150.00' });
+  });
+
+  it('get_invoice throws not_found when ids filter returns empty', async () => {
+    const env = makeEnv(liveOk([]));
+    await expect(get_invoice.handler(env, { invoiceId: 999 }, CTX)).rejects.toThrow(/not found/i);
   });
 });
 
