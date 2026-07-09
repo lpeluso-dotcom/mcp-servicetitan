@@ -67,7 +67,8 @@ export const update_estimate_template = defineWriteTool<Args>({
     'Update an estimate template. Any top-level field omitted is left unchanged. items, when provided, is a ' +
     'FULL-REPLACEMENT array in the exact GET item shape (verbatim, removal-by-omission) — GET the template first, ' +
     'build the survivor list client-side, then PATCH the whole array back; omitting items entirely leaves existing ' +
-    'items untouched. ⚠ Item-level PATCH does NOT advance modifiedOn (the write persists correctly, but the ' +
+    'items untouched. ⚠ Passing items:[] (an explicit empty array) REMOVES ALL ITEMS from the template — this is ' +
+    'destructive and different from omitting the field. ⚠ Item-level PATCH does NOT advance modifiedOn (the write persists correctly, but the ' +
     'timestamp stays frozen — do not rely on modifiedOn to detect an item-only update). This tool reads/writes ' +
     'live ServiceTitan only; it does not refresh any D1 table (no D1 estimate_templates consumer exists in this repo). ' +
     'dryRun=true (default) → token → dryRun=false to write.',
@@ -78,7 +79,7 @@ export const update_estimate_template = defineWriteTool<Args>({
     summary: z.string().optional().describe('Short summary/description of the template'),
     mode: z.enum(['Dynamic', 'Static']).optional().describe('Pricing mode'),
     businessUnitId: z.number().int().positive().optional().describe('Business unit this template belongs to'),
-    active: z.boolean().optional().describe('Active flag. Same effect as delete_estimate_template(active:false) / reactivate with true.'),
+    active: z.boolean().optional().describe('active:false has the same effect as delete_estimate_template (soft-deactivate); active:true reactivates a deactivated template.'),
     items: z
       .array(UpdateItemSchema)
       .optional()
