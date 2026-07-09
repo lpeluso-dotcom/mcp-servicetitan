@@ -287,6 +287,35 @@ describe('margin_audit', () => {
       expect(u).not.toContain('businessUnitIds%3D');
     }
   });
+
+  // Regression for the production 2026-07-09 incident: margin_audit hardcodes
+  // TENANT_ID = '000000000' and hands it to pagedStRead, which previously
+  // built the outgoing URL from the raw endpointPath — never resolving the
+  // placeholder the way readST/readSTPost do. ST responded 403 "Resource
+  // owner validation failed" to the literal /tenant/000000000/ path on every
+  // call. This asserts the end-to-end outgoing jobs URL carries the real
+  // tenant once pagedStRead resolves it internally.
+  it('resolves the tenant placeholder in the outgoing jobs URL for a real-tenant env (2026-07-09 production 403)', async () => {
+    const urls: string[] = [];
+    const env = makeEnv(async (url: string) => {
+      if (url.includes('/api/st/read')) urls.push(url);
+      if (!url.includes('/api/st/read')) return new Response('{}', { status: 200 });
+      return new Response(JSON.stringify({ data: [], hasMore: false }), { status: 200 });
+    });
+    env.ST_TENANT_ID = '431848990';
+    await margin_audit.handler(
+      env,
+      { businessUnitId: 3, from: '2026-01-01', to: '2026-03-31' },
+      CTX
+    );
+    const jobsCalls = urls.filter((u) => u.includes('%2Fjobs%3F') || u.includes('/jobs?'));
+    expect(jobsCalls.length).toBeGreaterThan(0);
+    for (const u of jobsCalls) {
+      const endpointParam = new URL(u).searchParams.get('endpoint');
+      expect(endpointParam).toContain('/jpm/v2/tenant/431848990/jobs');
+      expect(endpointParam).not.toContain('/jpm/v2/tenant/000000000/jobs');
+    }
+  });
 });
 
 describe('membership_outreach_list', () => {

@@ -175,4 +175,40 @@ describe('pagedStRead', () => {
     expect(capturedUrl).toContain('page%3D3');
     expect(capturedUrl).toContain('businessUnitIds%3D1');
   });
+
+  // Live-verified 2026-07-09: buildPageUrl used endpointPath verbatim, so
+  // callers passing the /tenant/000000000/ placeholder (the standard
+  // pattern used throughout this codebase, e.g. margin_audit) sent the
+  // literal placeholder to ST instead of the real tenant. ST rejected it
+  // with a 403 "Resource owner validation failed" on every call. readST/
+  // readSTPost in st.ts already resolve the placeholder at the call site
+  // (rewriteTenantPlaceholders); pagedStRead must do the same.
+  it('resolves the /tenant/000000000/ placeholder to ST_TENANT_ID before building the page URL', async () => {
+    let capturedUrl = '';
+    const env = makeEnv(async (url: string) => {
+      capturedUrl = url;
+      return pageOk([], false);
+    });
+    env.ST_TENANT_ID = '431848990';
+    await pagedStRead(env, HEADERS, '/jpm/v2/tenant/000000000/jobs', { businessUnitId: 3 });
+    const endpointParam = new URL(capturedUrl).searchParams.get('endpoint');
+    expect(endpointParam).not.toBeNull();
+    expect(endpointParam).toContain('/jpm/v2/tenant/431848990/jobs');
+    expect(endpointParam).not.toContain('/jpm/v2/tenant/000000000/jobs');
+  });
+
+  // Convention mirrors st.ts's readST tests: with ST_TENANT_ID unset (or the
+  // placeholder itself), the rewrite is a safe no-op so existing dev/test
+  // assertions against the literal 000000000 path continue to hold.
+  it('leaves the endpoint untouched when ST_TENANT_ID is unset (dev/test no-op)', async () => {
+    let capturedUrl = '';
+    const env = makeEnv(async (url: string) => {
+      capturedUrl = url;
+      return pageOk([], false);
+    });
+    // ST_TENANT_ID intentionally absent from env.
+    await pagedStRead(env, HEADERS, '/jpm/v2/tenant/000000000/jobs', { businessUnitId: 3 });
+    const endpointParam = new URL(capturedUrl).searchParams.get('endpoint');
+    expect(endpointParam).toContain('/jpm/v2/tenant/000000000/jobs');
+  });
 });
