@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { readST } from '../../st';
 import { McpError } from '../../errors';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { invoiceId: number }
 
@@ -33,4 +34,5 @@ export const get_invoice: ToolDef<Args> = {
       throw new McpError('upstream_error', `ids filter not honored: asked ${args.invoiceId}, got ${(invoice as { id?: unknown }).id}`, { correlation });
     return { invoice, _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

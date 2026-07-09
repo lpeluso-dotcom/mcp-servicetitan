@@ -3,6 +3,7 @@ import { McpError } from '../../errors';
 import { readST } from '../../st';
 import { readD1 } from '../../d1';
 import { resolveBusinessUnit, resolveTechnician } from '../../name-resolver';
+import { defaultShaper } from '../../response-shape';
 import type { ToolDef } from '../index';
 
 interface AssignmentRow {
@@ -131,4 +132,5 @@ export const dispatch_override_audit: ToolDef<Args> = {
       ...(warnings.length > 0 ? { _warnings: warnings } : {}),
     };
   },
+  transformResult: defaultShaper,
 };

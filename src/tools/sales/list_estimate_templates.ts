@@ -5,6 +5,7 @@
 import { z } from 'zod';
 import { readSTPaged } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args {
   active?: 'Any' | 'True' | 'False';
@@ -36,4 +37,5 @@ export const list_estimate_templates: ToolDef<Args> = {
     );
     return { templates: rows, count: totalCount ?? rows.length, _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

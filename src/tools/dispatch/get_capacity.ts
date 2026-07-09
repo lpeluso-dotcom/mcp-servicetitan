@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readSTPost } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args {
   businessUnitIds: number[];
@@ -45,4 +46,5 @@ export const get_capacity: ToolDef<Args> = {
     );
     return { capacity: data, _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args {
   templateId: number;
@@ -30,4 +31,5 @@ export const get_estimate_template: ToolDef<Args> = {
     );
     return { template: data, _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

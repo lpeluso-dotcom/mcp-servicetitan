@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { McpError } from '../../errors';
 import { readST, readSTPost } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 const ReportMode = z.enum(['list_categories', 'list_reports', 'describe_report', 'run']);
 
@@ -144,4 +145,5 @@ export const st_run_report: ToolDef<Args> = {
       _source: 'live',
     };
   },
+  transformResult: defaultShaper,
 };

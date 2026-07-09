@@ -17,6 +17,7 @@ import { McpError } from '../../errors';
 import { queryD1 as d1ProxyQuery } from '../../d1-proxy';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args {
   code?: string;
@@ -194,4 +195,5 @@ export const search_pricebook_all: ToolDef<Args> = {
       throw new McpError('upstream_error', `search_pricebook_all failed: ${(err as Error).message}`, { correlation });
     }
   },
+  transformResult: defaultShaper,
 };

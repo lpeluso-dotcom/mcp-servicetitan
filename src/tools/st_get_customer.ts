@@ -8,6 +8,7 @@ import { cacheGet } from '../cache';
 import { McpError } from '../errors';
 import { readST } from '../st';
 import type { ToolDef } from './index';
+import { defaultShaper } from '../response-shape';
 
 const TENANT_ID = '000000000';
 const NAMESPACE = 'servicetitan:customer';
@@ -35,4 +36,5 @@ export const st_get_customer: ToolDef<Args> = {
       readST(env, { actor, correlation }, endpoint),
     );
   },
+  transformResult: defaultShaper,
 };

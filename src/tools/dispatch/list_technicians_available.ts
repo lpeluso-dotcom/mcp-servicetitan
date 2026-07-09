@@ -3,6 +3,7 @@ import { McpError } from '../../errors';
 import { readST } from '../../st';
 import { resolveBusinessUnit } from '../../name-resolver';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args {
   date?: string;
@@ -60,4 +61,5 @@ export const list_technicians_available: ToolDef<Args> = {
       ...(warnings.length > 0 ? { _warnings: warnings } : {}),
     };
   },
+  transformResult: defaultShaper,
 };

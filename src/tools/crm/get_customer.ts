@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { cacheGet } from '../../cache';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { customerId: number }
 
@@ -22,4 +23,5 @@ export const get_customer: ToolDef<Args> = {
       return { customer, _source: 'live' };
     });
   },
+  transformResult: defaultShaper,
 };

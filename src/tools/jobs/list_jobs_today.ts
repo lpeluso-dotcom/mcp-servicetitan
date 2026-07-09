@@ -4,6 +4,7 @@ import { cacheGet } from '../../cache';
 import { resolveBusinessUnit, resolveTechnician } from '../../name-resolver';
 import { readST, readSTPaged } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 const TENANT_ID = '000000000';
 const TZ = 'America/New_York';
@@ -165,4 +166,5 @@ export const list_jobs_today: ToolDef<Args> = {
 
     return warnings.length > 0 ? { ...result, _warnings: warnings } : result;
   },
+  transformResult: defaultShaper,
 };

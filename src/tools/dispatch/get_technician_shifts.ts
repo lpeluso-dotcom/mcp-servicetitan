@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { technicianId: number; startsOnOrAfter?: string; startsBefore?: string; page?: number; pageSize?: number }
 
@@ -37,4 +38,5 @@ export const get_technician_shifts: ToolDef<Args> = {
     );
     return { shifts: data.data ?? [], _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

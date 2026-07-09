@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { jobId: number }
 
@@ -20,4 +21,5 @@ export const get_job_appointments: ToolDef<Args> = {
     );
     return { appointments: data.data ?? [], _source: 'live' };
   },
+  transformResult: defaultShaper,
 };
