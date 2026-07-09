@@ -16,6 +16,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Env } from './env';
 import { TOOLS, toolsForRole } from './tools/index';
 import { registerTool, type RequestContext } from './tool-registry';
+import { registerPrompts } from './prompts/index';
 import { resolveAuth, verifyConnectorToken } from './auth';
 import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
@@ -224,6 +225,7 @@ export function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: Request
   for (const tool of visible) {
     registerTool(server, tool, env, execCtx, reqCtx);
   }
+  registerPrompts(server);
   return server;
 }
 
