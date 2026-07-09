@@ -122,14 +122,16 @@ fi
 # ── 6. Tests ───────────────────────────────────────────────
 echo ""
 echo "[6] Vitest"
-if npx vitest run --reporter=verbose 2>&1 | tee /tmp/mcp-st-vitest.log | tail -5; then
-  if grep -q " failed" /tmp/mcp-st-vitest.log; then
-    fail "Vitest failures"
-  else
-    pass "Vitest green"
-  fi
+# Use vitest's real exit code (PIPESTATUS[0]) — NOT a substring grep. A grep for
+# " failed" over the verbose log false-positives on any test that legitimately
+# logs or names a failure path (e.g. a KV-fallback console.error, or a test named
+# "...a sub-fetch failed to null"). Vitest exits non-zero iff a test actually fails.
+npx vitest run --reporter=verbose 2>&1 | tee /tmp/mcp-st-vitest.log | tail -5
+VITEST_RC=${PIPESTATUS[0]}
+if [[ $VITEST_RC -eq 0 ]]; then
+  pass "Vitest green"
 else
-  fail "Vitest run failed"
+  fail "Vitest failures (exit $VITEST_RC)"
 fi
 
 # ── 7. Secret scan (gitleaks) ─────────────────────────────
