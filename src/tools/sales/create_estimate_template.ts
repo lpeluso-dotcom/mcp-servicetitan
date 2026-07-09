@@ -6,10 +6,23 @@
 // description/skuName are ST-computed/denormalized FROM the referenced sku,
 // not caller input, so create-time items only accept the subset the caller
 // actually owns (skuId, skuType, quantity, isAddOn, chargeable,
-// allowDiscounts, memo, order). NOTE: this create/update payload shape was
-// not live-tested against prod (only list/get/PATCH item-shape were
-// live-verified) — see create_estimate_template.test.ts's ambiguity note
-// and the phase report for what's inferred vs. confirmed.
+// allowDiscounts, memo, order).
+//
+// ⚠ KNOWN-BROKEN, live-verified 2026-07-09 (2 real POSTs against prod, both
+// 400'd before any record was created — no orphaned data left behind):
+//   1. `internalName` IS REQUIRED — ST rejects a create without it (the GET
+//      shape's optionality does NOT carry over to create). Fixed here.
+//   2. ST's validation ALSO demands a field literally named "model", SEPARATE
+//      from "mode" — sending `model:"Dynamic"` (a plain string) still failed
+//      with "The model field is required", which is the classic ASP.NET
+//      signature of a type/shape mismatch (bind failure), not a missing
+//      value. The real shape of this field is UNRESOLVED. Root-causing it
+//      needs a live ST UI network capture (Playwright + an authenticated ST
+//      session — see the st-internal-api skill) rather than further blind
+//      guessing against production. Filed as a follow-up (QUA-776).
+// UNTIL QUA-776 RESOLVES THIS: calling this tool with dryRun=false WILL FAIL
+// with a live 400 from ST. dryRun=true (the default) is safe and useful for
+// previewing the request shape; do not attempt a live write yet.
 import { z } from 'zod';
 import { defineWriteTool } from '../../write-tool-factory';
 
@@ -37,7 +50,7 @@ type CreateItemArgs = z.infer<typeof CreateItemSchema>;
 
 interface Args {
   name: string;
-  internalName?: string;
+  internalName: string;
   summary?: string;
   mode: 'Dynamic' | 'Static';
   businessUnitId?: number;
@@ -69,11 +82,12 @@ export const create_estimate_template = defineWriteTool<Args>({
     'Create a new estimate template. Item input excludes unitPrice/totalPrice/unitCost/description/skuName — ' +
     "those are ST-computed/denormalized from each item's sku, not caller-supplied. allowDiscounts on an item " +
     'defaults to true when omitted (QSC convention). dryRun=true (default) → token → dryRun=false to write. ' +
-    'NOTE: this create payload shape is inferred from the (live-verified) GET/PATCH item shape and the plan\'s ' +
-    'field list — it was not live-tested against a real ST create call; verify the actual response shape on first use.',
+    '⚠ KNOWN-BROKEN as of 2026-07-09: live-verified against prod, ST additionally requires a "model" field ' +
+    'whose real shape is unresolved (see QUA-776) — dryRun=false WILL currently fail with a live 400 from ST. ' +
+    'dryRun=true previews are safe; do not attempt a live write until QUA-776 resolves the model-field shape.',
   zodSchema: {
     name: z.string().min(1).describe('Template display name'),
-    internalName: z.string().optional().describe('Internal-only name (not shown to customers)'),
+    internalName: z.string().min(1).describe('Internal-only name (not shown to customers). REQUIRED by ST at create time (live-verified 2026-07-09) despite being optional on GET.'),
     summary: z.string().optional().describe('Short summary/description of the template'),
     mode: z.enum(['Dynamic', 'Static']).describe('Pricing mode — Dynamic (QSC default) computes at invoice time; Static uses fixed prices'),
     businessUnitId: z.number().int().positive().optional().describe('Business unit this template belongs to'),
@@ -84,10 +98,10 @@ export const create_estimate_template = defineWriteTool<Args>({
   payload: (args) => {
     const body: Record<string, unknown> = {
       name: args.name,
+      internalName: args.internalName,
       mode: args.mode,
       items: args.items.map(buildItemPayload),
     };
-    if (args.internalName !== undefined) body.internalName = args.internalName;
     if (args.summary !== undefined) body.summary = args.summary;
     if (args.businessUnitId !== undefined) body.businessUnitId = args.businessUnitId;
     return body;

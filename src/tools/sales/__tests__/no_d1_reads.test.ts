@@ -39,7 +39,7 @@ describe('estimate-template CRUD — live reads only, never D1', () => {
 
   it('create_estimate_template never calls /api/sql/read across dryRun + confirm', async () => {
     const env = makeEnv(async () => new Response(JSON.stringify({ id: 1 }), { status: 200 }));
-    const args = { name: 'X', mode: 'Dynamic' as const, items: [{ skuId: 1, skuType: 'Service' as const, quantity: 1 }] };
+    const args = { name: 'X', internalName: 'X-int', mode: 'Dynamic' as const, items: [{ skuId: 1, skuType: 'Service' as const, quantity: 1 }] };
     const dry: any = await create_estimate_template.handler(env, args, CTX);
     await create_estimate_template.handler(env, { ...args, dryRun: false, confirmation_token: dry.confirmation_token }, CTX);
     assertNoD1Calls(env);

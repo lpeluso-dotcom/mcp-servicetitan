@@ -11,7 +11,12 @@ import { create_estimate_template } from '../create_estimate_template';
 import { CTX, makeEnv, noFetch } from './helpers';
 
 const MINIMAL_ITEM = { skuId: 100, skuType: 'Service' as const, quantity: 1 };
-const MINIMAL_ARGS = { name: 'Std HVAC Diagnostic', mode: 'Dynamic' as const, items: [MINIMAL_ITEM] };
+const MINIMAL_ARGS = {
+  name: 'Std HVAC Diagnostic',
+  internalName: 'INT-STD-HVAC-DIAG',
+  mode: 'Dynamic' as const,
+  items: [MINIMAL_ITEM],
+};
 
 describe('create_estimate_template', () => {
   it('is a write tool', () => {
@@ -26,12 +31,19 @@ describe('create_estimate_template', () => {
     });
   });
 
-  it('requires name, mode, and items', () => {
+  it('requires name, internalName, mode, and items', () => {
     const schema = z.object(create_estimate_template.zodSchema);
     expect(schema.safeParse({}).success).toBe(false);
     expect(schema.safeParse({ name: 'X' }).success).toBe(false);
     expect(schema.safeParse({ name: 'X', mode: 'Dynamic' }).success).toBe(false);
+    expect(schema.safeParse({ name: 'X', internalName: 'X', mode: 'Dynamic' }).success).toBe(false);
     expect(schema.safeParse(MINIMAL_ARGS).success).toBe(true);
+  });
+
+  it('rejects a missing internalName (ST requires it at create time, live-verified 2026-07-09)', () => {
+    const schema = z.object(create_estimate_template.zodSchema);
+    const { internalName: _drop, ...withoutInternalName } = MINIMAL_ARGS as Record<string, unknown>;
+    expect(schema.safeParse(withoutInternalName).success).toBe(false);
   });
 
   it('rejects an invalid mode', () => {
@@ -57,6 +69,7 @@ describe('create_estimate_template', () => {
     const schema = z.object(create_estimate_template.zodSchema);
     const parsed = schema.safeParse({
       name: 'X',
+      internalName: 'X-int',
       mode: 'Dynamic',
       items: [{
         skuId: 1, skuType: 'Service', quantity: 1,
@@ -131,11 +144,12 @@ describe('create_estimate_template', () => {
     expect(body.endpoint).toBe('/sales/v2/tenant/000000000/estimate-templates');
     expect(body.method).toBe('POST');
     expect(body.payload.name).toBe('Std HVAC Diagnostic');
+    expect(body.payload.internalName).toBe('INT-STD-HVAC-DIAG');
     expect(body.payload.mode).toBe('Dynamic');
     expect(body.payload.items[0].allowDiscounts).toBe(true);
   });
 
-  it('includes optional top-level fields (internalName, summary, businessUnitId) in the payload when provided', async () => {
+  it('always includes the required internalName in the payload; includes optional summary/businessUnitId when provided', async () => {
     const env = makeEnv(noFetch());
     const dry: any = await create_estimate_template.handler(env, {
       ...MINIMAL_ARGS,
@@ -148,10 +162,10 @@ describe('create_estimate_template', () => {
     expect(dry.payload.businessUnitId).toBe(7);
   });
 
-  it('omits optional top-level fields from the payload when not provided', async () => {
+  it('omits truly-optional top-level fields (summary, businessUnitId) from the payload when not provided; internalName always present', async () => {
     const env = makeEnv(noFetch());
     const dry: any = await create_estimate_template.handler(env, MINIMAL_ARGS, CTX);
-    expect(dry.payload).not.toHaveProperty('internalName');
+    expect(dry.payload.internalName).toBe('INT-STD-HVAC-DIAG');
     expect(dry.payload).not.toHaveProperty('summary');
     expect(dry.payload).not.toHaveProperty('businessUnitId');
   });
