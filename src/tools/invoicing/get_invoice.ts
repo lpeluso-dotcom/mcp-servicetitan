@@ -18,6 +18,12 @@ export const get_invoice: ToolDef<Args> = {
     );
     const invoice = data.data?.[0] ?? null;
     if (!invoice) throw new McpError('not_found', `invoice ${args.invoiceId} not found`, { correlation });
+    // Guard: this endpoint has a documented history of silently ignoring
+    // params (see balanceExcludeZero in list_unpaid_invoices). If ST ever
+    // ignores `ids`, data[0] would be an arbitrary invoice — fail loudly
+    // instead of returning silently wrong financial data.
+    if (Number((invoice as { id?: unknown }).id) !== args.invoiceId)
+      throw new McpError('upstream_error', `ids filter not honored: asked ${args.invoiceId}, got ${(invoice as { id?: unknown }).id}`, { correlation });
     return { invoice, _source: 'live' };
   },
 };

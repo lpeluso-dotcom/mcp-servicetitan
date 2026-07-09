@@ -203,6 +203,15 @@ describe('get_invoice', () => {
   it('get_invoice throws not_found when ids filter returns empty', async () => {
     const env = makeEnv(liveOk([]));
     await expect(get_invoice.handler(env, { invoiceId: 999 }, CTX)).rejects.toThrow(/not found/i);
+    await expect(get_invoice.handler(env, { invoiceId: 999 }, CTX)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  // Guard against ST silently ignoring the ids param (documented history of
+  // silently-ignored params on this endpoint — see balanceExcludeZero in
+  // list_unpaid_invoices). data[0] must actually BE the requested invoice.
+  it('get_invoice rejects when ids filter is not honored (wrong invoice in data[0])', async () => {
+    const env = makeEnv(liveOk([{ id: 999, total: '1.00' }]));
+    await expect(get_invoice.handler(env, { invoiceId: 279340 }, CTX)).rejects.toThrow(/ids filter not honored/);
   });
 });
 
@@ -262,6 +271,19 @@ describe('get_invoice_balance', () => {
     expect(endpoint).toBe('/accounting/v2/tenant/000000000/invoices?ids=279340');
     expect(result.balance).toMatchObject({ invoiceId: 279340, total: '150.00', balance: '25.00' });
   });
+
+  it('get_invoice_balance throws not_found when ids filter returns empty', async () => {
+    const env = makeEnv(liveOk([]));
+    await expect(get_invoice_balance.handler(env, { invoiceId: 999 }, CTX)).rejects.toThrow(/not found/i);
+    await expect(get_invoice_balance.handler(env, { invoiceId: 999 }, CTX)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  // Same ids-honored guard as get_invoice — silently returning an arbitrary
+  // invoice's balance would be silently wrong financial data.
+  it('get_invoice_balance rejects when ids filter is not honored (wrong invoice in data[0])', async () => {
+    const env = makeEnv(liveOk([{ id: 999, total: '1.00', balance: '1.00', payments: [] }]));
+    await expect(get_invoice_balance.handler(env, { invoiceId: 279340 }, CTX)).rejects.toThrow(/ids filter not honored/);
+  });
 });
 
 describe('list_unpaid_invoices', () => {
@@ -315,5 +337,17 @@ describe('list_unpaid_invoices', () => {
     ]));
     const result: any = await list_unpaid_invoices.handler(env, {}, CTX);
     expect(result.invoices.map((i: any) => i.id)).toEqual([2]);
+  });
+
+  // NaN fail-open: a malformed balance must stay VISIBLE rather than be
+  // silently hidden — hiding a possibly-unpaid invoice is the worse failure.
+  it('keeps rows with malformed (non-numeric) balance visible', async () => {
+    const env = makeEnv(liveOk([
+      { id: 1, balance: 'abc' },
+      { id: 2, balance: '0.00' },
+      { id: 3, balance: '75.00' },
+    ]));
+    const result: any = await list_unpaid_invoices.handler(env, {}, CTX);
+    expect(result.invoices.map((i: any) => i.id)).toEqual([1, 3]);
   });
 });

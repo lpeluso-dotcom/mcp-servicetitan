@@ -6,13 +6,13 @@ import type { ToolDef } from '../index';
 interface Args { businessUnitId?: number; customerId?: number; page?: number; pageSize?: number }
 
 interface RawInvoice {
-  balance?: number;
+  balance?: number | string | null;
   [key: string]: unknown;
 }
 
 export const list_unpaid_invoices: ToolDef<Args> = {
   name: 'list_unpaid_invoices',
-  description: 'List invoices with an outstanding balance (unpaid or partially paid). Source: D1 (invoices nightly-synced).',
+  description: 'List invoices with an outstanding balance (unpaid or partially paid). Source: live ST (accounting invoices, filtered client-side to balance ≠ 0; cached 120s).',
   zodSchema: {
     businessUnitId: z.number().int().positive().optional().describe('Filter by business unit ID'),
     customerId: z.number().int().positive().optional().describe('Filter by customer ID'),
@@ -50,7 +50,11 @@ export const list_unpaid_invoices: ToolDef<Args> = {
         '/accounting/v2/tenant/000000000/invoices',
         query,
       );
-      const invoices = (data.data ?? []).filter((inv) => Number(inv.balance ?? 0) !== 0);
+      const invoices = (data.data ?? []).filter((inv) => {
+        // malformed balance → keep row visible rather than silently hiding it
+        const n = Number(inv.balance ?? 0);
+        return !Number.isFinite(n) || n !== 0;
+      });
       return { invoices, _source: 'live' };
     });
   },
