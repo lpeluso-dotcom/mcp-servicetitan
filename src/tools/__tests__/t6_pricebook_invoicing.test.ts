@@ -237,18 +237,30 @@ describe('get_invoice_balance', () => {
   });
 
   it('fetches invoice balance (not /payments/ endpoint)', async () => {
-    const env = makeEnv(liveOk({ id: 200, balance: 150.00, total: 350.00 }));
+    const env = makeEnv(liveOk([{ id: 200, balance: 150.00, total: 350.00 }]));
     const result: any = await get_invoice_balance.handler(env, { invoiceId: 200 }, CTX);
     expect(result.balance).toBeDefined();
     expect(result.balance.invoiceId).toBe(200);
   });
 
   it('calls invoices endpoint (T9: not /payments/)', async () => {
-    const env = makeEnv(liveOk({ id: 200, balance: 0 }));
+    const env = makeEnv(liveOk([{ id: 200, balance: 0 }]));
     await get_invoice_balance.handler(env, { invoiceId: 200 }, CTX);
     const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('invoice');
     expect(url).not.toContain('payment');
+  });
+
+  it('get_invoice_balance fetches via ?ids= and reads balance off data[0]', async () => {
+    let captured = '';
+    const env = makeEnv(async (url: string) => {
+      captured = url;
+      return new Response(JSON.stringify({ data: [{ id: 279340, total: '150.00', balance: '25.00', payments: [] }] }), { status: 200 });
+    });
+    const result: any = await get_invoice_balance.handler(env, { invoiceId: 279340 }, CTX);
+    const endpoint = new URL(captured).searchParams.get('endpoint')!;
+    expect(endpoint).toBe('/accounting/v2/tenant/000000000/invoices?ids=279340');
+    expect(result.balance).toMatchObject({ invoiceId: 279340, total: '150.00', balance: '25.00' });
   });
 });
 
