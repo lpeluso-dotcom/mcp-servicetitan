@@ -182,14 +182,16 @@ export function registerTool(
         );
         emitMetric(env, execCtx, tool.name, 'ok', latency, reqCtx);
 
-        // Gated offload: below RESULT_THRESHOLD bytes this is byte-identical
+        // Gated offload: below RESULT_THRESHOLD chars this is byte-identical
         // to the prior inline behavior (same text content block + same
         // structuredContent wrapping rule, now factored into
         // wrapStructuredContent so there is exactly one implementation of
         // that rule). Above threshold, the full payload is stashed in KV and
-        // a resource_link is returned instead of inlining it. See
+        // a resource_link is returned instead of inlining it. The
+        // hasOutputSchema flag keeps structuredContent schema-valid for
+        // outputSchema'd tools (the SDK validates it at runtime). See
         // src/resources/results.ts.
-        const shaped = await offloadIfLarge(env, correlation, result);
+        const shaped = await offloadIfLarge(env, correlation, result, Boolean(tool.outputSchema));
         return { content: shaped.content, structuredContent: shaped.structuredContent };
       } catch (err) {
         const latency = Date.now() - started;
