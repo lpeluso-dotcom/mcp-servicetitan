@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { readST } from '../../st';
+import { defaultShaper } from '../../response-shape';
 import type { ToolDef } from '../index';
 
 interface Args { limit?: number }
@@ -60,4 +61,5 @@ export const membership_jackpot_leaderboard: ToolDef<Args> = {
       _source: 'live',
     };
   },
+  transformResult: defaultShaper,
 };

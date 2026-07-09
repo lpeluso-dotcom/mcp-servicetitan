@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { readST } from '../../st';
+import { defaultShaper } from '../../response-shape';
 import type { ToolDef } from '../index';
 
 type Segment = 'expiring_30' | 'expiring_60' | 'expiring_90' | 'lapsed';
@@ -60,4 +61,5 @@ export const membership_outreach_list: ToolDef<Args> = {
       _source: 'live',
     };
   },
+  transformResult: defaultShaper,
 };

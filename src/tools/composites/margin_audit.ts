@@ -3,6 +3,7 @@ import { McpError } from '../../errors';
 import { authHeaders } from '../../auth';
 import { pagedStRead } from '../../paged-st-read';
 import { resolveBusinessUnit } from '../../name-resolver';
+import { defaultShaper } from '../../response-shape';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -102,4 +103,5 @@ export const margin_audit: ToolDef<Args> = {
       ...(paged.partialFailures.length > 0 ? { _partial: true, _failures: paged.partialFailures } : {}),
     };
   },
+  transformResult: defaultShaper,
 };
