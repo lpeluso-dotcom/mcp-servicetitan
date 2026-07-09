@@ -72,6 +72,39 @@ export function redactPayload(value: unknown, depth = 0): unknown {
 }
 
 /**
+ * Derive spec-correct MCP tool annotations from a ToolDef.
+ *
+ * All fields are HINTS per the MCP spec — clients must not rely on them for
+ * security decisions — but they should still be accurate:
+ *   - readOnlyHint:      true iff the tool never modifies ServiceTitan state.
+ *   - destructiveHint:   the spec DEFAULTS this to true when omitted, so every
+ *                        write must set it explicitly. Additive creates (POST)
+ *                        are NOT destructive; PATCH/PUT/DELETE modify existing
+ *                        data and are.
+ *   - idempotentHint:    only PUT/DELETE are canonically idempotent HTTP
+ *                        methods — POST (create) and PATCH (partial update)
+ *                        are not guaranteed idempotent, so both are false.
+ *   - openWorldHint:     always false — a ServiceTitan tenant is a closed,
+ *                        fixed entity set, not an open-ended web/search tool.
+ */
+function deriveAnnotations(tool: ToolDef): {
+  title: string;
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+} {
+  const method = tool.stEndpoint?.method ?? 'GET';
+  return {
+    title: tool.title ?? tool.name.replace(/_/g, ' '),
+    readOnlyHint: !tool.isWrite,
+    destructiveHint: tool.isWrite ? method !== 'POST' : false,
+    idempotentHint: tool.isWrite ? ['PUT', 'DELETE'].includes(method) : true,
+    openWorldHint: false,
+  };
+}
+
+/**
  * Register a tool on the McpServer, wrapping its handler with the full
  * observability + error-handling envelope.
  */
@@ -82,10 +115,15 @@ export function registerTool(
   execCtx: ExecutionContext,
   reqCtx: RequestContext
 ): void {
-  server.tool(
+  server.registerTool(
     tool.name,
-    tool.description,
-    tool.zodSchema,
+    {
+      title: tool.title ?? tool.name.replace(/_/g, ' '),
+      description: tool.description,
+      inputSchema: tool.zodSchema,
+      ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
+      annotations: deriveAnnotations(tool),
+    },
     async (args: Record<string, unknown>) => {
       const correlation = newCorrelationId();
       const started = Date.now();
@@ -138,8 +176,19 @@ export function registerTool(
         );
         emitMetric(env, execCtx, tool.name, 'ok', latency, reqCtx);
 
+        // structuredContent must be an object per the MCP spec. Most tool
+        // results already are (the common case); a bare array/primitive gets
+        // wrapped for structuredContent ONLY — the text block stays the raw
+        // JSON.stringify(result) unchanged, for back-compat with existing
+        // callers that parse content[0].text directly.
+        const structuredContent =
+          result !== null && typeof result === 'object' && !Array.isArray(result)
+            ? (result as Record<string, unknown>)
+            : { result };
+
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+          structuredContent,
         };
       } catch (err) {
         const latency = Date.now() - started;

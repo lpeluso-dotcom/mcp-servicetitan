@@ -149,6 +149,10 @@ export interface ToolDef<Args = Record<string, unknown>> {
   description: string;
   /** Zod raw shape — record of field name to ZodType. SDK derives JSON schema. */
   zodSchema: z.ZodRawShape;
+  /** Optional human-readable display title (MCP `title` field). Falls back to name.replace(/_/g, ' '). */
+  title?: string;
+  /** Optional output schema — same shape convention as zodSchema. Passed through to registerTool's outputSchema. */
+  outputSchema?: z.ZodRawShape;
   /** True for tools that modify state (writes). Informs registry + future role checks. */
   isWrite?: boolean;
   /** True for tools only registered when caller role === 'admin' (F1 placeholder; full gate in F2). */
