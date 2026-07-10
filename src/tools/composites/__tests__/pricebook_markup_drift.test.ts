@@ -37,6 +37,11 @@ describe('pricebook_markup_drift', () => {
     expect(sql).toContain('pb_materials');
     expect(sql).toContain('pb_equipment');
     expect(sql).not.toContain('pb_services');
+    // category-relative grouping resolves the real category name via
+    // categories_json[0] -> pb_categories (category_name column is empty
+    // fleet-wide), so the markup query MUST join pb_categories.
+    expect(sql).toContain('pb_categories');
+    expect(sql).toContain('json_extract');
     expect(Array.isArray(params)).toBe(true);
   });
 

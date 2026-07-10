@@ -19,7 +19,8 @@
 // a data problem, so services are excluded entirely — this composite never
 // queries pb_services and never computes a service markup.
 //
-// Source: D1 (pb_materials + pb_equipment) via servicetitan-proxy /api/sql/read.
+// Source: D1 (pb_materials + pb_equipment, category names via pb_categories)
+// through servicetitan-proxy /api/sql/read.
 // ============================================================
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
@@ -76,13 +77,21 @@ function median(values: number[]): number {
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-const MARKUP_SQL = `SELECT id, code, name, category_name, cost, price, 'material' AS kind
-   FROM pb_materials
-   WHERE active = 1 AND cost > 0 AND price > 0
+// The `category_name` COLUMN is empty fleet-wide (live-probed 2026-07-09:
+// 0 of 208 markup-computable materials populate it). The real category
+// linkage is `categories_json` (a JSON id array, populated on 207/208) ->
+// pb_categories.name. We resolve the primary category (categories_json[0])
+// via json_extract + LEFT JOIN so grouping is genuinely category-relative;
+// items whose join misses fall to 'Uncategorized' in the handler.
+const MARKUP_SQL = `SELECT m.id, m.code, m.name, c.name AS category_name, m.cost, m.price, 'material' AS kind
+   FROM pb_materials m
+   LEFT JOIN pb_categories c ON c.id = json_extract(m.categories_json, '$[0]')
+   WHERE m.active = 1 AND m.cost > 0 AND m.price > 0
    UNION ALL
-   SELECT id, code, name, category_name, cost, price, 'equipment' AS kind
-   FROM pb_equipment
-   WHERE active = 1 AND cost > 0 AND price > 0`;
+   SELECT e.id, e.code, e.name, c.name AS category_name, e.cost, e.price, 'equipment' AS kind
+   FROM pb_equipment e
+   LEFT JOIN pb_categories c ON c.id = json_extract(e.categories_json, '$[0]')
+   WHERE e.active = 1 AND e.cost > 0 AND e.price > 0`;
 
 const EQUIPMENT_COST_NO_PRICE_SQL = `SELECT id, code, name, cost
    FROM pb_equipment
@@ -107,7 +116,7 @@ export const pricebook_markup_drift: ToolDef<Args> = {
     'DYNAMIC-PRICING NOTE: QSC prices every active service dynamically at invoice time (use_static_prices=0 ' +
     'fleet-wide) — a service’s 0 price/cost is by design, not a markup problem, so services are excluded ' +
     'entirely and this composite never queries pb_services. Source: D1 pb_materials + pb_equipment.',
-  stEndpoint: { method: 'GET', path: 'd1://pb_materials+pb_equipment', source: 'd1' },
+  stEndpoint: { method: 'GET', path: 'd1://pb_materials+pb_equipment+pb_categories', source: 'd1' },
   annotations: { readOnlyHint: true },
   zodSchema: {
     threshold: z
