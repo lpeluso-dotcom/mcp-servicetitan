@@ -46,6 +46,10 @@ import { dispatch_override_audit } from './composites/dispatch_override_audit';
 import { call_quality_review } from './composites/call_quality_review';
 import { commercial_plumbing_opportunities } from './composites/commercial_plumbing_opportunities';
 import { membership_jackpot_leaderboard } from './composites/membership_jackpot_leaderboard';
+// QUA-739 — Pricebook margin-discipline composites (D1 pb_ tables)
+import { pricebook_markup_drift } from './composites/pricebook_markup_drift';
+import { pricebook_cost_drift } from './composites/pricebook_cost_drift';
+import { pricebook_vendor_part_gaps } from './composites/pricebook_vendor_part_gaps';
 // T9 — Admin raw gateway
 import { st_call } from './st_call';
 // T8 — Memberships
@@ -249,6 +253,8 @@ export const TOOLS: readonly ToolDef<any>[] = [
   // Dawn — SMS support (v1.6.0)
   identify_tech_by_phone,
   save_tech_debrief,
+  // QUA-739 — Pricebook margin-discipline composites (D1 pb_ tables)
+  pricebook_markup_drift, pricebook_cost_drift, pricebook_vendor_part_gaps,
 ] as const;
 
 export function findTool(name: string): ToolDef<any> | undefined {
