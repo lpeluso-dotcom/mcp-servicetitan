@@ -20,7 +20,7 @@ interface Args {
 export const siro_get_recording_summary: ToolDef<Args> = {
   name: 'siro_get_recording_summary',
   description:
-    'Get the AI-generated summary for a Siro recording (sales conversation analysis, key moments, coaching points). Read-only. Cached 1 hour.',
+    'Get the AI-generated summary for a Siro recording (sales conversation analysis, key moments, coaching points). Read-only. Cached 1 hour. Source: live Siro API — not the ServiceTitan API; no D1 mirror.',
   zodSchema: {
     recordingId: z.string().min(1).describe('Siro recording ID'),
   },

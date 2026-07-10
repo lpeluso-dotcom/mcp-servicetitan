@@ -11,7 +11,7 @@ interface Args {
 
 export const add_job_note = defineWriteTool<Args>({
   name: 'add_job_note',
-  description: 'Append a note to a job. ST notes are append-only. dryRun=true (default) → token → dryRun=false to write.',
+  description: 'Append a note to a job. ST notes are append-only. dryRun=true (default) → token → dryRun=false to write. Source: live ST.',
   zodSchema: {
     jobId: z.number().int().positive().describe('ST job ID'),
     note: z.string().min(1).describe('Note text to append'),

@@ -23,7 +23,7 @@ const TENANT_ID = '000000000';
 export const margin_audit: ToolDef<Args> = {
   name: 'margin_audit',
   description:
-    'L5 composite: margin audit for a business unit over a date range. Joins jobs + invoice items + cost fields. v1.4 paginates up to 4,000 jobs (20 pages × 200) and surfaces _truncated when the cap is hit. Accepts businessUnitName as an alternative to businessUnitId. See docs/audit/margin-reporting-followup-2026-05-04.md for the deferred Reporting-API migration path.',
+    'L5 composite: margin audit for a business unit over a date range. Joins jobs + invoice items + cost fields. v1.4 paginates up to 4,000 jobs (20 pages × 200) and surfaces _truncated when the cap is hit. Accepts businessUnitName as an alternative to businessUnitId. See docs/audit/margin-reporting-followup-2026-05-04.md for the deferred Reporting-API migration path. Source: mixed (D1 business_units name-resolution + live ST jobs).',
   stEndpoint: { method: 'GET', path: '/jpm/v2/tenant/{tid}/jobs', source: 'mixed' },
   zodSchema: {
     businessUnitId: z.number().int().positive().optional().describe('ST business unit ID (numeric).'),

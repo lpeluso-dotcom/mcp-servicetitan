@@ -20,7 +20,7 @@ interface Args {
 export const siro_get_engagement: ToolDef<Args> = {
   name: 'siro_get_engagement',
   description:
-    'Get a Siro engagement (linked recording data — typically a single visit/interaction with a customer). Read-only. Cached 10 min.',
+    'Get a Siro engagement (linked recording data — typically a single visit/interaction with a customer). Read-only. Cached 10 min. Source: live Siro API — not the ServiceTitan API; no D1 mirror.',
   zodSchema: {
     engagementId: z.string().min(1).describe('Siro engagement ID'),
   },

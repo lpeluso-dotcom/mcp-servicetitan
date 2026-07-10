@@ -12,7 +12,7 @@ interface Args {
 
 export const add_customer_note = defineWriteTool<Args>({
   name: 'add_customer_note',
-  description: 'Append a note to a customer record. ST notes are append-only — this creates a new note entry, not an update. dryRun=true (default) → token → dryRun=false to write.',
+  description: 'Append a note to a customer record. ST notes are append-only — this creates a new note entry, not an update. dryRun=true (default) → token → dryRun=false to write. Source: live ST.',
   zodSchema: {
     customerId: z.number().int().positive().describe('ST customer ID'),
     note: z.string().min(1).describe('Note text to append'),

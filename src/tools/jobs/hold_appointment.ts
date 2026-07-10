@@ -21,7 +21,7 @@ interface Args {
 export const hold_appointment: ToolDef<Args> = {
   ...defineWriteTool<Args>({
     name: 'hold_appointment',
-    description: 'Place an appointment on hold via the ST /hold sub-route (POST, not PATCH). dryRun=true (default) → token → dryRun=false to write.',
+    description: 'Place an appointment on hold via the ST /hold sub-route (POST, not PATCH). dryRun=true (default) → token → dryRun=false to write. Source: live ST.',
     zodSchema: {
       appointmentId: z.number().int().positive().describe('ST appointment ID'),
       reasonId: z.number().int().positive().describe('Hold reason ID'),

@@ -70,7 +70,8 @@ export const opportunities_list: ToolDef<Args> = {
     "An Opportunity is the parent container that groups one or more Estimates on a Job/Location/Project. " +
     "Filter by status (Not Attempted/Unreachable/Contacted/Won/Dismissed), customer, job, project, business unit, " +
     "job type, follow-up date window, or open-estimate presence. " +
-    "Cohort to use for 'follow-up needed' work: status NOT IN (Won, Dismissed) AND active=1.",
+    "Cohort to use for 'follow-up needed' work: status NOT IN (Won, Dismissed) AND active=1. " +
+    "Default page size 50, max 200.",
   zodSchema: {
     status: z
       .enum(['Not Attempted', 'Unreachable', 'Contacted', 'Won', 'Dismissed'])

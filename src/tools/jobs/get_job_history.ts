@@ -26,7 +26,7 @@ export const get_job_history: ToolDef<Args> = {
   description:
     'Get the audit-log / event timeline for a single ST job: booking events, capacity-tool usage, ' +
     'status changes, reassignments, etc. Returns the raw event list. Use for per-job audits when ' +
-    'aggregate reports do not break out the signal you need. Source: live ST.',
+    'aggregate reports do not break out the signal you need. Source: live ST. Default page size 100, max 500.',
   zodSchema: {
     jobId: z.number().int().positive().describe('ST job ID'),
     page: z.number().int().positive().optional().describe('Page number, default 1'),

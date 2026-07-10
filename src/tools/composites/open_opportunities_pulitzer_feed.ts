@@ -70,7 +70,7 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
     'Cohort feed of open Opportunities (status NOT IN (Won, Dismissed) AND active=1) joined to the ' +
     'most-recent linked estimate and the customer. Same shape Pulitzer’s `open-opportunities` daily ' +
     'report ships, exposed for other MCP callers. Sorted by follow_up_date ASC so overdue rows lead. ' +
-    'Source: D1 opportunities + estimates.',
+    'Source: D1 opportunities + estimates. Result cap `limit`, default 100, max 500.',
   stEndpoint: { method: 'GET', path: 'd1://opportunities+estimates+customers', source: 'd1' },
   zodSchema: {
     businessUnit: z.string().optional().describe('Filter to one business unit.'),

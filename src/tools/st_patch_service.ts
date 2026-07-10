@@ -46,7 +46,8 @@ export const st_patch_service: ToolDef<Args> = {
     'PATCH a ServiceTitan pricebook service by ID. ' +
     'dryRun=true (default) validates and returns a confirmation_token — call again with dryRun=false + token to write. ' +
     'QSC default is dynamic pricing — do NOT set price/memberPrice unless this is a static-price service. ' +
-    'Note: useStaticPrices cannot be flipped from false→true via PATCH on a service that was created without it (ST silent drop, 2026-05-08 incident). Use ST UI to flip.',
+    'Note: useStaticPrices cannot be flipped from false→true via PATCH on a service that was created without it (ST silent drop, 2026-05-08 incident). Use ST UI to flip. ' +
+    'Source: live ST.',
   isWrite: true,
   stEndpoint: { method: 'PATCH', path: '/pricebook/v2/tenant/{tid}/services/{id}', source: 'live' },
   zodSchema: {

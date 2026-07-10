@@ -22,7 +22,7 @@ interface Args {
 export const siro_list_mobile_events: ToolDef<Args> = {
   name: 'siro_list_mobile_events',
   description:
-    'List Siro mobile events (recording/sync/activity events). Read-only. Cached 2 min. Siro is the in-person sales coaching recorder acquired by ServiceTitan.',
+    'List Siro mobile events (recording/sync/activity events). Read-only. Cached 2 min. Siro is the in-person sales coaching recorder acquired by ServiceTitan. Source: live Siro API — not the ServiceTitan API; no D1 mirror. Default page size 50, max 100.',
   zodSchema: {
     pageSize: z
       .number()

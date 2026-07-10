@@ -54,7 +54,7 @@ const MAX_PAGESIZE = 100;
 export const inventory_warehouses_list: ToolDef<Args> = {
   name: 'inventory_warehouses_list',
   description:
-    'List ServiceTitan warehouses (storage locations for inventory). Filter by active flag. Returns slim records (id, name, active, address). Source: live ST.',
+    'List ServiceTitan warehouses (storage locations for inventory). Filter by active flag. Returns slim records (id, name, active, address). Source: live ST. Default page size 25, max 100.',
   zodSchema: {
     active: z.boolean().optional().describe('Filter to active=true or active=false; omit for both'),
     page: z.number().int().positive().optional().describe('Page number, default 1'),

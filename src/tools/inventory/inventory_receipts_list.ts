@@ -50,7 +50,7 @@ const MAX_PAGESIZE = 100;
 export const inventory_receipts_list: ToolDef<Args> = {
   name: 'inventory_receipts_list',
   description:
-    'List ServiceTitan inventory receipts (incoming items from POs). Filter by vendor or warehouse. Source: live ST.',
+    'List ServiceTitan inventory receipts (incoming items from POs). Filter by vendor or warehouse. Source: live ST. Default page size 25, max 100.',
   zodSchema: {
     vendorId: z.number().int().positive().optional().describe('Filter by vendor ID'),
     warehouseId: z.number().int().positive().optional().describe('Filter by warehouse ID'),

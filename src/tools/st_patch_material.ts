@@ -29,7 +29,7 @@ export const st_patch_material: ToolDef<Args> = {
   description:
     'PATCH a ServiceTitan pricebook material by ID. ' +
     'dryRun=true (default) validates and returns a confirmation_token — call again with dryRun=false + token to write. ' +
-    'Send only the fields you want to change.',
+    'Send only the fields you want to change. Source: live ST.',
   isWrite: true,
   stEndpoint: { method: 'PATCH', path: '/pricebook/v2/tenant/{tid}/materials/{id}', source: 'live' },
   zodSchema: {

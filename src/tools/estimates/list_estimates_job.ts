@@ -7,7 +7,7 @@ interface Args { jobId: number; page?: number; pageSize?: number }
 
 export const list_estimates_job: ToolDef<Args> = {
   name: 'list_estimates_job',
-  description: 'List all estimates for a specific job. Source: D1 (estimates nightly-synced).',
+  description: 'List all estimates for a specific job. Source: D1 (estimates nightly-synced). Default page size 50, max 200.',
   zodSchema: {
     jobId: z.number().int().positive().describe('ST job ID'),
     page: z.number().int().positive().default(1).describe('Page number'),

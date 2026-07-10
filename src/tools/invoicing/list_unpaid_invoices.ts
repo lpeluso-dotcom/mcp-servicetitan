@@ -13,7 +13,7 @@ interface RawInvoice {
 
 export const list_unpaid_invoices: ToolDef<Args> = {
   name: 'list_unpaid_invoices',
-  description: 'List invoices with an outstanding balance (unpaid or partially paid). Source: live ST (accounting invoices, filtered client-side to balance ≠ 0; cached 120s).',
+  description: 'List invoices with an outstanding balance (unpaid or partially paid). Source: live ST (accounting invoices, filtered client-side to balance ≠ 0; cached 120s). Default page size 50, max 200.',
   zodSchema: {
     businessUnitId: z.number().int().positive().optional().describe('Filter by business unit ID'),
     customerId: z.number().int().positive().optional().describe('Filter by customer ID'),

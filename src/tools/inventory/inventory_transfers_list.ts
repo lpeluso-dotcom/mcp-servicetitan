@@ -47,7 +47,7 @@ const MAX_PAGESIZE = 100;
 export const inventory_transfers_list: ToolDef<Args> = {
   name: 'inventory_transfers_list',
   description:
-    'List ServiceTitan inventory transfers between warehouses. Filter by from/to warehouse. Source: live ST.',
+    'List ServiceTitan inventory transfers between warehouses. Filter by from/to warehouse. Source: live ST. Default page size 25, max 100.',
   zodSchema: {
     fromWarehouseId: z.number().int().positive().optional().describe('Filter by source warehouse ID'),
     toWarehouseId: z.number().int().positive().optional().describe('Filter by destination warehouse ID'),

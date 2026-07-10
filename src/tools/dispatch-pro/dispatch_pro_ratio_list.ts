@@ -39,7 +39,7 @@ export const dispatch_pro_ratio_list: ToolDef<Args> = {
   description:
     'Daily Dispatch Pro ratio rows from the ST native report (id 80770546). ' +
     'Tracks unadjusted vs smart-dispatch-assigned vs total jobs, per completed_on × business_unit × job_type × days_of_week. ' +
-    'Source: D1 `dispatch_pro_ratio`.',
+    'Source: D1 `dispatch_pro_ratio`. Default page size 100, max 500.',
   zodSchema: {
     startDate: z.string().optional().describe("ISO date 'YYYY-MM-DD'. Filters completed_on >= value."),
     endDate: z.string().optional().describe("ISO date 'YYYY-MM-DD'. Filters completed_on <= value."),

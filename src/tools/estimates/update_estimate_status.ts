@@ -35,7 +35,7 @@ interface UnsellArgs {
 
 export const dismiss_estimate = defineWriteTool<DismissArgs>({
   name: 'dismiss_estimate',
-  description: 'Dismiss an estimate (status → Dismissed). Returns outcome=soft_deleted_synced if the estimate is already active=false in ST (e.g., the source of a UI duplicate). dryRun=true (default) → token → dryRun=false to write.',
+  description: 'Dismiss an estimate (status → Dismissed). Returns outcome=soft_deleted_synced if the estimate is already active=false in ST (e.g., the source of a UI duplicate). dryRun=true (default) → token → dryRun=false to write. Source: live ST.',
   zodSchema: {
     estimateId: z.number().int().positive().describe('ST estimate ID'),
   },
@@ -48,7 +48,7 @@ export const dismiss_estimate = defineWriteTool<DismissArgs>({
 
 export const sell_estimate = defineWriteTool<SellArgs>({
   name: 'sell_estimate',
-  description: 'Mark an estimate Sold. Requires soldBy technicianId — ST rejects without it. dryRun=true (default) → token → dryRun=false to write.',
+  description: 'Mark an estimate Sold. Requires soldBy technicianId — ST rejects without it. dryRun=true (default) → token → dryRun=false to write. Source: live ST.',
   zodSchema: {
     estimateId: z.number().int().positive().describe('ST estimate ID'),
     soldBy: z.number().int().positive().describe('Technician ID who sold the estimate'),
@@ -62,7 +62,7 @@ export const sell_estimate = defineWriteTool<SellArgs>({
 
 export const unsell_estimate = defineWriteTool<UnsellArgs>({
   name: 'unsell_estimate',
-  description: 'Revert a Sold estimate back to Open. dryRun=true (default) → token → dryRun=false to write.',
+  description: 'Revert a Sold estimate back to Open. dryRun=true (default) → token → dryRun=false to write. Source: live ST.',
   zodSchema: {
     estimateId: z.number().int().positive().describe('ST estimate ID'),
   },

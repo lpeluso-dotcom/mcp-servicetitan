@@ -11,7 +11,7 @@ interface Args { active?: boolean; page?: number; pageSize?: number }
 // Renamed from list_categories to disambiguate — materials/equipment have separate category trees.
 export const list_service_categories: ToolDef<Args> = {
   name: 'list_service_categories',
-  description: 'List pricebook service categories (not materials/equipment categories — those are separate trees). Source: live ST.',
+  description: 'List pricebook service categories (not materials/equipment categories — those are separate trees). Source: live ST. Default page size 200, max 200.',
   stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/categories', source: 'live' },
   zodSchema: {
     active: z.boolean().optional().describe('Filter by active status (default: all)'),

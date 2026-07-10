@@ -64,7 +64,7 @@ export const search_pricebook_services: ToolDef<Args> = {
     'Search pricebook services by exact `code` (e.g. "WHEH-140", "P1HL22"), or fuzzy `name`/category. ' +
     'Exact-code path hits D1 directly (sub-100ms) and short-circuits on hit. ' +
     'Fuzzy path falls through to live ST. ' +
-    'Source: D1 for exact code (fresh nightly); live ST for name/category fuzzy.',
+    'Source: D1 for exact code (fresh nightly); live ST for name/category fuzzy. Default page size 50, max 200.',
   zodSchema: {
     code: z
       .string()
