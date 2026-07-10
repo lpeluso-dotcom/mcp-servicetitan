@@ -24,7 +24,10 @@
 import { describe, it, expect } from 'vitest';
 import { TOOLS } from '../tools/index';
 
-const DATA_SOURCE_RE = /\b(source:|live ST|D1|D1-first|computed|derived|synthetic)\b/i;
+// Note: a `source:` alternative was dropped — the trailing `\b` never matches
+// after a colon, so it was dead. The real tokens below still require every
+// description to name a concrete data source.
+const DATA_SOURCE_RE = /\b(live ST|D1|D1-first|computed|derived|synthetic)\b/i;
 const DRY_RUN_RE = /dryRun/i;
 const CONFIRM_RE = /(confirm|token)/i;
 const PAGINATION_RE = /pageSize|up to|limit|default|max/i;
