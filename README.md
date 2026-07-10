@@ -87,6 +87,7 @@ Deferred (v1.6 candidates / post-v1.6.0):
 | `GET /admin/endpoints` | `X-Sync-Key` | ST endpoint inventory — per-tool `stEndpoint` descriptors + undeclared list (v1.2) |
 | `GET /admin/endpoints/coverage` | `X-Sync-Key` | stEndpoint coverage gate (v1.5.1) — every non-exempt tool must declare `stEndpoint`; reports `total`, `declared`, `exempt`, `undeclared[]` |
 | `POST /webhooks/st` | HMAC | HMAC-verified ST webhook ingest (v1.4.1) — event-type allowlist: `appointmentScheduled`, `jobCompleted`, `paymentReceived`, `customerCreated`. Unknown types return 400. Per-event metric to `MCP_METRICS`. |
+- [JMT x402 Agent Tools](https://jmt-x402-proxy.jmthomasofficial.workers.dev) — 25 paid x402 endpoints on Base mainnet: web search, AI analysis, crypto/stock data, SEC filings, company intel, news, sentiment, macro dashboard. $0.001-$0.15/call USDC. Local LLM-powered.
 
 ## Deploy
 
