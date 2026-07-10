@@ -10,11 +10,17 @@
 //
 // Rules (see per-tool violation collection below):
 //   1. Non-trivial: description.length >= 40.
-//   2. States a data source: matches /\b(source:|live ST|D1|D1-first|computed|derived|synthetic)\b/i.
+//   2. States a data source: matches /\b(live ST|D1|D1-first|computed|derived|synthetic)\b/i.
+//      KNOWN LIMITATION: this checks source-keyword PRESENCE, not TRUTH — a
+//      tool whose description names a source that its handler doesn't actually
+//      use still passes here. Provenance truth (does the handler really read
+//      that source?) is verified separately, by spec review and the
+//      tool-selection eval — do not over-trust this gate for correctness.
 //   3. Write tools (isWrite === true) name the dryRun -> confirm two-phase
 //      write-gate flow: matches /dryRun/i AND /(confirm|token)/i.
-//   4. Tools exposing pageSize/limit in zodSchema state the pagination /
-//      limit behavior: matches /pageSize|up to|limit|default|max/i.
+//   4. Tools exposing a paging/capping arg in zodSchema (pageSize, limit, topK,
+//      count, offset) state the pagination / limit behavior:
+//      matches /pageSize|up to|limit|default|max/i.
 //
 // Failures are collected (not thrown on first hit) so a red run lists
 // EVERY offending tool + rule in one shot — diagnosable without a
@@ -71,9 +77,12 @@ describe('description-lint — static eval', () => {
       violations.push({ tool: name, reason: `rule1 non-trivial: description length ${description?.length ?? 0} < 40` });
     }
 
-    // Rule 2 — data source stated
+    // Rule 2 — data source stated.
+    // NOTE: this is a PRESENCE check on the source keyword, not a TRUTH check —
+    // it cannot tell whether the handler actually reads the named source.
+    // Provenance truth is verified in spec review + the tool-selection eval.
     if (!isExempt(name, 'source') && !DATA_SOURCE_RE.test(description ?? '')) {
-      violations.push({ tool: name, reason: 'rule2 data-source: description does not state a data source (source:/live ST/D1/D1-first/computed/derived/synthetic)' });
+      violations.push({ tool: name, reason: 'rule2 data-source: description does not state a data source (live ST/D1/D1-first/computed/derived/synthetic)' });
     }
 
     // Rule 3 — write tools mention the write-gate
@@ -86,11 +95,14 @@ describe('description-lint — static eval', () => {
       }
     }
 
-    // Rule 4 — pagination/limit behavior stated
+    // Rule 4 — pagination/limit behavior stated. Triggers on any paging or
+    // result-capping arg the schema exposes, so a tool that can silently
+    // truncate its result set must say so.
     const argKeys = Object.keys(zodSchema ?? {});
-    const hasPaginationArg = argKeys.includes('pageSize') || argKeys.includes('limit');
+    const PAGING_ARGS = ['pageSize', 'limit', 'topK', 'count', 'offset'];
+    const hasPaginationArg = PAGING_ARGS.some((k) => argKeys.includes(k));
     if (hasPaginationArg && !isExempt(name, 'pagination') && !PAGINATION_RE.test(description ?? '')) {
-      violations.push({ tool: name, reason: 'rule4 pagination: zodSchema exposes pageSize/limit but description does not state pagination/limit behavior' });
+      violations.push({ tool: name, reason: 'rule4 pagination: zodSchema exposes a paging/capping arg (pageSize/limit/topK/count/offset) but description does not state pagination/limit behavior' });
     }
   }
 
