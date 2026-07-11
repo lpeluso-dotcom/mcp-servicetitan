@@ -239,6 +239,128 @@ describe('st_run_report', () => {
   });
 });
 
+// ── QUA-785 — mode=run async data-queries token pattern ────────
+// ST API release #78 deprecated the sync POST .../data endpoint in favor of
+// POST .../data/query (200 inline | 202 + token) + GET/DELETE data-queries/{token}.
+// `_pollIntervalMs` is an internal test-only override (not in zodSchema, mirrors
+// st_patch_service.ts's `_pollIntervalMs`/`_pollMaxAttempts` convention) so these
+// tests don't burn real wall-clock time; `pollTimeoutSeconds` is the public field
+// and still drives the real attempt-count math (elapsed-seconds reporting is
+// computed off it, independent of the sped-up test interval).
+
+describe('st_run_report — mode=run async data-queries (QUA-785)', () => {
+  const runArgs = (overrides: Record<string, unknown> = {}) => ({
+    mode: 'run' as const,
+    categoryId: 'cat1',
+    reportId: 'r1',
+    parameters: [],
+    ...overrides,
+  });
+
+  it('inline 200 on POST .../data/query returns data directly — no GET/DELETE calls', async () => {
+    const env = makeEnv(liveOkDirect({ rows: [{ a: 1 }] }));
+    const result: any = await st_run_report.handler(env, runArgs(), CTX);
+    expect(result.data).toEqual({ rows: [{ a: 1 }] });
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = env.ST_PROXY.fetch.mock.calls[0];
+    expect(init.method).toBe('POST');
+    expect(url).toContain('data%2Fquery');
+  });
+
+  it('202 + token polls GET data-queries/{token} — exactly 2 polls before 200', async () => {
+    let call = 0;
+    const env = makeEnv(async () => {
+      call++;
+      if (call === 1) return new Response(JSON.stringify({ token: 'abc123' }), { status: 202 });
+      if (call === 2) return new Response(JSON.stringify({}), { status: 202 });
+      return new Response(JSON.stringify({ rows: [{ x: 9 }] }), { status: 200 });
+    });
+    const result: any = await st_run_report.handler(
+      env,
+      runArgs({ _pollIntervalMs: 0 }),
+      CTX
+    );
+    expect(result.data).toEqual({ rows: [{ x: 9 }] });
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(3); // 1 POST + 2 GET
+    const getCalls = env.ST_PROXY.fetch.mock.calls.filter(([u]: [string]) => u.includes('data-queries'));
+    expect(getCalls.length).toBe(2);
+    expect(getCalls.every(([u]: [string]) => u.includes('abc123'))).toBe(true);
+  });
+
+  it('falls back to queryToken alias when token field is absent', async () => {
+    let call = 0;
+    const env = makeEnv(async () => {
+      call++;
+      if (call === 1) return new Response(JSON.stringify({ queryToken: 'xyz789' }), { status: 202 });
+      return new Response(JSON.stringify({ rows: [] }), { status: 200 });
+    });
+    const result: any = await st_run_report.handler(
+      env,
+      runArgs({ _pollIntervalMs: 0 }),
+      CTX
+    );
+    expect(result.data).toEqual({ rows: [] });
+    const getCalls = env.ST_PROXY.fetch.mock.calls.filter(([u]: [string]) => u.includes('data-queries'));
+    expect(getCalls.length).toBe(1);
+    expect(getCalls[0][0]).toContain('xyz789');
+  });
+
+  it('falls back to id alias when neither token nor queryToken is present', async () => {
+    let call = 0;
+    const env = makeEnv(async () => {
+      call++;
+      if (call === 1) return new Response(JSON.stringify({ id: 'q-id-1' }), { status: 202 });
+      return new Response(JSON.stringify({ rows: [] }), { status: 200 });
+    });
+    const result: any = await st_run_report.handler(env, runArgs({ _pollIntervalMs: 0 }), CTX);
+    expect(result.data).toEqual({ rows: [] });
+    const getCalls = env.ST_PROXY.fetch.mock.calls.filter(([u]: [string]) => u.includes('data-queries'));
+    expect(getCalls[0][0]).toContain('q-id-1');
+  });
+
+  it('202 with none of token/queryToken/id throws a diagnosable McpError listing response keys', async () => {
+    const env = makeEnv(async () => new Response(JSON.stringify({ status: 'accepted', foo: 'bar' }), { status: 202 }));
+    let caught: any;
+    try {
+      await st_run_report.handler(env, runArgs(), CTX);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeDefined();
+    expect(caught.code).toBe('upstream_error');
+    expect(caught.message).toContain('status');
+    expect(caught.message).toContain('foo');
+    // No GET/DELETE — we never had a usable token to poll or cancel with.
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('exceeding pollTimeoutSeconds best-effort cancels via DELETE and throws elapsed-seconds error', async () => {
+    let call = 0;
+    const env = makeEnv(async (url: string) => {
+      call++;
+      if (call === 1) return new Response(JSON.stringify({ token: 'stuck-token' }), { status: 202 });
+      if (url === 'https://servicetitan-proxy/api/st/write') return new Response('', { status: 204 });
+      return new Response(JSON.stringify({}), { status: 202 }); // pending forever
+    });
+    // pollTimeoutSeconds:4 at the real 2s interval = 2 polls — no need for 90 iterations.
+    await expect(
+      st_run_report.handler(env, runArgs({ pollTimeoutSeconds: 4, _pollIntervalMs: 0 }), CTX)
+    ).rejects.toMatchObject({
+      code: 'timeout',
+      message: expect.stringContaining('4s'),
+    });
+
+    const getCalls = env.ST_PROXY.fetch.mock.calls.filter(([u]: [string]) => u.includes('data-queries'));
+    expect(getCalls.length).toBe(2);
+
+    const deleteCalls = env.ST_PROXY.fetch.mock.calls.filter(([u]: [string]) => u === 'https://servicetitan-proxy/api/st/write');
+    expect(deleteCalls.length).toBe(1);
+    const deleteBody = JSON.parse(deleteCalls[0][1].body);
+    expect(deleteBody.method).toBe('DELETE');
+    expect(deleteBody.endpoint).toContain('stuck-token');
+  });
+});
+
 // ── F.1.c — st_post_marketing_attribution ──────────────────────
 
 describe('st_post_marketing_attribution', () => {
