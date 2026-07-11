@@ -1,7 +1,7 @@
 // ============================================================
 // read_shaper_sweep.test.ts
 //
-// Table-driven wiring check for the 42-tool defaultShaper sweep
+// Table-driven wiring check for the defaultShaper sweep (42 read tools + 3 siro_*, QUA-783)
 // (see commit "chore(tools): apply defaultShaper to 42 read tools
 // for response consistency").
 //
@@ -60,6 +60,9 @@ import { st_get_pricebook } from '../st_get_pricebook';
 import { st_list_appointments } from '../st_list_appointments';
 import { st_list_jobs } from '../st_list_jobs';
 import { list_open_tasks } from '../tasks/list_open_tasks';
+import { siro_list_mobile_events } from '../siro_list_mobile_events';
+import { siro_get_recording_summary } from '../siro_get_recording_summary';
+import { siro_get_engagement } from '../siro_get_engagement';
 
 const SWEPT_TOOLS: ToolDef<any>[] = [
   get_call,
@@ -104,6 +107,9 @@ const SWEPT_TOOLS: ToolDef<any>[] = [
   st_list_appointments,
   st_list_jobs,
   list_open_tasks,
+  siro_list_mobile_events,
+  siro_get_recording_summary,
+  siro_get_engagement,
 ];
 
 function samplePayload() {
@@ -123,9 +129,9 @@ function samplePayload() {
   };
 }
 
-describe('read_shaper_sweep — 42-tool defaultShaper wiring', () => {
-  it('swept exactly 42 tools', () => {
-    expect(SWEPT_TOOLS).toHaveLength(42);
+describe('read_shaper_sweep — 45-tool defaultShaper wiring (42 + 3 siro)', () => {
+  it('swept exactly 45 tools (42 + 3 siro, QUA-783)', () => {
+    expect(SWEPT_TOOLS).toHaveLength(45);
   });
 
   it.each(SWEPT_TOOLS.map((t) => [t.name, t] as const))(
