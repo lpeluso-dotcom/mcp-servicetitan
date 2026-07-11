@@ -13,3 +13,6 @@ dist/
 # Generated ST probe artifacts — contain customer PII, never commit
 scripts/probe-logs/
 scripts/probe-snapshots/
+
+# Local Claude Code config — untracked, must not be swept in by `git add -A`
+.claude/

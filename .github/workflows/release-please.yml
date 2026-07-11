@@ -33,6 +33,17 @@ name: release-please
 # mode (single package at "."). The manifest is seeded to 1.7.0 (the
 # version already shipped) so release-please computes the next bump from
 # there instead of proposing a release from 0.0.0.
+#
+# (d) First-run nuance: because the manifest is seeded to 1.7.0 but no
+#     matching v1.7.0 git tag exists yet, release-please has no tagged
+#     ancestor to diff from — the FIRST release PR it opens may walk the
+#     entire commit history and generate a large catch-up CHANGELOG
+#     instead of just the commits since 1.7.0 shipped. The one-time fix
+#     is to either create a `v1.7.0` git tag on the commit that shipped
+#     that version, or pass `bootstrap-sha` (pointing at that commit) to
+#     the action so it knows where 1.7.0's history starts. Luke's call
+#     on which; not required for the workflow to run, only for a clean
+#     first CHANGELOG.
 
 on:
   push:

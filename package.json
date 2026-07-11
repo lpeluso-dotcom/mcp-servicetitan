@@ -1,7 +1,7 @@
 {
   "name": "mcp-servicetitan",
   "version": "1.7.0",
-  "description": "ServiceTitan MCP server — v1.7.0 (90 tools: 89 default + 1 admin gateway). Streamable HTTP via Agents SDK; HMAC write-gate; D1 audit; Analytics Engine telemetry; response shaper; webhook event-type allowlist. v1.7.0: full pricebook-service field surface on st_create_service + st_patch_service (hours, isLabor, taxable, account, paysCommission, memberPrice, plural useStaticPrices, multi-category). Removes silently-dropped singular useStaticPrice. v1.6.1: get_job_history. v1.6.0: MCP_LOCKDOWN read-only role; Dawn SMS tools (identify_tech_by_phone, save_tech_debrief); readST sweep finished.",
+  "description": "ServiceTitan MCP server — v1.7.0 (99 tools: 98 default + 1 admin gateway). Streamable HTTP via Agents SDK; HMAC write-gate; D1 audit; Analytics Engine telemetry; response shaper; webhook event-type allowlist. v1.7.0: full pricebook-service field surface on st_create_service + st_patch_service (hours, isLabor, taxable, account, paysCommission, memberPrice, plural useStaticPrices, multi-category). Removes silently-dropped singular useStaticPrice. v1.6.1: get_job_history. v1.6.0: MCP_LOCKDOWN read-only role; Dawn SMS tools (identify_tech_by_phone, save_tech_debrief); readST sweep finished.",
   "license": "MIT",
   "private": true,
   "scripts": {
