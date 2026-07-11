@@ -57,9 +57,9 @@ export const scenarios: EvalScenario[] = [
   {
     id: 'capacity-today',
     query: "Who's working today and are we at capacity?",
-    expected: ['list_jobs_today', 'get_capacity'],
+    expected: ['list_jobs_today', 'get_capacity', 'get_technician_shifts', 'list_technicians_available'],
     rationale:
-      'Compound question spanning who is scheduled today and whether the schedule is full — either tool (or both together) is a defensible top pick.',
+      "Compound question: the \"who's working today\" half maps to the technician roster/shift tools, the \"are we at capacity\" half to the capacity/jobs-today tools — any of the four is a defensible top pick.",
   },
   {
     id: 'customer-note',
@@ -70,9 +70,9 @@ export const scenarios: EvalScenario[] = [
   {
     id: 'pricebook-price',
     query: "What's the price of a P1HL22 service?",
-    expected: ['search_pricebook_services', 'search_pricebook_all'],
+    expected: ['search_pricebook_services', 'search_pricebook_all', 'search_pricebook_semantic'],
     rationale:
-      'Looking up a specific service code could resolve via the services-only search or the merged pricebook search — both are correct entry points. (Note: price is computed dynamically at invoice time; this scenario only tests lookup routing.)',
+      'Looking up a specific service code could resolve via the services-only search, the merged pricebook search, or the natural-language semantic search — all are correct pricebook-lookup entry points. (Note: price is computed dynamically at invoice time; this scenario only tests lookup routing.)',
   },
   {
     id: 'customer-snapshot',
@@ -144,9 +144,10 @@ export const scenarios: EvalScenario[] = [
   },
   {
     id: 'campaign-performance',
-    query: "How's our Google Ads campaign performing this quarter — calls, bookings, revenue?",
+    query: 'How much did we spend on the Google Ads campaign this quarter?',
     expected: ['get_campaign_performance'],
-    rationale: 'Campaign-level ROI/performance rollup — direct match.',
+    rationale:
+      "Campaign ad-spend/cost lookup. Despite its name, get_campaign_performance hits ST's campaign costs endpoint (/marketing/v2/.../campaigns/{id}/costs) and returns spend, not calls/bookings/revenue (known mislabel, QUA-508) — so the truthful query asks about cost, which is what the tool actually returns.",
   },
   {
     id: 'create-task',

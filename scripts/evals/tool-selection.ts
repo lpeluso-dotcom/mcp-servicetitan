@@ -23,13 +23,18 @@
 import { TOOLS, type ToolDef } from '../../src/tools/index';
 import { scenarios as defaultScenarios, type EvalScenario } from './scenarios';
 
-// ── Minimal local ambient Node typings ─────────────────────────────────
-// This file is a module (has import/export), so `declare const` below is
-// scoped to THIS FILE ONLY — it does not leak into the Worker's global
-// type surface (src/**/*.ts never sees a phantom `process` global because
-// of this file). We deliberately avoid adding @types/node as a project-
-// wide devDependency to keep the Worker's strict tsconfig ("types":
-// ["@cloudflare/workers-types"]) exactly as tight as it is today.
+// ── Minimal local ambient typings (no @types/node) ─────────────────────
+// This file is a module (has import/export), so each `declare const` below
+// is scoped to THIS FILE ONLY: `process` and `require` do not leak into the
+// Worker's global type surface (src/**/*.ts never sees a phantom
+// `process`/`require` global because of this file). The `declare global {
+// interface ImportMeta { url } }` further down is the ONE exception — it is
+// a genuine global interface augmentation that widens ImportMeta
+// project-wide by exactly one property (`.url`). That widening is benign:
+// it adds only `.url`, introduces no Node globals, and tsc stays clean. We
+// deliberately avoid adding @types/node as a project-wide devDependency to
+// keep the Worker's strict tsconfig ("types": ["@cloudflare/workers-types"])
+// exactly as tight as it is today.
 declare const process: {
   env: Record<string, string | undefined>;
   argv: string[];
@@ -45,9 +50,10 @@ declare const process: {
 declare const require: (id: string) => { writeFileSync(path: string, data: string): void };
 
 // `ImportMeta.url` is only typed via @types/node or the DOM lib, neither of
-// which this project has (see the file-header note above) — augment the
-// (already-global, TS-builtin) ImportMeta interface with just the one field
-// this file uses, rather than pulling in either.
+// which this project has (see the file-header note above). This is a global
+// widening (not file-scoped) — it adds exactly one property to the built-in
+// ImportMeta interface and no Node globals — which is the accurate, minimal
+// alternative to pulling in either lib.
 declare global {
   interface ImportMeta {
     url: string;
@@ -269,7 +275,10 @@ export async function runEval(opts: RunEvalOptions): Promise<EvalSummary> {
     try {
       const text = await callModel(opts.apiKey, model, prompt);
       const parsed = extractJson(text) as { top3?: unknown };
-      const top3 = Array.isArray(parsed.top3) ? parsed.top3.filter((x): x is string => typeof x === 'string') : [];
+      const parsedList = Array.isArray(parsed.top3) ? parsed.top3.filter((x): x is string => typeof x === 'string') : [];
+      // Cap at 3 so the top-3 metric matches its name even if the model
+      // returns more than 3 tools. top-1 is unaffected (still index 0).
+      const top3 = parsedList.slice(0, 3);
       const top1Correct = top3.length > 0 && s.expected.includes(top3[0]);
       const top3Correct = s.expected.some((e) => top3.includes(e));
       results.push({ id: s.id, query: s.query, expected: s.expected, top3, top1Correct, top3Correct, rawResponse: text });
@@ -307,8 +316,11 @@ async function main(): Promise<void> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
-    const result = validateScenarios(TOOLS, defaultScenarios);
+    // Validate against the live eval catalog (98 tools — excludes adminOnly
+    // st_call), NOT raw TOOLS, so an expected tool the model can never see
+    // is caught here rather than silently failing live.
     const catalog = buildCatalog();
+    const result = validateScenarios(catalog, defaultScenarios);
     console.log(`Offline scenario validation: ${result.ok ? 'PASS' : 'FAIL'}`);
     console.log(`  scenarios: ${defaultScenarios.length}  |  catalog size: ${catalog.length} tools (of ${TOOLS.length} total; excludes adminOnly st_call)`);
     if (!result.ok) {

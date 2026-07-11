@@ -14,11 +14,14 @@
 import { describe, it, expect } from 'vitest';
 import { TOOLS } from '../tools/index';
 import { scenarios } from '../../scripts/evals/scenarios';
-import { validateScenarios } from '../../scripts/evals/tool-selection';
+import { validateScenarios, buildCatalog } from '../../scripts/evals/tool-selection';
 
 describe('eval scenario integrity (offline, no API key required)', () => {
-  it('validateScenarios reports ok against the live TOOLS registry', () => {
-    const result = validateScenarios(TOOLS, scenarios);
+  it('validateScenarios reports ok against the live 98-tool eval catalog', () => {
+    // Validate against the catalog the model actually sees (buildCatalog
+    // excludes adminOnly st_call), not raw TOOLS — a scenario expecting an
+    // unselectable adminOnly tool must fail here, not just fail live.
+    const result = validateScenarios(buildCatalog(TOOLS), scenarios);
     // Surface the exact errors in the assertion failure rather than just "false".
     expect(result.errors).toEqual([]);
     expect(result.ok).toBe(true);
@@ -40,13 +43,15 @@ describe('eval scenario integrity (offline, no API key required)', () => {
     }
   });
 
-  it('every expected tool name exists in the live TOOLS registry', () => {
-    const names = new Set(TOOLS.map((t) => t.name));
+  it('every expected tool name exists in the live 98-tool eval catalog', () => {
+    // Catalog names, not raw TOOLS — an expected adminOnly tool (unselectable
+    // live) must be flagged here too.
+    const names = new Set(buildCatalog(TOOLS).map((t) => t.name));
     for (const s of scenarios) {
       expect(Array.isArray(s.expected)).toBe(true);
       expect(s.expected.length).toBeGreaterThan(0);
       for (const name of s.expected) {
-        expect(names.has(name), `scenario "${s.id}" expects unknown tool "${name}"`).toBe(true);
+        expect(names.has(name), `scenario "${s.id}" expects unknown or unselectable tool "${name}"`).toBe(true);
       }
     }
   });
