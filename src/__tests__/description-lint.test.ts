@@ -1,8 +1,8 @@
 // ============================================================
 // description-lint.test.ts — Task 6.1
 //
-// Static-eval gate on tool description quality. With ~104 registered
-// tools, the description text IS the agent UX — an LLM caller decides
+// Static-eval gate on tool description quality. With 99 registered
+// tools (98 default + 1 admin), the description text IS the agent UX — an LLM caller decides
 // which tool to invoke, whether a call is a write, and what pagination
 // to expect almost entirely from `description`. This test asserts every
 // tool in TOOLS meets the QSC quality bar so description drift fails CI

@@ -16,3 +16,6 @@ scripts/probe-snapshots/
 
 # Local Claude Code config — untracked, must not be swept in by `git add -A`
 .claude/
+
+# Tool-selection eval run artifact (regenerated per `npm run eval:tools`)
+scripts/evals/last-run.json
