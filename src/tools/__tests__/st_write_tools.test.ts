@@ -224,7 +224,7 @@ describe('st_patch_material', () => {
 describe('st_create_material', () => {
   it('dryRun=true returns DryRunResult for material create', async () => {
     const env = makeEnv(dryRunFetch());
-    const result: any = await st_create_material.handler(env, { name: 'R-22', categoryId: 10 }, CTX);
+    const result: any = await st_create_material.handler(env, { name: 'R-22', categoryId: 10, primaryVendorId: 555 }, CTX);
     expect(result.dryRun).toBe(true);
     expect(result.tool).toBe('st_create_material');
   });
@@ -284,7 +284,7 @@ describe('pricebook payload transform — name→displayName, categoryId→categ
 
   it('st_create_material dryRun preview uses displayName + categories', async () => {
     const env = makeEnv(dryRunFetch());
-    const result: any = await st_create_material.handler(env, { name: 'WidgetMat', categoryId: 99, code: 'WM-1' }, CTX);
+    const result: any = await st_create_material.handler(env, { name: 'WidgetMat', categoryId: 99, code: 'WM-1', primaryVendorId: 555 }, CTX);
     expect(result.payload).toMatchObject({ displayName: 'WidgetMat', categories: [99], code: 'WM-1' });
     expect(result.payload).not.toHaveProperty('name');
     expect(result.payload).not.toHaveProperty('categoryId');
@@ -368,5 +368,33 @@ describe('pricebook full-field surface — new in v1.7.0', () => {
     const result: any = await st_patch_service.handler(env,
       { id: 1, hours: 1.5, isLabor: true }, CTX);
     expect(result.payload).toMatchObject({ hours: 1.5, isLabor: true });
+  });
+});
+
+// ── QUA-685: st_create_material requires a primaryVendor ──────
+describe('st_create_material primaryVendor (QUA-685)', () => {
+  it('throws validation_error when no vendor is supplied', async () => {
+    const env = makeEnv(dryRunFetch());
+    await expect(st_create_material.handler(env, { name: 'NoVendorMat', categoryId: 10 }, CTX))
+      .rejects.toMatchObject({ code: 'validation_error' });
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
+  });
+
+  it('nested primaryVendor flows to the ST payload verbatim', async () => {
+    const env = makeEnv(dryRunFetch());
+    const result: any = await st_create_material.handler(env,
+      { name: 'VendMat', categoryId: 10, primaryVendor: { vendorId: 555, cost: 12, active: true } }, CTX);
+    expect(result.payload).toMatchObject({ displayName: 'VendMat', categories: [10], primaryVendor: { vendorId: 555, cost: 12, active: true } });
+    expect(result.payload).not.toHaveProperty('primaryVendorId');
+    expect(result.payload).not.toHaveProperty('primaryVendorCost');
+  });
+
+  it('flat primaryVendorId normalizes to a nested vendor, cost defaults to material cost', async () => {
+    const env = makeEnv(dryRunFetch());
+    const result: any = await st_create_material.handler(env,
+      { name: 'FlatVendMat', categoryId: 10, cost: 9.5, primaryVendorId: 555 }, CTX);
+    expect(result.payload.primaryVendor).toMatchObject({ vendorId: 555, cost: 9.5, active: true });
+    expect(result.payload).not.toHaveProperty('primaryVendorId');
+    expect(result.payload).not.toHaveProperty('primaryVendorCost');
   });
 });
