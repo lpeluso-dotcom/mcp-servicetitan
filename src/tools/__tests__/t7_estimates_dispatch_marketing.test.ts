@@ -17,6 +17,8 @@ import { list_non_job_events } from '../dispatch/list_non_job_events';
 import { list_campaigns } from '../marketing/list_campaigns';
 import { get_campaign_performance } from '../marketing/get_campaign_performance';
 import { create_call_with_campaign } from '../marketing/create_call_with_campaign';
+import { assertFilterPreservation } from './filter_preservation_helper';
+import type { ToolDef } from '../index';
 
 const CORRELATION = 'test-corr';
 const CTX = { actor: 'vitest', correlation: CORRELATION };
@@ -98,6 +100,28 @@ describe('get_estimate', () => {
     const [url] = env.ST_PROXY.fetch.mock.calls[0];
     expect(url).toContain('10');
     expect(url).toContain('estimate');
+  });
+
+  // QUA-512 / QUA-756 description-drift: the handler calls readST and returns
+  // _source:'live' (and stEndpoint.source==='live'), so the human-facing
+  // description must NOT falsely claim D1 / nightly-synced.
+  it('description reflects the live-ST source, not D1 (QUA-512 desc-drift)', () => {
+    expect(get_estimate.stEndpoint?.source).toBe('live');
+    expect(get_estimate.description).toMatch(/live ST/i);
+    expect(get_estimate.description).not.toMatch(/\bD1\b/);
+    expect(get_estimate.description).not.toMatch(/nightly-synced/i);
+  });
+
+  // QUA-756 done-when: outgoing-URL smoke assertion (QUA-694 pattern). Locks the
+  // already-correct live-ST routing so the description above can't silently drift
+  // back to a D1 claim — estimateId must land in the live ST path, never a D1 SQL
+  // query. Cast to ToolDef<any>: estimateId is a REQUIRED arg (same idiom as the
+  // t8 get_call test).
+  it('filter-preservation: estimateId forwards to live ST in the path (QUA-756)', async () => {
+    await assertFilterPreservation(
+      get_estimate as ToolDef<any>,
+      { estimateId: { value: 82987045, expect: 'forwarded_path' } },
+    );
   });
 });
 
