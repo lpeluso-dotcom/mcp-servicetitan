@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "preflight": "bash scripts/preflight.sh",
-    "preflight:dev": "bash scripts/preflight.sh --env dev"
+    "preflight:dev": "bash scripts/preflight.sh --env dev",
+    "eval:tools": "tsx scripts/evals/tool-selection.ts"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.8.0",
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260525.1",
+    "tsx": "^4.23.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7",
     "wrangler": "^4.94.0"
