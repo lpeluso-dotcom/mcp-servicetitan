@@ -13,3 +13,5 @@ dist/
 # Generated ST probe artifacts — contain customer PII, never commit
 scripts/probe-logs/
 scripts/probe-snapshots/
+
+.claude/
