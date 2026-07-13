@@ -1,14 +1,16 @@
-# Supabase-backed pricebook search toolset — design
+# Supabase-backed pricebook search toolset + embedding-refresh Workflow — design
 
-**Date:** 2026-07-13 · **Linear:** DEV ticket drafted (files under Development — MCP Servers; related QUA-782, QUA-627) · **Status:** approved by Luke (Sections 1–4, 2026-07-13)
+**Date:** 2026-07-13 · **Linear:** DEV ticket drafted (files under Development — MCP Servers; related QUA-782, QUA-627) · **Status:** design approved by Luke 2026-07-13 (Sections 1–4; architecture updated to add the Workflow refresh plane per Luke's "reads + Workflow-owned embeddings" choice)
 
 ## 1. Goal & scope
 
-Give the mcp-servicetitan connector the same natural-language pricebook search the qsc-pricebook-search Vercel app ships, by reading the **shared Supabase vector store** (project `nlaaliehqpgskjmiuzze`) instead of the dormant Cloudflare Vectorize path that never gets re-embedded (Data Foundry review 2026-06-27, Group D).
+Give the mcp-servicetitan connector the same natural-language pricebook search the qsc-pricebook-search Vercel app ships, by reading the **shared Supabase vector store** (project `nlaaliehqpgskjmiuzze`) instead of the dormant Cloudflare Vectorize path that never gets re-embedded (Data Foundry review 2026-06-27, Group D). Add a durable **embedding-refresh Workflow** so the connector keeps the vector column fresh on its own rather than silently depending on the Vercel cron staying alive.
 
-- The connector is a **read-only consumer**. Supabase remains owned and refreshed daily by qsc-pricebook-search (items cron 09:00 UTC, templates 09:30 UTC). No new worker, DO, cron, ingest, or Supabase migration.
-- In scope: 1 repointed tool + 4 new tools, an `AI` binding, two secrets, taylor-ai Vectorize decommission.
-- Out of scope: replicating the app's markup-estimate heuristics (`lib/pricing.ts` bands, Halo rule); write surfaces; per-user auth changes.
+- **Read plane:** 1 repointed tool + 4 new tools as ToolDefs on the existing `agents/mcp` handler — stateless, idempotent, `default` role.
+- **Refresh plane:** a Cloudflare **Workflow** (durable, per-step retry, resumable), kicked by a cron on this worker, that embeds pricebook rows where `embedding IS NULL`. Runs as a **backstop** — same predicate as the app's embed step (`lib/refresh.ts`: `is_active=1 AND embedding IS NULL`), so it's idempotent with it, no race, no coordinated cross-repo cutover. Difference that matters: the app caps at **50 rows/run, best-effort, never throws**, so a cold ~14k backlog would take ~280 daily runs; the durable Workflow **drains the full NULL backlog in one resumable run** across Workers-AI rate limits. Supabase data sync (D1→Supabase upsert, items 09:00 / templates 09:30 UTC) stays owned by qsc-pricebook-search.
+- In scope: 5 read tools; `AI` + `[[workflows]]` bindings + a cron trigger + `scheduled()` handler; two secrets; the embed Workflow class; taylor-ai Vectorize decommission.
+- Out of scope: replicating the app's markup-estimate heuristics (`lib/pricing.ts` bands, Halo rule); the D1→Supabase data sync (app-owned); per-user auth changes; refactoring the connector into an `Agent`/`McpAgent` (it already sits on the Agents SDK MCP surface via `createMcpHandler`).
+- **One-home note:** embedding *logic* now exists in two places (app cron + this Workflow) by design — the redundancy IS the resilience Luke asked for. Optional fast-follow: retire the app's embed step once the Workflow is proven, making this the sole embedder.
 
 ## 2. Tools & data flow
 
@@ -29,11 +31,12 @@ Once the repoint ships, taylor-ai's `/api/pricebook/semantic-search` has zero ca
 ## 3. Bindings, secrets, pricing honesty, security
 
 ### 3.1 Bindings
-- Add `[ai] binding = "AI"` to `wrangler.toml` (prod **and** `env.dev`). Native binding — no token, no account ID, no CI placeholder-inject change. Model pinned in code: `@cf/baai/bge-base-en-v1.5` (768-d), matching the corpus (14,009/14,009 embedded with that exact model). No new D1/KV/DO.
+- Add `[ai] binding = "AI"` to `wrangler.toml` (prod **and** `env.dev`). Native binding — no token, no account ID, no CI placeholder-inject change. Model pinned in code: `@cf/baai/bge-base-en-v1.5` (768-d), matching the corpus (14,009/14,009 embedded with that exact model). Same binding serves both the read tools (query embed) and the refresh Workflow (row embed).
+- Add `[[workflows]]` binding `EMBED_WORKFLOW`, class `PricebookEmbedWorkflow` (prod + `env.dev`), and `[triggers] crons = ["0 10 * * *"]` (one hour after the app's 09:00 UTC data sync) with a `scheduled()` handler in `src/index.ts` that calls `env.EMBED_WORKFLOW.create(...)`. Workflows need no DO/D1 migration. No new D1/KV/DO.
 
 ### 3.2 Secrets (decision: dedicated second key)
 - `SUPABASE_URL` — wrangler secret (secret rather than var only to keep the project ref out of the public-fork toml).
-- `SUPABASE_PB_KEY` — a **newly minted second Supabase secret key**, named for the connector (e.g. `mcp-servicetitan-read`). Independent rotation/revocation from the Vercel app's key; service_role-privileged under the hood but read-only by construction (the worker only calls the read RPCs/selects above). A true SELECT-only Postgres role is a possible fast-follow, not v1.
+- `SUPABASE_PB_KEY` — a **newly minted second Supabase secret key**, named for the connector (e.g. `mcp-servicetitan-pb`). Independent rotation/revocation from the Vercel app's key. service_role-privileged; the connector's write surface is **exactly one column** — `pricebook_items.embedding`, written only by the refresh Workflow. Read tools only call the read RPCs/selects. (Honest framing: not "read-only by construction" anymore — it's read + a single embedding-column write.) A narrower Postgres role scoped to `SELECT + UPDATE(embedding)` is a possible fast-follow, not v1.
 - Set in both environments: `wrangler secret put SUPABASE_URL` / `SUPABASE_PB_KEY` (+ `--env dev`).
 
 ### 3.3 Pricing honesty (hard rule)
@@ -58,13 +61,37 @@ The estate-wide grep found exactly one live caller (this connector's own tool), 
 
 ### 4.2 Provisioning (config only)
 - Luke: mint the second Supabase secret key (dashboard → API keys).
-- Secrets per §3.2; `[ai]` binding per §3.1. No Supabase migrations — all five backing calls already applied to prod (0007–0015). Re-verify exact RPC signatures at plan time (done 2026-07-13 for all five).
+- Secrets per §3.2; `[ai]` + `[[workflows]]` bindings + cron per §3.1. No Supabase migrations — all five read-side backing calls already applied to prod (0007–0015), and the `embedding` column already exists (0012). Re-verify exact RPC signatures at plan time (done 2026-07-13 for all five).
 
 ### 4.3 Testing
-- **Unit (vitest):** per tool with mocked `env.AI` + mocked `fetch` — happy path; embed-failure → lexical fallback; `$0`/null → `price_basis` shaping; topK/limit caps; Supabase 5xx → tool error. Register tools so `coverage_gate.test.ts` passes.
-- **Live dev:** `scripts/preflight.sh` → deploy `--env dev` → `/mcp` probe (skill probe script). Parity set: "shower caulk", "3 ton AC condenser" (known hybrid wins), `cap240` → CAP-240 (code tier), plus one template search, one service breakout, one proposal-tiers, one reverse-link call against known entities. Assert no `$0` on any dynamic item.
-- **Prod:** CI deploy from main; `/health` tool-inventory bump (65 → 69 at `default`); one prod `/mcp` probe.
-- **Docs:** update the mcp-servicetitan skill tool catalog (qsc-infra canonical copy), `references/knowledge-base.md`, CHANGELOG.
+- **Unit (vitest):** per read tool with mocked `env.AI` + mocked `fetch` — happy path; embed-failure → lexical fallback; `$0`/null → `price_basis` shaping; topK/limit caps; Supabase 5xx → tool error. Workflow unit tests: model-id assertion (`@cf/baai/bge-base-en-v1.5`); backlog=0 → no-op; batch drain marks rows non-null; step-failure retry path; per-run ceiling honored. Register tools so `coverage_gate.test.ts` passes.
+- **Live dev:** `scripts/preflight.sh` → deploy `--env dev` → `/mcp` probe (skill probe script). Read parity set: "shower caulk", "3 ton AC condenser" (known hybrid wins), `cap240` → CAP-240 (code tier), plus one template search, one service breakout, one proposal-tiers, one reverse-link call against known entities; assert no `$0` on any dynamic item. Workflow: force one dev row's `embedding` to NULL, trigger the Workflow (manual `create` or cron), confirm the row is re-embedded within one run and metrics/audit rows land.
+- **Prod:** CI deploy from main; `/health` tool-inventory shows **+4 net-new** tools at `default` (the repoint keeps the existing tool's slot); one prod `/mcp` probe; confirm first cron Workflow run drains any prod NULL backlog and logs a count.
+- **Docs:** update the mcp-servicetitan skill tool catalog (qsc-infra canonical copy), `references/knowledge-base.md`, CHANGELOG, and add the Workflow + cron to `protected-modules.md` if the class warrants protection.
+
+## 5. Embedding-refresh Workflow
+
+### 5.1 Shape
+- **Plain Cloudflare Workflow** (`WorkflowEntrypoint`), class `PricebookEmbedWorkflow` in `src/workflows/pricebook-embed.ts`. NOT the Agents-SDK `AgentWorkflow` — the connector is a stateless Worker, not an `Agent` DO, so there's no DO to host an `AgentWorkflow`. A standalone Workflow bound via `[[workflows]]` and started from the worker's `scheduled()` handler is the correct primitive.
+- **Trigger:** cron `0 10 * * *` → `scheduled()` → `env.EMBED_WORKFLOW.create({ params: {} })`. Guard against overlap: before creating, skip if an instance is already running (the worker tracks the last instance id in KV `PROXY_STATE`, or queries instance status).
+
+### 5.2 Steps (each a `step.do`, individually retried)
+1. **count backlog** — `GET pricebook_items?select=count&is_active=eq.1&embedding=is.null` (PostgREST `Prefer: count=exact`, head request). If 0 → finish (no-op day).
+2. **drain loop** — repeat until backlog empty or a per-run ceiling (e.g. 5,000 rows / instance to stay well inside limits):
+   - `step.do("fetch-batch")`: select up to **100** rows `is_active=1 AND embedding IS NULL` (id/st_id + the text used for embedding — mirror the app's embed input in `lib/refresh.ts` so vectors are consistent).
+   - `step.do("embed-batch")`: `env.AI.run('@cf/baai/bge-base-en-v1.5', { text: [...] })` → 768-d vectors. Workers-AI batch; on rate-limit the step retries with backoff (Workflow-native).
+   - `step.do("write-batch")`: `PATCH` each row's `embedding` by id (or a single RPC upsert). Only writes the embedding column.
+   - `step.sleep` a short beat between batches to respect Workers-AI QPS.
+3. **finalize** — log embedded count to `MCP_METRICS` (Analytics Engine) + `audit_log` D1 row.
+
+### 5.3 Consistency & safety
+- **Idempotent with the app:** both target `embedding IS NULL`; whichever writes a row first wins, the other's next `fetch-batch` no longer sees it. No double-spend on Workers AI.
+- **Model lock:** must be exactly `@cf/baai/bge-base-en-v1.5` (768-d) — a different model corrupts the shared vector space. Pinned as a const, asserted in a unit test.
+- **Never blackout:** the Workflow only ever *fills* embeddings; it never deletes/deactivates rows, so it cannot blank the catalog (unlike the data-sync path, which has its own blackout guard in the app).
+- **Failure isolation:** an embed/write step failure retries that step; a poisoned row (repeated failure) is skipped after N attempts and logged, never blocking the batch.
+
+### 5.4 Known gap → fast-follow (out of v1)
+Neither the app nor this Workflow re-embeds a row whose **text changed** (the schema has no `content_hash`/`embedded_at`; the D1→Supabase upsert overwrites text but leaves the old vector). Closing it needs a `content_hash` column + nulling `embedding` on change in the **app's** data-sync. Tracked as a follow-up ticket; v1 backstop is NULL-fill only.
 
 ## Done when
-New/repointed tools return live Supabase hybrid results via `/mcp` in prod; dynamic pricing surfaced honestly; the taylor-ai Vectorize route, binding, and index are removed; spec + plan committed under `docs/superpowers/`.
+Read tools return live Supabase hybrid results via `/mcp` in prod with dynamic pricing surfaced honestly; the `PricebookEmbedWorkflow` runs on cron in prod and drains the `embedding IS NULL` backlog durably (verified by a forced-null test row getting re-embedded within one run); the taylor-ai Vectorize route, binding, and index are removed; spec + plan committed under `docs/superpowers/`.
