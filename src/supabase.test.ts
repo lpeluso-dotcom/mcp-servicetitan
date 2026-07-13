@@ -3,6 +3,8 @@ import {
   EMBED_MODEL_ID, embedInputFor, embedQuery, sbRpc, sbSelect, sbWriteEmbedding, shapePriceRow,
 } from './supabase';
 
+type FetchMock = (url: string | URL, init: RequestInit & { headers: Record<string, string>; body?: string }) => Promise<Response>;
+
 function env(overrides: Record<string, unknown> = {}) {
   return {
     SUPABASE_URL: 'https://proj.supabase.co',
@@ -38,7 +40,8 @@ describe('supabase helpers', () => {
   });
 
   it('sbRpc POSTs to /rest/v1/rpc/<fn> with apikey headers', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify([{ code: 'CAP-240' }]), { status: 200 }));
+    const fetchImpl: FetchMock = async () => new Response(JSON.stringify([{ code: 'CAP-240' }]), { status: 200 });
+    const fetchMock = vi.fn(fetchImpl);
     vi.stubGlobal('fetch', fetchMock);
     const out = await sbRpc(env(), 'search_pricebook_hybrid', { query_text: 'cap' });
     expect(out).toEqual([{ code: 'CAP-240' }]);
@@ -55,7 +58,8 @@ describe('supabase helpers', () => {
   });
 
   it('sbSelect GETs /rest/v1/<pathAndQuery>', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify([{ st_id: 1 }]), { status: 200 }));
+    const fetchImpl: FetchMock = async () => new Response(JSON.stringify([{ st_id: 1 }]), { status: 200 });
+    const fetchMock = vi.fn(fetchImpl);
     vi.stubGlobal('fetch', fetchMock);
     const out = await sbSelect(env(), 'pricebook_items?st_id=eq.1');
     expect(out).toEqual([{ st_id: 1 }]);
@@ -63,13 +67,14 @@ describe('supabase helpers', () => {
   });
 
   it('sbWriteEmbedding PATCHes by (code,item_type) with a bracketed vector literal', async () => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    const fetchImpl: FetchMock = async () => new Response(null, { status: 204 });
+    const fetchMock = vi.fn(fetchImpl);
     vi.stubGlobal('fetch', fetchMock);
     await sbWriteEmbedding(env(), 'CAP-240', 'material', [0.5, 0.6]);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('https://proj.supabase.co/rest/v1/pricebook_items?code=eq.CAP-240&item_type=eq.material');
     expect(init.method).toBe('PATCH');
-    expect(JSON.parse(init.body)).toEqual({ embedding: '[0.5,0.6]' });
+    expect(JSON.parse(init.body as string)).toEqual({ embedding: '[0.5,0.6]' });
   });
 
   it('shapePriceRow nulls zero/absent prices and tags basis dynamic', () => {

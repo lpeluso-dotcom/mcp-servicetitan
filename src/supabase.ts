@@ -75,7 +75,7 @@ export async function sbWriteEmbedding(
 const PRICE_FIELDS = ['st_price', 'member_price', 'price', 'total_price_ref'] as const;
 
 /** Dynamic-pricing honesty: 0/null/'0' → null; tag price_basis. Never emit $0. */
-export function shapePriceRow<T extends Record<string, unknown>>(row: T): T {
+export function shapePriceRow<T extends Record<string, unknown>>(row: T): T & { price_basis: string } {
   const out: Record<string, unknown> = { ...row };
   let sawReference = false;
   for (const k of PRICE_FIELDS) {
@@ -85,5 +85,5 @@ export function shapePriceRow<T extends Record<string, unknown>>(row: T): T {
     else sawReference = true;
   }
   out.price_basis = sawReference ? 'reference (stored ST price)' : 'dynamic — computed at invoice';
-  return out as T;
+  return out as T & { price_basis: string };
 }
