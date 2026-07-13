@@ -140,6 +140,9 @@ id = "d7fb3c58f8604a43a57df60206638a3b"
 binding = "ST_PROXY"
 service = "your-servicetitan-proxy-dev"
 
+# Intentional: dev cron shares the same idempotent backstop target (prod Supabase) as the
+# prod worker's PricebookEmbedWorkflow cron — same predicate/model/projection, first writer
+# wins, safe by design (harmless no-op if dev secrets are unset).
 [env.dev.triggers]
 crons = ["0 10 * * *"]
 
