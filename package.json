@@ -1,7 +1,7 @@
 {
   "name": "mcp-servicetitan",
   "version": "1.7.0",
-  "description": "ServiceTitan MCP server — v1.7.0 (90 tools: 89 default + 1 admin gateway). Streamable HTTP via Agents SDK; HMAC write-gate; D1 audit; Analytics Engine telemetry; response shaper; webhook event-type allowlist. v1.7.0: full pricebook-service field surface on st_create_service + st_patch_service (hours, isLabor, taxable, account, paysCommission, memberPrice, plural useStaticPrices, multi-category). Removes silently-dropped singular useStaticPrice. v1.6.1: get_job_history. v1.6.0: MCP_LOCKDOWN read-only role; Dawn SMS tools (identify_tech_by_phone, save_tech_debrief); readST sweep finished.",
+  "description": "ServiceTitan MCP server for QSC — Streamable HTTP via the Cloudflare Agents SDK. D1-first reads through the taylor-ai proxy with live-ST fallback; two-phase dryRun→HMAC-confirm writes; role gating (admin/default/readonly/lockdown); D1 audit log + Analytics Engine telemetry; response shaper; ST webhook ingest. Tool inventory and version: GET /health (toolCount) and /admin/endpoints — counts are not maintained in this field.",
   "license": "MIT",
   "private": true,
   "scripts": {
@@ -17,17 +17,17 @@
     "preflight:dev": "bash scripts/preflight.sh --env dev"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^0.8.0",
+    "@cloudflare/workers-oauth-provider": "^0.8.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "agents": "^0.13.2",
-    "hono": "^4.12.23",
+    "agents": "^0.17.3",
+    "hono": "^4.12.30",
     "jose": "^6.2.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260525.1",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.7",
-    "wrangler": "^4.94.0"
+    "@cloudflare/workers-types": "^5.20260713.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.110.0"
   }
 }
