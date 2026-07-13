@@ -148,17 +148,38 @@ app.post('/webhooks/st', (c) => handleWebhook(c.env, c.req.raw));
 app.notFound((c) => c.json({ error: 'not found' }, 404));
 
 // ─── CORS for MCP Inspector + remote MCP clients ──────────────
-// Inspector at localhost:5173 requires mcp-session-id in both allowed
-// request headers AND exposeHeaders for session resumption.
-const CORS_OPTIONS = {
-  origin: '*', // F1 dev-friendly; tighten for prod in H13
+// Browser-enforced only: non-browser clients (Claude Desktop/Code, Dawn,
+// server-side MCP clients) send no Origin and ignore ACAO. The allowlist
+// reflects known browser surfaces; anything else gets the claude.ai value,
+// which the requesting page cannot match — the browser blocks the read.
+// QUA-519 hardening (was origin:'*').
+const ALLOWED_BROWSER_ORIGINS: ReadonlySet<string> = new Set([
+  'https://claude.ai',
+  'https://claude.com',
+  'http://localhost:5173',   // MCP Inspector (vite dev UI)
+  'http://127.0.0.1:5173',
+  'http://localhost:6274',   // MCP Inspector ≥0.13 default UI port
+  'http://127.0.0.1:6274',
+]);
+
+export function corsOriginFor(request: Request): string {
+  const origin = request.headers.get('origin');
+  return origin && ALLOWED_BROWSER_ORIGINS.has(origin) ? origin : 'https://claude.ai';
+}
+
+const CORS_BASE = {
   methods: 'GET, POST, OPTIONS, DELETE',
   headers: 'content-type, mcp-session-id, authorization, x-sync-key, x-mcp-role, x-actor, x-correlation-id',
   exposeHeaders: 'mcp-session-id',
   maxAge: 86400,
 };
 
-function unauthorizedMcpResponse(): Response {
+export function corsOptionsFor(request: Request) {
+  return { ...CORS_BASE, origin: corsOriginFor(request) };
+}
+
+function unauthorizedMcpResponse(request: Request): Response {
+  const corsOptions = corsOptionsFor(request);
   return new Response(
     JSON.stringify({
       error: 'unauthorized',
@@ -168,10 +189,10 @@ function unauthorizedMcpResponse(): Response {
       status: 401,
       headers: {
         'content-type': 'application/json',
-        'access-control-allow-origin': CORS_OPTIONS.origin,
-        'access-control-allow-methods': CORS_OPTIONS.methods,
-        'access-control-allow-headers': CORS_OPTIONS.headers,
-        'access-control-expose-headers': CORS_OPTIONS.exposeHeaders,
+        'access-control-allow-origin': corsOptions.origin,
+        'access-control-allow-methods': corsOptions.methods,
+        'access-control-allow-headers': corsOptions.headers,
+        'access-control-expose-headers': corsOptions.exposeHeaders,
       },
     }
   );
@@ -236,17 +257,18 @@ export function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: Request
 // Plain 401 for the connector route — deliberately NO www-authenticate header (a challenge
 // would make Claude attempt an OAuth flow). CORS headers included so claude.ai surfaces the
 // error rather than a CORS failure. The token is never echoed or logged.
-function unauthorizedConnectorResponse(): Response {
+function unauthorizedConnectorResponse(request: Request): Response {
+  const corsOptions = corsOptionsFor(request);
   return new Response(
     JSON.stringify({ error: 'unauthorized', message: 'invalid or expired connector token' }),
     {
       status: 401,
       headers: {
         'content-type': 'application/json',
-        'access-control-allow-origin': CORS_OPTIONS.origin,
-        'access-control-allow-methods': CORS_OPTIONS.methods,
-        'access-control-allow-headers': CORS_OPTIONS.headers,
-        'access-control-expose-headers': CORS_OPTIONS.exposeHeaders,
+        'access-control-allow-origin': corsOptions.origin,
+        'access-control-allow-methods': corsOptions.methods,
+        'access-control-allow-headers': corsOptions.headers,
+        'access-control-expose-headers': corsOptions.exposeHeaders,
       },
     }
   );
@@ -279,12 +301,12 @@ async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContex
         reqCtx = { actor: 'preflight', role: 'readonly' };
       } else {
         const conn = await verifyConnectorToken(connMatch[1], env);
-        if (!conn) return unauthorizedConnectorResponse();
+        if (!conn) return unauthorizedConnectorResponse(request);
         reqCtx = { actor: conn.owner, role: conn.role };
       }
       const runtimeEnv = env; // tenant placeholder resolution is done at each data-helper call site (readST/stRead/write-factory)
       const server = buildServer(runtimeEnv, execCtx, reqCtx);
-      const handler = createMcpHandler(server, { route: '/mcp', corsOptions: CORS_OPTIONS });
+      const handler = createMcpHandler(server, { route: '/mcp', corsOptions: corsOptionsFor(request) });
       const rewrittenUrl = new URL(request.url);
       rewrittenUrl.pathname = '/mcp';
       return handler(new Request(rewrittenUrl.toString(), request), runtimeEnv, execCtx);
@@ -310,7 +332,7 @@ async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContex
       ? { authenticated: true, role: 'default' as const, actor: 'preflight' }
       : await resolveAuth(request, env);
     if (!auth.authenticated) {
-      return unauthorizedMcpResponse();
+      return unauthorizedMcpResponse(request);
     }
     const reqCtx: RequestContext = { actor: auth.actor, role: auth.role };
     const runtimeEnv = env; // tenant placeholder resolution is done at each data-helper call site (readST/stRead/write-factory)
@@ -318,7 +340,7 @@ async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContex
     const server = buildServer(runtimeEnv, execCtx, reqCtx);
     const handler = createMcpHandler(server, {
       route: '/mcp',
-      corsOptions: CORS_OPTIONS,
+      corsOptions: corsOptionsFor(request),
     });
     return handler(request, runtimeEnv, execCtx);
 }
@@ -333,7 +355,7 @@ const oauthApiHandler = {
     const reqCtx: RequestContext = { actor: props?.email ?? 'oauth', role: 'readonly' };
     const runtimeEnv = env; // tenant placeholder resolution is done at each data-helper call site (readST/stRead/write-factory)
     const server = buildServer(runtimeEnv, ctx, reqCtx);
-    const handler = createMcpHandler(server, { route: '/mcp-oauth', corsOptions: CORS_OPTIONS });
+    const handler = createMcpHandler(server, { route: '/mcp-oauth', corsOptions: corsOptionsFor(request) });
     return handler(request, runtimeEnv, ctx);
   },
 };
