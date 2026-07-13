@@ -29,6 +29,7 @@ const COVERAGE_EXEMPT = new Set<string>([
   'search_pricebook_semantic',
   // Supabase-backed pricebook tools — hit Supabase, not ServiceTitan.
   'search_pricebook_templates',
+  'get_proposal_tiers',
 ]);
 
 describe('stEndpoint coverage gate', () => {
