@@ -51,9 +51,11 @@ describe('get_service_breakout', () => {
   });
 
   it('returns not_found when no service row matches', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([]), { status: 200 })));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify([]), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
     const out: any = await get_service_breakout.handler(env, { code: 'MISSING' }, ctx);
     expect(out.service).toBeNull();
     expect(out.not_found).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
