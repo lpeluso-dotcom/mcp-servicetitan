@@ -30,6 +30,7 @@ import { createOAuthProvider, handleOAuthRoute } from './oauth';
 // Durable Object classes must be exported from the worker entry point.
 export { StRateLimiter } from './durable/st-rate-limiter';
 export { CustomerSnapshotSingleflight } from './durable/customer-snapshot-flight';
+export { PricebookEmbedWorkflow } from './workflows/pricebook-embed';
 
 // ─── Hono app for non-MCP routes ──────────────────────────────
 const app = new Hono<{ Bindings: Env }>();
@@ -338,6 +339,24 @@ const oauthApiHandler = {
   },
 };
 
+// ─── Cron: kick the pricebook embedding-refresh Workflow (daily 10:00 UTC) ──────
+// Overlap guard: skip if the last instance is still running. Instance id in KV.
+async function scheduled(_event: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+  const KEY = 'embed_workflow:last_instance';
+  try {
+    const lastId = await env.PROXY_STATE.get(KEY);
+    if (lastId) {
+      const prev = await env.EMBED_WORKFLOW.get(lastId).catch(() => null);
+      const status = prev ? await prev.status().catch(() => null) : null;
+      if (status && (status.status === 'running' || status.status === 'queued')) return; // still working
+    }
+    const inst = await env.EMBED_WORKFLOW.create();
+    await env.PROXY_STATE.put(KEY, inst.id, { expirationTtl: 60 * 60 * 24 * 2 });
+  } catch (err) {
+    console.error('[scheduled] embed workflow kick failed:', err);
+  }
+}
+
 // ─── Default export (Phase-2 OAuth) ───────────────────────────────────────────────────────────
 // Delegate ONLY fetch to the provider; the named Durable Object exports above are independent and
 // preserved. (Do NOT `export default new OAuthProvider(...)` — that form drops named exports.)
@@ -345,4 +364,5 @@ const oauthProvider = createOAuthProvider(defaultFetch, oauthApiHandler);
 
 export default {
   fetch: oauthProvider.fetch.bind(oauthProvider),
+  scheduled,
 } satisfies ExportedHandler<Env>;
