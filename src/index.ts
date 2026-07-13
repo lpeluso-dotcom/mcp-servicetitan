@@ -195,6 +195,10 @@ function unauthorizedMcpResponse(request: Request): Response {
         'access-control-allow-methods': corsOptions.methods,
         'access-control-allow-headers': corsOptions.headers,
         'access-control-expose-headers': corsOptions.exposeHeaders,
+        // ACAO is now per-request-reflected (not '*') — tell any intermediary
+        // cache the response varies by Origin so one origin's reflected value
+        // is never served to another (final-review finding, QUA-519).
+        vary: 'origin',
       },
     }
   );
@@ -271,6 +275,7 @@ function unauthorizedConnectorResponse(request: Request): Response {
         'access-control-allow-methods': corsOptions.methods,
         'access-control-allow-headers': corsOptions.headers,
         'access-control-expose-headers': corsOptions.exposeHeaders,
+        vary: 'origin',
       },
     }
   );
@@ -351,6 +356,10 @@ async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContex
 // The OAuthProvider validated the downstream token before this runs and set the authenticated
 // identity on ctx.props. OAuth callers are always 'readonly' (the grant is only ever minted for an
 // allow-listed user in /callback). route MUST equal apiRoute ('/mcp-oauth') or the transport 404s.
+// This handler never routes through resolveAuth, so MCP_LOCKDOWN never touches it directly — it
+// relies on toolsForRole() filtering 'readonly' identically to 'lockdown' (src/tools/index.ts).
+// If that equivalence ever changes, this hardcoded 'readonly' would silently stop being covered
+// by the incident switch — keep the two roles' tool filters identical, or gate this path too.
 const oauthApiHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const props = (ctx as unknown as { props?: { email?: string } }).props;
