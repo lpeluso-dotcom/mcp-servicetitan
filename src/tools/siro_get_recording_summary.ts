@@ -9,6 +9,7 @@ import { siroFetch } from '../siro';
 import { cacheGet } from '../cache';
 import { McpError } from '../errors';
 import type { ToolDef } from './index';
+import { defaultShaper } from '../response-shape';
 
 const NAMESPACE = 'siro:recording_summary';
 const CACHE_TTL_SEC = 3600;
@@ -31,4 +32,5 @@ export const siro_get_recording_summary: ToolDef<Args> = {
     const path = `/v1/core/recordings/${encodeURIComponent(args.recordingId)}/summaries`;
     return cacheGet(env, NAMESPACE, args.recordingId, CACHE_TTL_SEC, () => siroFetch(env, path, correlation));
   },
+  transformResult: defaultShaper,
 };

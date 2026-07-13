@@ -250,6 +250,18 @@ describe('st_create_material schema', () => {
   it('accepts minimal create payload', () => {
     expect(s.safeParse({ name: 'R-22', categoryId: 10 }).success).toBe(true);
   });
+
+  it('accepts a nested primaryVendor', () => {
+    expect(s.safeParse({ name: 'R-22', categoryId: 10, primaryVendor: { vendorId: 555 } }).success).toBe(true);
+  });
+
+  it('accepts flat primaryVendorId shorthand', () => {
+    expect(s.safeParse({ name: 'R-22', categoryId: 10, primaryVendorId: 555, primaryVendorCost: 9.5 }).success).toBe(true);
+  });
+
+  it('rejects a non-positive vendorId', () => {
+    expect(s.safeParse({ name: 'R-22', categoryId: 10, primaryVendor: { vendorId: 0 } }).success).toBe(false);
+  });
 });
 
 // ── siro_list_mobile_events ──────────────────────────────────
