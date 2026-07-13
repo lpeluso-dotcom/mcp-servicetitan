@@ -32,6 +32,7 @@ export async function drainOnce(
     );
     if (!rows || rows.length === 0) break;
     batches += 1;
+    const embeddedBeforeBatch = embedded;
 
     const inputs = rows.map(embedInputFor);
     const res: any = await (env.AI as any).run(EMBED_MODEL_ID, { text: inputs });
@@ -44,13 +45,19 @@ export async function drainOnce(
       embedded += 1;
     }
     if (rows.length < limit) break; // backlog exhausted
+    // No forward progress on a full batch (every row failed to produce a writable vector) —
+    // re-issuing the same unordered select would return the same stuck rows forever. End this
+    // run cleanly; the Workflow step's own retry gives a fresh attempt next scheduled run.
+    if (embedded === embeddedBeforeBatch) break;
   }
   return { embedded, batches };
 }
 
 export class PricebookEmbedWorkflow extends WorkflowEntrypoint<Env, Record<string, never>> {
   async run(_event: WorkflowEvent<Record<string, never>>, step: WorkflowStep) {
-    // One durable step per batch so an eviction resumes at the last committed batch.
+    // One durable step wraps the whole drain (not one step per batch). That's still safe to
+    // retry: progress is persisted as writes to the Supabase embedding column, not in step
+    // state, so a retried or re-run attempt just resumes against whatever rows are still NULL.
     const result = await step.do(
       'drain-null-embeddings',
       { retries: { limit: 5, delay: '10 seconds', backoff: 'exponential' } },

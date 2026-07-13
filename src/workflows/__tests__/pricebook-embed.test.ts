@@ -59,4 +59,24 @@ describe('PricebookEmbedWorkflow drainOnce', () => {
     expect(EMBED_BATCH).toBe(100);
     expect(RUN_CEILING).toBe(5000);
   });
+
+  it('breaks out on a stuck full batch that makes zero forward progress (no-progress guard)', async () => {
+    const aiRun = vi.fn(async () => ({ data: [] })); // malformed/empty response — no row gets a vector
+    const selectMock = vi.fn(async () => {
+      // Always a full batch, never empty — without the guard this recurs forever.
+      return new Response(JSON.stringify(
+        Array.from({ length: 2 }, (_, i) => ({ code: `S${i}`, item_type: 'material', name: `n${i}` })),
+      ), { status: 200 });
+    });
+    const fetchMock = vi.fn(async (u: string) => {
+      if (String(u).includes('select=code')) return selectMock();
+      return new Response(null, { status: 204 }); // PATCH write path (should never be reached)
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const out = await drainOnce(env(aiRun), { batch: 2, ceiling: 4 });
+
+    expect(out.embedded).toBe(0);
+    expect(selectMock).toHaveBeenCalledTimes(1);
+  });
 });
