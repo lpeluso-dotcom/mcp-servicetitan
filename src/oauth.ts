@@ -18,7 +18,9 @@ import type { Env } from './env';
 const LOGIN_TTL = 600;
 const JWKS_CACHE_KEY = 'oauth:access-jwks';
 const JWKS_TTL = 3600;
-const CSRF_COOKIE = 'mcpst_oauth_csrf';
+// __Host- prefix (securing-MCP guide): browser-enforced Secure + Path=/ +
+// no Domain — a sibling *.workers.dev host cannot plant or override it.
+const CSRF_COOKIE = '__Host-mcpst_oauth_csrf';
 const DEFAULT_ALLOWED = 'office@qualityservicecompany.net,lpeluso@qualityservicecompany.net';
 
 function b64url(bytes: Uint8Array): string {
