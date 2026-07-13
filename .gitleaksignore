@@ -8,5 +8,10 @@
 # Each entry should have a comment explaining why it is allowlisted.
 # DO NOT allowlist real secrets — rotate them immediately instead.
 #
-# Last scan: 2026-05-02 — no leaks found, no entries required.
+# Last scan: 2026-07-13 — 1 entry required (below).
 # Re-run before every deploy: bash scripts/preflight.sh (step [7]).
+
+# Test-fixture HS256 signing key for the MCP_LOCKDOWN JWT-path regression test
+# (fix/lockdown-auth-and-hardening, 2026-07-13). Not a real secret — a literal
+# string only ever used to sign/verify tokens within the test process.
+src/__tests__/lockdown-auth.test.ts:generic-api-key:29
