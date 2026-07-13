@@ -46,7 +46,7 @@ jobs:
     env:
       DEPLOY_ENV: ${{ github.event.inputs.env || 'prod' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
