@@ -30,6 +30,9 @@ const WRITE_NAME_PATTERNS = [
   /^sell_estimate$/,
   /^unsell_estimate$/,
   /^st_post_marketing_attribution$/,
+  /^create_estimate_template$/,
+  /^update_estimate_template$/,
+  /^delete_estimate_template$/,
 ];
 
 describe('lockdown role', () => {

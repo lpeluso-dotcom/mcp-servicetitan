@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { jobId?: number; assignedToId?: number; page?: number; pageSize?: number }
 
@@ -32,4 +33,5 @@ export const list_open_tasks: ToolDef<Args> = {
     );
     return { tasks: data.data ?? [], _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

@@ -34,6 +34,8 @@ import { get_configurable_equipment_children } from './pricebook/get_configurabl
 import { list_service_categories } from './pricebook/list_service_categories';
 // Miss Dawn adapter — merged pricebook search across pb_services + pb_materials + pb_equipment
 import { search_pricebook_all } from './pricebook/search_pricebook_all';
+// Vectorize semantic search — natural-language pricebook lookup
+import { search_pricebook_semantic } from './pricebook/search_pricebook_semantic';
 // C10-C12 — L5 Composites
 import { customer_snapshot } from './composites/customer_snapshot';
 import { pricebook_health_check_services } from './composites/pricebook_health_check_services';
@@ -44,6 +46,10 @@ import { dispatch_override_audit } from './composites/dispatch_override_audit';
 import { call_quality_review } from './composites/call_quality_review';
 import { commercial_plumbing_opportunities } from './composites/commercial_plumbing_opportunities';
 import { membership_jackpot_leaderboard } from './composites/membership_jackpot_leaderboard';
+// QUA-739 — Pricebook margin-discipline composites (D1 pb_ tables)
+import { pricebook_markup_drift } from './composites/pricebook_markup_drift';
+import { pricebook_cost_drift } from './composites/pricebook_cost_drift';
+import { pricebook_vendor_part_gaps } from './composites/pricebook_vendor_part_gaps';
 // T9 — Admin raw gateway
 import { st_call } from './st_call';
 // T8 — Memberships
@@ -60,6 +66,12 @@ import { list_open_tasks } from './tasks/list_open_tasks';
 import { list_estimates_job } from './estimates/list_estimates_job';
 import { get_estimate } from './estimates/get_estimate';
 import { dismiss_estimate, sell_estimate, unsell_estimate } from './estimates/update_estimate_status';
+// Phase 4 — Estimate templates (/sales/v2 estimate-templates CRUD)
+import { list_estimate_templates } from './sales/list_estimate_templates';
+import { get_estimate_template } from './sales/get_estimate_template';
+import { create_estimate_template } from './sales/create_estimate_template';
+import { update_estimate_template } from './sales/update_estimate_template';
+import { delete_estimate_template } from './sales/delete_estimate_template';
 // T7 — Dispatch
 import { get_capacity } from './dispatch/get_capacity';
 import { list_technicians_available } from './dispatch/list_technicians_available';
@@ -147,6 +159,26 @@ export interface ToolDef<Args = Record<string, unknown>> {
   description: string;
   /** Zod raw shape — record of field name to ZodType. SDK derives JSON schema. */
   zodSchema: z.ZodRawShape;
+  /** Optional human-readable display title (MCP `title` field). Falls back to name.replace(/_/g, ' '). */
+  title?: string;
+  /**
+   * Optional output schema — same shape convention as zodSchema (a
+   * ZodRawShape, not a z.object(...)). Passed through to registerTool's
+   * outputSchema. The installed MCP SDK validates `structuredContent`
+   * against this schema at RUNTIME on every call (`validateToolOutput`) —
+   * a mismatch fails the tool call in production, not just at typecheck —
+   * so schemas must be lenient: type the envelope (top-level keys the
+   * handler returns) precisely, but keep nested ST payloads permissive
+   * (`.passthrough()` on objects, `z.record(z.string(), z.unknown())` /
+   * `z.unknown()` for fields whose shape isn't locally guaranteed). Tools
+   * whose handler returns a bare array or primitive must shape their
+   * outputSchema as `{ result: ... }` to match the registry's
+   * structuredContent wrap rule (see tool-registry.ts) — a raw
+   * array/primitive is not a valid top-level outputSchema shape.
+   */
+  outputSchema?: z.ZodRawShape;
+  /** Optional per-tool annotation overrides — merged OVER the method-derived defaults in tool-registry (e.g. a POST that mutates existing state can force destructiveHint:true). */
+  annotations?: Partial<{ title: string; readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean }>;
   /** True for tools that modify state (writes). Informs registry + future role checks. */
   isWrite?: boolean;
   /** True for tools only registered when caller role === 'admin' (F1 placeholder; full gate in F2). */
@@ -175,11 +207,14 @@ export const TOOLS: readonly ToolDef<any>[] = [
   // T6 Pricebook
   search_pricebook_services, get_service_details, search_materials,
   get_configurable_equipment_children, list_service_categories,
-  search_pricebook_all,
+  search_pricebook_all, search_pricebook_semantic,
   // T6 Invoicing
   get_invoice, list_invoices_job, get_invoice_balance, list_unpaid_invoices,
   // T7 Estimates
   list_estimates_job, get_estimate, dismiss_estimate, sell_estimate, unsell_estimate,
+  // Phase 4 Estimate templates
+  list_estimate_templates, get_estimate_template, create_estimate_template,
+  update_estimate_template, delete_estimate_template,
   // T7 Dispatch
   get_capacity, list_technicians_available, get_technician_shifts, list_non_job_events,
   st_get_capacity_slots,
@@ -218,6 +253,8 @@ export const TOOLS: readonly ToolDef<any>[] = [
   // Dawn — SMS support (v1.6.0)
   identify_tech_by_phone,
   save_tech_debrief,
+  // QUA-739 — Pricebook margin-discipline composites (D1 pb_ tables)
+  pricebook_markup_drift, pricebook_cost_drift, pricebook_vendor_part_gaps,
 ] as const;
 
 export function findTool(name: string): ToolDef<any> | undefined {

@@ -17,8 +17,8 @@ function schemaOf(name: string) {
 // ── Registry sanity ──────────────────────────────────────────
 
 describe('tool registry', () => {
-  it('exports 90 tools (v1.7.0 — pricebook full-field surface; tool count unchanged from v1.6.1)', () => {
-    expect(TOOLS.length).toBe(90);
+  it('exports 99 tools (QUA-739 — pricebook margin-discipline composites: markup_drift/cost_drift/vendor_part_gaps)', () => {
+    expect(TOOLS.length).toBe(99);
   });
 
   it('every tool has name + description + zodSchema', () => {
@@ -40,19 +40,23 @@ describe('tool registry', () => {
       'assign_technicians',
       'book_job',
       'create_call_with_campaign',
+      'create_estimate_template',
       'create_recurring_service',
       'create_task',
+      'delete_estimate_template',
       'dismiss_estimate',
       'hold_appointment',
       'reschedule_appointment',
       'save_tech_debrief',
       'sell_estimate',
+      'st_call',
       'st_create_material',
       'st_create_service',
       'st_patch_material',
       'st_patch_service',
       'st_post_marketing_attribution',
       'unsell_estimate',
+      'update_estimate_template',
     ]);
   });
 
@@ -62,8 +66,8 @@ describe('tool registry', () => {
   });
 
   it('toolsForRole("default") excludes st_call; admin includes it', () => {
-    expect(toolsForRole('default').length).toBe(89);
-    expect(toolsForRole('admin').length).toBe(90);
+    expect(toolsForRole('default').length).toBe(98);
+    expect(toolsForRole('admin').length).toBe(99);
     expect(toolsForRole('default').find((t) => t.name === 'st_call')).toBeUndefined();
     expect(toolsForRole('admin').find((t) => t.name === 'st_call')).toBeDefined();
   });
@@ -245,6 +249,18 @@ describe('st_create_material schema', () => {
 
   it('accepts minimal create payload', () => {
     expect(s.safeParse({ name: 'R-22', categoryId: 10 }).success).toBe(true);
+  });
+
+  it('accepts a nested primaryVendor', () => {
+    expect(s.safeParse({ name: 'R-22', categoryId: 10, primaryVendor: { vendorId: 555 } }).success).toBe(true);
+  });
+
+  it('accepts flat primaryVendorId shorthand', () => {
+    expect(s.safeParse({ name: 'R-22', categoryId: 10, primaryVendorId: 555, primaryVendorCost: 9.5 }).success).toBe(true);
+  });
+
+  it('rejects a non-positive vendorId', () => {
+    expect(s.safeParse({ name: 'R-22', categoryId: 10, primaryVendor: { vendorId: 0 } }).success).toBe(false);
   });
 });
 

@@ -25,6 +25,9 @@ const WRITE_NAME_PATTERNS = [
   /^unsell_estimate$/,
   /^st_post_marketing_attribution$/,
   /^save_tech_debrief$/,
+  /^create_estimate_template$/,
+  /^update_estimate_template$/,
+  /^delete_estimate_template$/,
 ];
 
 describe('readonly connector role', () => {

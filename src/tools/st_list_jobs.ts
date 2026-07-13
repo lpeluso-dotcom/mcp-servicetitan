@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { cacheGet } from '../cache';
 import { readST } from '../st';
 import type { ToolDef } from './index';
+import { defaultShaper } from '../response-shape';
 
 const TENANT_ID = '000000000';
 const NAMESPACE = 'servicetitan:jobs';
@@ -57,4 +58,5 @@ export const st_list_jobs: ToolDef<Args> = {
       return readST(env, { actor, correlation }, `/jpm/v2/tenant/${TENANT_ID}/jobs`, query);
     });
   },
+  transformResult: defaultShaper,
 };

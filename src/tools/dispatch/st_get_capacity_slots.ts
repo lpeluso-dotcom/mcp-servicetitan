@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { readSTPost } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args {
   startsOnOrAfter: string;
@@ -62,4 +63,5 @@ export const st_get_capacity_slots: ToolDef<Args> = {
     );
     return { slots: data, _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

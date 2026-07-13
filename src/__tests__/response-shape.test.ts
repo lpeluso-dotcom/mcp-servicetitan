@@ -36,6 +36,32 @@ describe('excludeFields', () => {
   it('handles arrays of primitives', () => {
     expect(excludeFields([1, 2, 3])).toEqual([1, 2, 3]);
   });
+
+  it('preserves a Date instance instead of corrupting it into {}', () => {
+    const d = new Date('2026-01-01');
+    const result = excludeFields(d);
+    expect(result).toBeInstanceOf(Date);
+    expect((result as Date).getTime()).toBe(d.getTime());
+  });
+
+  it('preserves a nested Date instance inside an object', () => {
+    const d = new Date('2026-01-01');
+    const input = { createdAt: d, keep: 'me' };
+    const result = excludeFields(input) as { createdAt: Date; keep: string };
+    expect(result.createdAt).toBeInstanceOf(Date);
+    expect(result.createdAt.getTime()).toBe(d.getTime());
+    expect(result.keep).toBe('me');
+  });
+
+  it('does not let a literal __proto__ data key pollute Object.prototype', () => {
+    const input = JSON.parse('{"a":1,"__proto__":{"polluted":true}}');
+    const result = excludeFields(input) as Record<string, unknown>;
+    // The output itself must not have inherited the polluted property.
+    expect((result as any).polluted).toBeUndefined();
+    // Object.prototype must remain clean for every other object too.
+    expect(({} as any).polluted).toBeUndefined();
+    expect(result.a).toBe(1);
+  });
 });
 
 describe('limitArrays', () => {

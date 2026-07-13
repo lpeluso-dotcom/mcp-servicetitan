@@ -86,10 +86,15 @@ describe('cache integration — get_customer', () => {
 
 describe('cache integration — list_jobs_today', () => {
   it('hits live ST on cache miss', async () => {
-    const env = makeEnv(liveOk([{ id: 1 }]));
+    // Two-call flow on miss: appointments drain → jobs batch.
+    const env = makeEnv(async (url: string) =>
+      url.includes('appointments')
+        ? new Response(JSON.stringify({ data: [{ id: 11, jobId: 100 }], hasMore: false }), { status: 200 })
+        : new Response(JSON.stringify({ data: [{ id: 100, jobStatus: 'Scheduled' }], hasMore: false }), { status: 200 }),
+    );
     const result: any = await list_jobs_today.handler(env, {}, CTX);
     expect(result.jobs).toHaveLength(1);
-    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(2);
   });
 
   it('returns cached value on hit', async () => {
@@ -120,7 +125,10 @@ describe('cache integration — list_service_categories', () => {
 
 describe('cache integration — list_unpaid_invoices', () => {
   it('hits live ST on cache miss', async () => {
-    const env = makeEnv(liveOk([{ id: 1 }]));
+    // balance must be non-zero — QUA-649's client-side filter (added because
+    // ST silently ignores balanceExcludeZero) drops $0-balance rows, and this
+    // fixture predates that fix.
+    const env = makeEnv(liveOk([{ id: 1, balance: 75 }]));
     const result: any = await list_unpaid_invoices.handler(env, {}, CTX);
     expect(result.invoices).toHaveLength(1);
     expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);

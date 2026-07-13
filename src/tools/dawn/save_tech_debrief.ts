@@ -37,6 +37,10 @@ export const save_tech_debrief: ToolDef<Args> = {
   // call), it is NOT a read. Flag isWrite so the read-only / lockdown roles strip it; the
   // default + admin roles (Dawn agent) are unaffected (they don't filter isWrite).
   isWrite: true,
+  // Annotation override: with no stEndpoint the method defaults to GET, so the derived
+  // hints would be destructiveHint:true / idempotentHint:false. But this is an idempotent
+  // upsert (INSERT ... ON CONFLICT DO UPDATE) — additive, not destructive, and safe to retry.
+  annotations: { destructiveHint: false, idempotentHint: true },
   description:
     'Save a tech debrief from an SMS conversation (Dawn agent). ' +
     'Idempotent on retell_chat_id — safe to call on Retell retry. ' +

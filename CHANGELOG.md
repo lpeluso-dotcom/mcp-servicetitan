@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### QUA-783 — siro_* response shaping (finding I-3 resolved)
+- `transformResult: defaultShaper` applied to the 3 `siro_*` tools (`siro_list_mobile_events`, `siro_get_recording_summary`, `siro_get_engagement`), which the Phase-5 sweep (QUA-739) had deferred pending payload verification.
+- Real payloads captured 2026-07-11 from all 3 endpoints: none carry any of the 5 stripped keys (`paginationToken`/`requestId`/`eTag`/`_links`/`_meta`). Siro is not HAL-style on these tools — the recording pointer is a plain `recordingId` scalar, pagination uses `cursor` (not `paginationToken`), and the only media/web URL lives on the un-wrapped `/core/recordings` list endpoint under `links.web.self` (no underscore, so unaffected regardless).
+- New `src/tools/__tests__/siro_shaper.test.ts` encodes the real shapes as a regression guard; `read_shaper_sweep.test.ts` extended 42→45.
+
 ## v1.6.0 — 2026-05-25 (Dawn SMS + lockdown + readST sweep)
 
 Combined release. Tool count **87 → 89** (+2); test count **451 → 472** (+21).

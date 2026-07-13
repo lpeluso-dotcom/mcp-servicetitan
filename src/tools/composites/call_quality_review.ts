@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { readST } from '../../st';
+import { defaultShaper } from '../../response-shape';
 import type { ToolDef } from '../index';
 
 interface Args { from: string; to: string; csr?: string }
@@ -43,4 +44,5 @@ export const call_quality_review: ToolDef<Args> = {
       _note: 'Lace score integration deferred to v1.1 (requires mcp-lace)',
     };
   },
+  transformResult: defaultShaper,
 };

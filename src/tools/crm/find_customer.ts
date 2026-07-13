@@ -3,6 +3,7 @@ import { McpError } from '../../errors';
 import { cacheGet } from '../../cache';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { name?: string; phone?: string; email?: string; page?: number; pageSize?: number }
 
@@ -56,6 +57,15 @@ export const find_customer: ToolDef<Args> = {
     page: z.number().int().positive().optional().describe('Page number, default 1'),
     pageSize: z.number().int().positive().max(VOICE_MAX_PAGESIZE).optional().describe(`Page size, default ${VOICE_DEFAULT_PAGESIZE}, max ${VOICE_MAX_PAGESIZE}`),
   },
+  // Envelope precise (count/customers/_source always present). `customers` is
+  // our own slim() projection (fixed keys), but still typed permissively —
+  // record(unknown) — so a future field tweak to slim() never fails runtime
+  // structuredContent validation.
+  outputSchema: {
+    count: z.number(),
+    customers: z.array(z.record(z.string(), z.unknown())),
+    _source: z.string(),
+  },
   stEndpoint: { method: 'GET', path: '/crm/v2/tenant/{tid}/customers', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     if (!args.name && !args.phone && !args.email) {
@@ -81,4 +91,5 @@ export const find_customer: ToolDef<Args> = {
       return { count: rows.length, customers: rows, _source: 'live' };
     });
   },
+  transformResult: defaultShaper,
 };

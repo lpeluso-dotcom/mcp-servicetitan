@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { readST } from '../../st';
+import { McpError } from '../../errors';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { invoiceId: number }
 
@@ -9,17 +11,26 @@ interface Args { invoiceId: number }
 // Invoice balance lives on the invoice itself (invoice.balance field).
 export const get_invoice_balance: ToolDef<Args> = {
   name: 'get_invoice_balance',
-  description: 'Get the outstanding balance for an invoice. Returns balance, total, and payment summary from the invoice record. Source: D1 (invoices nightly-synced). Note: renamed from get_payment_status — /payments/{id} returns a payment object; balance lives on the invoice.',
+  description: 'Get the outstanding balance for an invoice. Returns balance, total, and payment summary from the invoice record. Source: live ST (accounting invoices, fetched by id via the list endpoint — ST has no /invoices/{id} route). Note: renamed from get_payment_status — /payments/{id} returns a payment object; balance lives on the invoice.',
   zodSchema: {
     invoiceId: z.number().int().positive().describe('ST invoice ID'),
   },
-  stEndpoint: { method: 'GET', path: '/accounting/v2/tenant/{tid}/invoices/{invoiceId}', source: 'live' },
+  stEndpoint: { method: 'GET', path: '/accounting/v2/tenant/{tid}/invoices', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    const invoice = await readST<Record<string, unknown>>(
+    const data = await readST<{ data?: Record<string, unknown>[] }>(
       env,
       { actor, correlation },
-      `/accounting/v2/tenant/000000000/invoices/${args.invoiceId}`,
+      '/accounting/v2/tenant/000000000/invoices',
+      { ids: args.invoiceId },
     );
+    const invoice = data.data?.[0] ?? null;
+    if (!invoice) throw new McpError('not_found', `invoice ${args.invoiceId} not found`, { correlation });
+    // Guard: this endpoint has a documented history of silently ignoring
+    // params (see balanceExcludeZero in list_unpaid_invoices). If ST ever
+    // ignores `ids`, data[0] would be an arbitrary invoice — fail loudly
+    // instead of returning silently wrong financial data.
+    if (Number((invoice as { id?: unknown }).id) !== args.invoiceId)
+      throw new McpError('upstream_error', `ids filter not honored: asked ${args.invoiceId}, got ${(invoice as { id?: unknown }).id}`, { correlation });
     return {
       balance: {
         invoiceId: args.invoiceId,
@@ -30,4 +41,5 @@ export const get_invoice_balance: ToolDef<Args> = {
       _source: 'live',
     };
   },
+  transformResult: defaultShaper,
 };

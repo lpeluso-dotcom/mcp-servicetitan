@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { jobId: number; page?: number; pageSize?: number }
 
@@ -27,4 +28,5 @@ export const list_invoices_job: ToolDef<Args> = {
     );
     return { invoices: data.data ?? [], _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

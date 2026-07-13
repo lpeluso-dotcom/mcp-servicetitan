@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { cacheGet } from '../../cache';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 const TENANT_ID = '000000000';
 
@@ -37,4 +38,5 @@ export const list_service_categories: ToolDef<Args> = {
       return { categories: data.data ?? [], _source: 'live' };
     });
   },
+  transformResult: defaultShaper,
 };

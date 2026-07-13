@@ -262,6 +262,60 @@ describe('margin_audit', () => {
     expect(result.pageCount).toBe(20); // default maxPages
     expect(result.jobCount).toBe(4000);
   });
+
+  // Live-verified 2026-07-09: /jpm/v2/tenant/{tid}/jobs honors the SINGULAR
+  // businessUnitId query param but silently ignores the plural
+  // businessUnitIds (returns jobs across every BU, unfiltered). The tool
+  // was sending the plural, so margin_audit computed margin over the whole
+  // company instead of the requested BU.
+  it('queries jobs with the singular businessUnitId param (plural businessUnitIds is silently ignored by ST)', async () => {
+    const urls: string[] = [];
+    const env = makeEnv(async (url: string) => {
+      if (url.includes('/api/st/read')) urls.push(url);
+      if (!url.includes('/api/st/read')) return new Response('{}', { status: 200 });
+      return new Response(JSON.stringify({ data: [], hasMore: false }), { status: 200 });
+    });
+    await margin_audit.handler(
+      env,
+      { businessUnitId: 100003, from: '2026-01-01', to: '2026-03-31' },
+      CTX
+    );
+    const jobsCalls = urls.filter((u) => u.includes('%2Fjobs%3F') || u.includes('/jobs?'));
+    expect(jobsCalls.length).toBeGreaterThan(0);
+    for (const u of jobsCalls) {
+      expect(u).toContain('businessUnitId%3D100003');
+      expect(u).not.toContain('businessUnitIds%3D');
+    }
+  });
+
+  // Regression for the production 2026-07-09 incident: margin_audit hardcodes
+  // TENANT_ID = '000000000' and hands it to pagedStRead, which previously
+  // built the outgoing URL from the raw endpointPath — never resolving the
+  // placeholder the way readST/readSTPost do. ST responded 403 "Resource
+  // owner validation failed" to the literal /tenant/000000000/ path on every
+  // call. This asserts the end-to-end outgoing jobs URL carries the real
+  // tenant once pagedStRead resolves it internally.
+  it('resolves the tenant placeholder in the outgoing jobs URL for a real-tenant env (2026-07-09 production 403)', async () => {
+    const urls: string[] = [];
+    const env = makeEnv(async (url: string) => {
+      if (url.includes('/api/st/read')) urls.push(url);
+      if (!url.includes('/api/st/read')) return new Response('{}', { status: 200 });
+      return new Response(JSON.stringify({ data: [], hasMore: false }), { status: 200 });
+    });
+    env.ST_TENANT_ID = '431848990';
+    await margin_audit.handler(
+      env,
+      { businessUnitId: 3, from: '2026-01-01', to: '2026-03-31' },
+      CTX
+    );
+    const jobsCalls = urls.filter((u) => u.includes('%2Fjobs%3F') || u.includes('/jobs?'));
+    expect(jobsCalls.length).toBeGreaterThan(0);
+    for (const u of jobsCalls) {
+      const endpointParam = new URL(u).searchParams.get('endpoint');
+      expect(endpointParam).toContain('/jpm/v2/tenant/431848990/jobs');
+      expect(endpointParam).not.toContain('/jpm/v2/tenant/000000000/jobs');
+    }
+  });
 });
 
 describe('membership_outreach_list', () => {
@@ -339,6 +393,233 @@ describe('membership_jackpot_leaderboard', () => {
       expect(entry.employee).toBeUndefined();
       expect(entry.rank).toBeDefined();
     }
+  });
+});
+
+// ── response shaping (defaultShaper) ────────────────────────────
+// The 7 composites below previously returned raw, unshaped results.
+// transformResult: defaultShaper must strip ST noise fields
+// (paginationToken, requestId, eTag, _links, _meta) from nested items
+// while preserving semantic fields and the composite envelope metadata.
+
+const NOISE = {
+  _links: { self: 'https://api.servicetitan.io/x' },
+  eTag: 'W/"abc123"',
+  paginationToken: 'tok-1',
+  requestId: 'req-1',
+  _meta: { fetchedAt: '2026-07-09T00:00:00Z' },
+};
+
+function expectNoiseStripped(item: any) {
+  expect(item._links).toBeUndefined();
+  expect(item.eTag).toBeUndefined();
+  expect(item.paginationToken).toBeUndefined();
+  expect(item.requestId).toBeUndefined();
+  expect(item._meta).toBeUndefined();
+}
+
+describe('call_quality_review — transformResult', () => {
+  it('strips ST noise from nested review items, preserves envelope + semantic fields', () => {
+    const raw = {
+      period: { from: '2026-04-01', to: '2026-04-22' },
+      reviews: [
+        {
+          callId: 42,
+          duration: 180,
+          customerId: 100,
+          campaignId: 7,
+          createdOn: '2026-04-05T00:00:00Z',
+          laceScore: null,
+          ...NOISE,
+        },
+      ],
+      callCount: 1,
+      _composite: 'call_quality_review',
+      _source: 'live',
+      _note: 'Lace score integration deferred to v1.1 (requires mcp-lace)',
+    };
+    const shaped: any = call_quality_review.transformResult!(raw);
+    expectNoiseStripped(shaped.reviews[0]);
+    expect(shaped.reviews[0].callId).toBe(42);
+    expect(shaped.reviews[0].duration).toBe(180);
+    expect(shaped._composite).toBe('call_quality_review');
+    expect(shaped._source).toBe('live');
+    expect(shaped.callCount).toBe(1);
+    expect(shaped.period).toEqual({ from: '2026-04-01', to: '2026-04-22' });
+  });
+});
+
+describe('commercial_plumbing_opportunities — transformResult', () => {
+  it('strips ST noise from nested opportunity items, preserves envelope + semantic fields', () => {
+    const raw = {
+      opportunities: [
+        {
+          customerId: 55,
+          lastJobId: 900,
+          lastJobDate: '2026-01-01T00:00:00Z',
+          daysSinceLastJob: 120,
+          ...NOISE,
+        },
+      ],
+      count: 1,
+      lookbackDays: 90,
+      _composite: 'commercial_plumbing_opportunities',
+      _source: 'live',
+    };
+    const shaped: any = commercial_plumbing_opportunities.transformResult!(raw);
+    expectNoiseStripped(shaped.opportunities[0]);
+    expect(shaped.opportunities[0].customerId).toBe(55);
+    expect(shaped.opportunities[0].lastJobId).toBe(900);
+    expect(shaped._composite).toBe('commercial_plumbing_opportunities');
+    expect(shaped._source).toBe('live');
+    expect(shaped.count).toBe(1);
+    expect(shaped.lookbackDays).toBe(90);
+  });
+});
+
+describe('dispatch_override_audit — transformResult', () => {
+  it('strips ST noise from doubly-nested technician items, preserves envelope + semantic fields', () => {
+    const raw = {
+      period: { from: '2026-04-01', to: '2026-04-22' },
+      overrides: [
+        {
+          appointmentId: 1001,
+          jobId: 2002,
+          start: '2026-04-10T09:00:00Z',
+          technicians: [
+            {
+              appointment_id: 1001,
+              technician_id: 55,
+              technician_name: 'Bob',
+              status: 'Active',
+              ...NOISE,
+            },
+          ],
+          isAutoDispatched: true,
+        },
+      ],
+      overrideCount: 1,
+      _composite: 'dispatch_override_audit',
+      _source: 'live',
+    };
+    const shaped: any = dispatch_override_audit.transformResult!(raw);
+    expectNoiseStripped(shaped.overrides[0].technicians[0]);
+    expect(shaped.overrides[0].appointmentId).toBe(1001);
+    expect(shaped.overrides[0].technicians[0].technician_id).toBe(55);
+    expect(shaped.overrides[0].isAutoDispatched).toBe(true);
+    expect(shaped._composite).toBe('dispatch_override_audit');
+    expect(shaped._source).toBe('live');
+    expect(shaped.overrideCount).toBe(1);
+  });
+});
+
+describe('margin_audit — transformResult', () => {
+  it('strips ST noise from nested _failures items, preserves envelope + semantic fields', () => {
+    const raw = {
+      businessUnitId: 3,
+      period: { from: '2026-01-01', to: '2026-03-31' },
+      jobCount: 450,
+      pageCount: 3,
+      revenue: 45000,
+      cost: 27000,
+      margin: 40,
+      _composite: 'margin_audit',
+      _source: 'live',
+      _truncated: false,
+      _partial: true,
+      _failures: [
+        { page: 2, status: 503, message: 'Bad Gateway', ...NOISE },
+      ],
+    };
+    const shaped: any = margin_audit.transformResult!(raw);
+    expectNoiseStripped(shaped._failures[0]);
+    expect(shaped._failures[0].page).toBe(2);
+    expect(shaped._failures[0].status).toBe(503);
+    expect(shaped._composite).toBe('margin_audit');
+    expect(shaped._source).toBe('live');
+    expect(shaped._partial).toBe(true);
+    expect(shaped.revenue).toBe(45000);
+    expect(shaped.jobCount).toBe(450);
+  });
+});
+
+describe('membership_jackpot_leaderboard — transformResult', () => {
+  it('strips ST noise from nested leaderboard items, preserves envelope + semantic fields', () => {
+    const raw = {
+      leaderboard: [
+        { rank: 1, count: 5, employeeId: 77, ...NOISE },
+      ],
+      anonymized: false,
+      revealDate: '2026-07-04',
+      _composite: 'membership_jackpot_leaderboard',
+      _source: 'live',
+    };
+    const shaped: any = membership_jackpot_leaderboard.transformResult!(raw);
+    expectNoiseStripped(shaped.leaderboard[0]);
+    expect(shaped.leaderboard[0].rank).toBe(1);
+    expect(shaped.leaderboard[0].count).toBe(5);
+    expect(shaped._composite).toBe('membership_jackpot_leaderboard');
+    expect(shaped._source).toBe('live');
+    expect(shaped.anonymized).toBe(false);
+    expect(shaped.revealDate).toBe('2026-07-04');
+  });
+});
+
+describe('membership_outreach_list — transformResult', () => {
+  it('strips ST noise from nested contact items, preserves envelope + semantic fields', () => {
+    const raw = {
+      segment: 'expiring_30',
+      contacts: [
+        {
+          membershipId: 5001,
+          customerId: 88,
+          customerName: 'Acme Co',
+          membershipType: 'Gold',
+          expirationDate: '2026-08-01T00:00:00Z',
+          status: 'Active',
+          ...NOISE,
+        },
+      ],
+      count: 1,
+      _composite: 'membership_outreach_list',
+      _source: 'live',
+    };
+    const shaped: any = membership_outreach_list.transformResult!(raw);
+    expectNoiseStripped(shaped.contacts[0]);
+    expect(shaped.contacts[0].membershipId).toBe(5001);
+    expect(shaped.contacts[0].customerName).toBe('Acme Co');
+    expect(shaped._composite).toBe('membership_outreach_list');
+    expect(shaped._source).toBe('live');
+    expect(shaped.segment).toBe('expiring_30');
+    expect(shaped.count).toBe(1);
+  });
+});
+
+describe('pricebook_health_check_services — transformResult', () => {
+  it('strips ST noise from nested zeroCostServices items, preserves envelope + semantic fields', () => {
+    const raw = {
+      summary: {
+        total: 10,
+        zeroCostCount: 1,
+        noCategoryCount: 0,
+        inactiveCount: 0,
+        healthy: false,
+      },
+      zeroCostServices: [
+        { id: 9001, name: 'Mystery Service', ...NOISE },
+      ],
+      noCategoryServices: [],
+      _composite: 'pricebook_health_check_services',
+      _source: 'live',
+      _note: 'pb_materials and pb_equipment health blocked until §13#1 nightly sync fix',
+    };
+    const shaped: any = pricebook_health_check_services.transformResult!(raw);
+    expectNoiseStripped(shaped.zeroCostServices[0]);
+    expect(shaped.zeroCostServices[0].id).toBe(9001);
+    expect(shaped.zeroCostServices[0].name).toBe('Mystery Service');
+    expect(shaped._composite).toBe('pricebook_health_check_services');
+    expect(shaped._source).toBe('live');
+    expect(shaped.summary).toEqual(raw.summary);
   });
 });
 

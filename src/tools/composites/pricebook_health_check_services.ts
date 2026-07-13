@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { readST } from '../../st';
+import { defaultShaper } from '../../response-shape';
 import type { ToolDef } from '../index';
 
 interface Args { activeOnly?: boolean }
@@ -44,4 +45,5 @@ export const pricebook_health_check_services: ToolDef<Args> = {
       _note: 'pb_materials and pb_equipment health blocked until §13#1 nightly sync fix',
     };
   },
+  transformResult: defaultShaper,
 };

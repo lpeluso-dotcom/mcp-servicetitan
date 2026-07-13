@@ -20,12 +20,14 @@ export const RESERVED_KEYS: ReadonlySet<string> = new Set([
 
 export function excludeFields<T>(value: T, fields: ReadonlySet<string> = DEFAULT_EXCLUDED_FIELDS): T {
   if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Date) return value;
   if (Array.isArray(value)) {
     return value.map((v) => excludeFields(v, fields)) as unknown as T;
   }
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     if (fields.has(k)) continue;
+    if (k === '__proto__') continue;
     out[k] = excludeFields(v, fields);
   }
   return out as T;

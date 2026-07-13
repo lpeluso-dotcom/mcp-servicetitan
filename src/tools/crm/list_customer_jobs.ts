@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { customerId: number; status?: string; page?: number; pageSize?: number }
 
@@ -27,4 +28,5 @@ export const list_customer_jobs: ToolDef<Args> = {
     );
     return { jobs: data.data ?? [], _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

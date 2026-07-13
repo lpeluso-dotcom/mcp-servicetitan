@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 interface Args { active?: boolean; page?: number; pageSize?: number }
 
@@ -28,4 +29,5 @@ export const list_campaigns: ToolDef<Args> = {
     );
     return { campaigns: data.data ?? [], _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { readST } from '../../st';
+import { defaultShaper } from '../../response-shape';
 import type { ToolDef } from '../index';
 
 interface Args { businessUnitId?: number; lookbackDays?: number }
@@ -54,4 +55,5 @@ export const commercial_plumbing_opportunities: ToolDef<Args> = {
       _source: 'live',
     };
   },
+  transformResult: defaultShaper,
 };

@@ -20,7 +20,7 @@ describe('registerTool — transformResult', () => {
 
     const captured: any[] = [];
     const server = {
-      tool: (_n: string, _d: string, _s: any, fn: any) => {
+      registerTool: (_n: string, _config: any, fn: any) => {
         captured.push(fn);
       },
     } as any;

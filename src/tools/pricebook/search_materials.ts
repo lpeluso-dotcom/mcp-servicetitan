@@ -14,6 +14,7 @@ import { codeVariants } from './search_pricebook_all';
 import { queryD1First } from '../../d1-proxy';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
+import { defaultShaper } from '../../response-shape';
 
 const TENANT_ID = '000000000';
 
@@ -101,4 +102,5 @@ export const search_materials: ToolDef<Args> = {
     );
     return { materials: data.data ?? [], _source: 'live' };
   },
+  transformResult: defaultShaper,
 };

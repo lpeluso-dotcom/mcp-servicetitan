@@ -8,6 +8,7 @@ import { cacheGet } from '../cache';
 import { McpError } from '../errors';
 import { readST } from '../st';
 import type { ToolDef } from './index';
+import { defaultShaper } from '../response-shape';
 
 const TENANT_ID = '000000000';
 const NAMESPACE = 'servicetitan:pricebook';
@@ -53,4 +54,5 @@ export const st_get_pricebook: ToolDef<Args> = {
       readST(env, { actor, correlation }, endpoint, query),
     );
   },
+  transformResult: defaultShaper,
 };

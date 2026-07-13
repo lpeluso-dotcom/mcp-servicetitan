@@ -1,0 +1,16 @@
+# CODEOWNERS — mechanical enforcement of qsc-infra protected-modules.md
+# Any PR touching these paths requires @lpeluso-dotcom review.
+# Keep in sync with /home/taylor/qsc-infra/.claude/rules/protected-modules.md (mcp-servicetitan row).
+
+/src/st.ts                    @lpeluso-dotcom
+/src/read-router.ts           @lpeluso-dotcom
+/src/write-gate.ts            @lpeluso-dotcom
+/src/write-tool-factory.ts    @lpeluso-dotcom
+/src/composite-helpers.ts     @lpeluso-dotcom
+/src/st-path-builder.ts       @lpeluso-dotcom
+/src/tools/st_call.ts         @lpeluso-dotcom
+/src/auth.ts                  @lpeluso-dotcom
+/src/routes/admin-guard.ts    @lpeluso-dotcom
+/src/routes/admin-endpoints.ts @lpeluso-dotcom
+/src/durable/                 @lpeluso-dotcom
+/migrations/                  @lpeluso-dotcom

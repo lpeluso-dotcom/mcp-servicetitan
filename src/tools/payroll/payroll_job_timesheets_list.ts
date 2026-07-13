@@ -153,6 +153,20 @@ export const payroll_job_timesheets_list: ToolDef<Args> = {
       .optional()
       .describe("'auto' (default) reads D1 and falls back to live on miss/stale; 'd1' forces D1 only; 'live' forces live ST."),
   },
+  // Envelope precise (count/timesheets/has_more/_source always present).
+  // _stale_hours only appears on the D1 path; _fallback_skipped/
+  // _fallback_reason are mutually-exclusive optionals from the auto-mode
+  // fallback logic. `timesheets` rows are our own slim shape (D1 or live)
+  // but still typed permissively (record) to tolerate future field changes.
+  outputSchema: {
+    count: z.number(),
+    timesheets: z.array(z.record(z.string(), z.unknown())),
+    has_more: z.boolean(),
+    _source: z.string(),
+    _stale_hours: z.number().nullable().optional(),
+    _fallback_skipped: z.string().optional(),
+    _fallback_reason: z.string().optional(),
+  },
   stEndpoint: {
     method: 'GET',
     path: '/payroll/v2/tenant/{tid}/jobs/timesheets',
