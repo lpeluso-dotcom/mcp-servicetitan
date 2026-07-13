@@ -16,6 +16,8 @@ import { get_call } from '../calls_forms/get_call';
 import { get_form_submission } from '../calls_forms/get_form_submission';
 import { create_task } from '../tasks/create_task';
 import { list_open_tasks } from '../tasks/list_open_tasks';
+import { assertFilterPreservation } from './filter_preservation_helper';
+import type { ToolDef } from '../index';
 
 const CORRELATION = 'test-corr';
 const CTX = { actor: 'vitest', correlation: CORRELATION };
@@ -206,6 +208,22 @@ describe('get_call', () => {
     const env = makeEnv(liveOk([{ id: 0, leadCall: { id: 999 } }]));
     await expect(get_call.handler(env, { callId: 260956 }, CTX)).rejects.toThrow(/ids filter not honored/);
   });
+
+  // QUA-756 Done-when: filter-preservation test asserts the outgoing ST URL
+  // (QUA-694 test pattern). callId is the arg name but the wire key is `ids`
+  // — the liveResponse is shaped so leadCall.id matches the callId under
+  // test, satisfying the tool's own nested-id guard.
+  it('filter-preservation: callId forwards to live ST as `ids` (QUA-756)', async () => {
+    // Cast to ToolDef<any> (same idiom as qua694_dispatch_filter_names.test.ts):
+    // callId is a REQUIRED arg, which the harness's Record<string,unknown>
+    // generic can't accept by variance.
+    await assertFilterPreservation(
+      get_call as ToolDef<any>,
+      { callId: { value: 260956, expect: 'forwarded_query', key: 'ids' } },
+      {},
+      { liveResponse: { data: [{ id: 0, leadCall: { id: 260956 } }] } },
+    );
+  });
 });
 
 // Combined D1 (readD1 -> /api/sql/read) + live ST (readST/readSTPaged ->
@@ -281,6 +299,42 @@ describe('get_form_submission', () => {
       () => ({ data: [{ id: 1111, formId: 7752 }], hasMore: false }),
     );
     await expect(get_form_submission.handler(env, { formSubmissionId: 8479, formId: 7752 }, CTX)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  // QUA-756 Done-when: filter-preservation tests assert the outgoing ST/D1
+  // shape (QUA-694 test pattern) for both of this tool's filters.
+  it('filter-preservation: formSubmissionId forwards to D1 as `submission_id` (QUA-756)', async () => {
+    // Cast to ToolDef<any>: formSubmissionId is a REQUIRED arg (see get_call
+    // comment above for why the cast is needed).
+    await assertFilterPreservation(
+      get_form_submission as ToolDef<any>,
+      { formSubmissionId: { value: 8479, expect: 'forwarded_d1', column: 'submission_id' } },
+      {},
+      {
+        d1Response: {
+          success: true,
+          results: [{
+            submission_id: 8479, form_id: 7752, form_name: 'Lead Intake', status: 'Complete',
+            submitted_on: '2026-06-01T10:00:00Z', submitted_by_id: 501,
+            owners_json: null, units_json: null, synced_at: '2026-07-01T00:00:00Z',
+          }],
+        },
+      },
+    );
+  });
+
+  it('filter-preservation: formId forwards to live ST as `formIds` on D1-miss fallback (QUA-756)', async () => {
+    // Cast to ToolDef<any>: formSubmissionId (in baseArgs) is a REQUIRED arg
+    // (see get_call comment above for why the cast is needed).
+    await assertFilterPreservation(
+      get_form_submission as ToolDef<any>,
+      { formId: { value: 7752, expect: 'forwarded_query', key: 'formIds' } },
+      { formSubmissionId: 8479 },
+      {
+        d1Response: { success: true, results: [] },
+        liveResponse: { data: [{ id: 8479, formId: 7752 }], hasMore: false, page: 1, pageSize: 200 },
+      },
+    );
   });
 });
 
