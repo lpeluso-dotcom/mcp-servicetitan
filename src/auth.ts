@@ -46,21 +46,21 @@ export async function hasValidSyncKey(request: Request, env: Env): Promise<boole
 
 // Resolve caller role for this request.
 // Dual-mode auth: JWT first, then fall back to X-Sync-Key (constant-time).
-// JWT flow: extract Authorization: Bearer <JWT>, verify signature, return role from claim.
-// Fallback: validate X-Sync-Key → opt-in check (X-MCP-Role: admin) → D1 lookup.
-// Returns 'admin' only when the caller presents valid credentials and has admin role.
-// Degrades to 'default' silently (D1 error, key mismatch, missing header) so the MCP
-// session stays alive with the safe tool set.
+// MCP_LOCKDOWN (v1.5.2; ordering fixed 2026-07-13): when 'true', every
+// AUTHENTICATED caller is forced into the lockdown role — toolsForRole()
+// then strips all writes + st_call. Lockdown must never waive
+// authentication itself: credentials are still required; the switch only
+// narrows what they grant.
 export async function resolveAuth(request: Request, env: Env): Promise<AuthResult> {
-  const fallbackActor = safeActorHeader(request.headers.get('x-actor'));
-
-  // Lockdown short-circuit (v1.5.2). MCP_LOCKDOWN=true forces every caller into
-  // the lockdown role regardless of credentials — toolsForRole() then strips
-  // all writes + st_call. Use this when the server is fronting an untrusted
-  // network or when you want defence-in-depth during an incident.
-  if (env.MCP_LOCKDOWN === 'true') {
-    return { authenticated: true, role: 'lockdown', actor: fallbackActor, authMode: 'none' };
+  const auth = await resolveCredentials(request, env);
+  if (env.MCP_LOCKDOWN === 'true' && auth.authenticated) {
+    return { ...auth, role: 'lockdown' };
   }
+  return auth;
+}
+
+async function resolveCredentials(request: Request, env: Env): Promise<AuthResult> {
+  const fallbackActor = safeActorHeader(request.headers.get('x-actor'));
 
   // JWT path first
   const authHeader = request.headers.get('authorization');
@@ -148,9 +148,12 @@ export async function verifyConnectorToken(
       .first<{ role: string; owner: string | null; expires_at: number | null }>();
     if (!row) return null;
     if (row.expires_at != null && row.expires_at < Date.now()) return null; // expired
-    const role: Role = (CONNECTOR_ROLES as readonly string[]).includes(row.role)
+    const baseRole: Role = (CONNECTOR_ROLES as readonly string[]).includes(row.role)
       ? (row.role as Role)
       : 'readonly';
+    // Incident switch: lockdown narrows connector grants too (a 'default'
+    // connector token must not keep write access while lockdown is on).
+    const role: Role = env.MCP_LOCKDOWN === 'true' ? 'lockdown' : baseRole;
     return { role, owner: safeActorHeader(row.owner) };
   } catch {
     return null; // table missing / D1 error ⇒ deny
