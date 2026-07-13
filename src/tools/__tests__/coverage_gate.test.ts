@@ -31,6 +31,7 @@ const COVERAGE_EXEMPT = new Set<string>([
   'search_pricebook_templates',
   'get_proposal_tiers',
   'find_packages_with_item',
+  'get_service_breakout',
 ]);
 
 describe('stEndpoint coverage gate', () => {

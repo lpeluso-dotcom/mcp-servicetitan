@@ -40,6 +40,7 @@ import { search_pricebook_semantic } from './pricebook/search_pricebook_semantic
 import { search_pricebook_templates } from './pricebook/search_pricebook_templates';
 import { get_proposal_tiers } from './pricebook/get_proposal_tiers';
 import { find_packages_with_item } from './pricebook/find_packages_with_item';
+import { get_service_breakout } from './pricebook/get_service_breakout';
 // C10-C12 — L5 Composites
 import { customer_snapshot } from './composites/customer_snapshot';
 import { pricebook_health_check_services } from './composites/pricebook_health_check_services';
@@ -211,7 +212,7 @@ export const TOOLS: readonly ToolDef<any>[] = [
   // T6 Pricebook
   search_pricebook_services, get_service_details, search_materials,
   get_configurable_equipment_children, list_service_categories,
-  search_pricebook_all, search_pricebook_semantic, search_pricebook_templates, get_proposal_tiers, find_packages_with_item,
+  search_pricebook_all, search_pricebook_semantic, search_pricebook_templates, get_proposal_tiers, find_packages_with_item, get_service_breakout,
   // T6 Invoicing
   get_invoice, list_invoices_job, get_invoice_balance, list_unpaid_invoices,
   // T7 Estimates
