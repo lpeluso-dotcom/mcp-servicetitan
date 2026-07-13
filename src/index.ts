@@ -348,7 +348,11 @@ async function scheduled(_event: ScheduledController, env: Env, _ctx: ExecutionC
     if (lastId) {
       const prev = await env.EMBED_WORKFLOW.get(lastId).catch(() => null);
       const status = prev ? await prev.status().catch(() => null) : null;
-      if (status && (status.status === 'running' || status.status === 'queued')) return; // still working
+      // Only proceed if the previous instance is in a terminal state.
+      // Any non-terminal state (running, queued, waiting, paused, waitingForPause) → skip.
+      if (status && !['complete', 'errored', 'terminated', 'unknown'].includes(status.status as any)) {
+        return; // still working
+      }
     }
     const inst = await env.EMBED_WORKFLOW.create();
     await env.PROXY_STATE.put(KEY, inst.id, { expirationTtl: 60 * 60 * 24 * 2 });
