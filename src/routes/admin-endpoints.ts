@@ -42,6 +42,7 @@ const COVERAGE_EXEMPT = new Set<string>([
   // Supabase-backed pricebook tools — hit Supabase, not ServiceTitan.
   'search_pricebook_templates',
   'get_proposal_tiers',
+  'find_packages_with_item',
 ]);
 
 export async function endpointsHandler(c: Context<{ Bindings: Env }>) {
