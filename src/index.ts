@@ -34,19 +34,21 @@ export { CustomerSnapshotSingleflight } from './durable/customer-snapshot-flight
 // ─── Hono app for non-MCP routes ──────────────────────────────
 const app = new Hono<{ Bindings: Env }>();
 
-app.get('/health', (c) => {
-  const lockdown = c.env.MCP_LOCKDOWN === 'true';
-  return c.json({
+export function healthPayload(env: Env): Record<string, unknown> {
+  return {
     ok: true,
     service: 'mcp-servicetitan',
-    version: c.env.MCP_SERVICE_VERSION,
+    version: env.MCP_SERVICE_VERSION,
     toolCount: TOOLS.length,
-    tools: TOOLS.map((t) => t.name),
+    // tool NAMES intentionally omitted (QUA-519): unauthenticated enumeration
+    // aids targeting. Full per-tool inventory lives on admin-gated /admin/endpoints.
     transport: 'agents-sdk createMcpHandler (Streamable HTTP)',
     stProxy: 'service-binding',
-    lockdown,
-  });
-});
+    lockdown: env.MCP_LOCKDOWN === 'true',
+  };
+}
+
+app.get('/health', (c) => c.json(healthPayload(c.env)));
 
 // List roles — requires X-Sync-Key matching env secret.
 app.get('/admin/roles', async (c) => {
