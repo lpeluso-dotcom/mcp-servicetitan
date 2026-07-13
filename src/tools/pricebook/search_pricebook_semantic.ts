@@ -1,78 +1,42 @@
 // ============================================================
-// search_pricebook_semantic — Vectorize semantic search over pricebook
-//
-// Proxies to taylor-ai /api/pricebook/semantic-search via the ST_PROXY
-// service binding. Returns top-K pricebook items ranked by embedding
-// similarity. Use when a keyword search returns no useful results or
-// when the caller has a natural-language description rather than a code.
+// search_pricebook_semantic — hybrid (code + lexical + vector) search
+// over the shared Supabase pricebook store. Embeds the query via Workers
+// AI, then calls the search_pricebook_hybrid RPC (migration 0014).
+// Natural-language OR code queries both work; embed failure degrades to
+// lexical (query_embedding=null) — the RPC handles both.
 // ============================================================
-
 import { z } from 'zod';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
-import { defaultShaper } from '../../response-shape';
+import { embedQuery, sbRpc, shapePriceRow } from '../../supabase';
 
-interface Args {
-  query: string;
-  topK?: number;
-}
-
-interface SemanticMatch {
-  id: string;
-  score: number;
-  metadata: {
-    id?: string;
-    name?: string;
-    type?: string;
-    category?: string;
-    price?: number;
-    code?: string;
-  };
-}
+interface Args { query: string; topK?: number; }
 
 export const search_pricebook_semantic: ToolDef<Args> = {
   name: 'search_pricebook_semantic',
   description:
-    'Semantic (vector) search over the QSC pricebook — services, materials, and equipment. ' +
-    'Use when keyword search yields no results or the caller describes a task in natural language ' +
-    '(e.g. "replace capacitor on heat pump", "flush tankless water heater"). ' +
-    'Returns up to topK matches ranked by embedding similarity with metadata (name, type, code, price). ' +
-    'Note: price may be 0 or absent — QSC uses dynamic pricing computed at invoice time.',
+    'Semantic/hybrid search over the QSC pricebook — services, materials, equipment, fees. ' +
+    'Use for natural-language descriptions ("replace capacitor on heat pump") or codes ("CAP-240"). ' +
+    'Returns matches ranked by a fusion of exact-code, lexical, and vector similarity, with match_kind. ' +
+    'Note: price may be null — QSC uses dynamic pricing computed at invoice time; never treat null as free.',
   zodSchema: {
-    query: z.string().min(1).max(500).describe('Natural-language description of the service or part needed'),
-    topK: z.number().int().min(1).max(20).default(10).optional().describe('Number of results to return (default 10, max 20)'),
+    query: z.string().min(1).max(500).describe('Natural-language description or a pricebook code'),
+    topK: z.number().int().min(1).max(20).default(10).optional().describe('Max results (default 10, max 20)'),
   },
-  async handler(env: Env, args: Args, { correlation }) {
-    const params = new URLSearchParams({ q: args.query, topK: String(args.topK ?? 10) });
-    const resp = await (env as any).ST_PROXY.fetch(
-      `https://servicetitan-proxy/api/pricebook/semantic-search?${params}`,
-      {
-        headers: {
-          'X-Sync-Key': env.MCP_SYNC_KEY,
-          'X-Correlation-Id': correlation ?? '',
-        },
-      }
-    );
-
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => String(resp.status));
-      throw new Error(`pricebook semantic search failed: ${text}`);
-    }
-
-    const data = await resp.json() as { matches?: SemanticMatch[]; query?: string };
+  async handler(env: Env, args: Args) {
+    const limit = Math.min(args.topK ?? 10, 20);
+    const embedding = await embedQuery(env, args.query);
+    const rows = await sbRpc<Array<Record<string, unknown>>>(env, 'search_pricebook_hybrid', {
+      query_text: args.query,
+      limit_rows: limit,
+      query_embedding: embedding,     // null → lexical-only path in the RPC
+      match_count: 50,
+    });
     return {
-      matches: (data.matches ?? []).map((m) => ({
-        score: m.score,
-        id: m.metadata?.id ?? m.id,
-        name: m.metadata?.name ?? '',
-        type: m.metadata?.type ?? '',
-        code: m.metadata?.code ?? '',
-        category: m.metadata?.category ?? '',
-        price: m.metadata?.price ?? null,
-      })),
-      query: data.query ?? args.query,
-      _source: 'vectorize',
+      matches: (rows ?? []).map((r) => shapePriceRow(r)),
+      query: args.query,
+      _source: 'supabase-hybrid',
+      _embedded: embedding !== null,
     };
   },
-  transformResult: defaultShaper,
 };
