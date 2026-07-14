@@ -20,6 +20,7 @@ import type { ToolDef } from './tools/index';
 import { newCorrelationId } from './auth';
 import { McpError } from './errors';
 import * as obs from './obs';
+import { traceTool } from './observability/tracing';
 import { offloadIfLarge } from './resources/results';
 
 export interface RequestContext {
@@ -182,6 +183,17 @@ export function registerTool(
         );
         emitMetric(env, execCtx, tool.name, 'ok', latency, reqCtx);
 
+        // Phoenix tracing: one root span per call, ids/flags only — never raw
+        // args/results (this worker's whole reason to exist is serving ST PII).
+        execCtx.waitUntil(
+          traceTool(
+            env,
+            tool.name,
+            { correlation, role: reqCtx.role, actor: reqCtx.actor, partial: isPartial },
+            async () => ({ status: isPartial ? 'error' : 'ok', latencyMs: latency })
+          )
+        );
+
         // Gated offload: below RESULT_THRESHOLD chars this is byte-identical
         // to the prior inline behavior (same text content block + same
         // structuredContent wrapping rule, now factored into
@@ -228,6 +240,17 @@ export function registerTool(
           obs.heartbeat(env, `mcp-servicetitan:${tool.name}`, { ok: false })
         );
         emitMetric(env, execCtx, tool.name, 'error', latency, reqCtx);
+
+        // Phoenix tracing: one root span per call, ids/flags only — never raw
+        // args/results (this worker's whole reason to exist is serving ST PII).
+        execCtx.waitUntil(
+          traceTool(
+            env,
+            tool.name,
+            { correlation, role: reqCtx.role, actor: reqCtx.actor, code: mcpErr.code },
+            async () => ({ status: 'error', latencyMs: latency })
+          )
+        );
 
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(mcpErr.toResponse()) }],
