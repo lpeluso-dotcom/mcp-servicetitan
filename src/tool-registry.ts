@@ -189,6 +189,7 @@ export function registerTool(
           traceTool(
             env,
             tool.name,
+            reqCtx.actor,
             { correlation, role: reqCtx.role, actor: reqCtx.actor, partial: isPartial },
             async () => ({ status: isPartial ? 'error' : 'ok', latencyMs: latency })
           )
@@ -247,6 +248,7 @@ export function registerTool(
           traceTool(
             env,
             tool.name,
+            reqCtx.actor,
             { correlation, role: reqCtx.role, actor: reqCtx.actor, code: mcpErr.code },
             async () => ({ status: 'error', latencyMs: latency })
           )

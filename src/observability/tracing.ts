@@ -49,6 +49,7 @@ async function writeSpanRow(env: TracerEnv, row: SpanRow): Promise<void> {
 export async function traceTool(
   env: ToolSpanEnv,
   operation: string,
+  actor: string,
   attrs: Record<string, unknown>,
   fn: () => Promise<{ status: 'ok' | 'error'; latencyMs: number }>,
 ): Promise<void> {
@@ -58,7 +59,7 @@ export async function traceTool(
     const outcome = await fn();
     await writeSpanRow(env, {
       traceId: resolved.traceId, spanId: resolved.spanId, parentSpanId: null,
-      operation, actor: 'luke', service: 'mcp-servicetitan', runKind: 'interactive',
+      operation, actor, service: 'mcp-servicetitan', runKind: 'interactive',
       status: outcome.status, latencyMs: outcome.latencyMs, attrs,
     });
   } catch (e: any) {
@@ -66,7 +67,7 @@ export async function traceTool(
     // handler outcome) — but if it does, still emit an error span, fail-open.
     await writeSpanRow(env, {
       traceId: resolved.traceId, spanId: resolved.spanId, parentSpanId: null,
-      operation, actor: 'luke', service: 'mcp-servicetitan', runKind: 'interactive',
+      operation, actor, service: 'mcp-servicetitan', runKind: 'interactive',
       status: 'error', latencyMs: Date.now() - t0, attrs: { ...attrs, error: e?.message ?? String(e) },
     });
   }

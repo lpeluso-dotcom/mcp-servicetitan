@@ -32,13 +32,18 @@ function fakeD1(throwOnRun = false) {
 }
 
 describe('traceTool', () => {
-  it('writes exactly one ok root span with the operation/attrs/status when fn resolves ok', async () => {
+  it('writes exactly one ok root span with the operation/attrs/status when fn resolves ok, using the REAL caller actor (not a hardcoded default)', async () => {
     const { DB, rows } = fakeD1();
-    const attrs = { correlation: 'c-123', role: 'default', actor: 'luke', partial: false };
+    // Regression case: the actor here is deliberately NOT 'luke' — the fixture that
+    // only ever exercised actor='luke' is exactly what let traceTool's hardcoded
+    // 'luke' literal slip past review. A non-default actor is required to prove
+    // the real caller identity reaches the qsc_actor column.
+    const attrs = { correlation: 'c-123', role: 'default', actor: 'retell', partial: false };
 
     await traceTool(
       { DB },
       'search_pricebook_services',
+      'retell',
       attrs,
       async () => ({ status: 'ok', latencyMs: 42 })
     );
@@ -48,44 +53,47 @@ describe('traceTool', () => {
     expect(row.args[3]).toBeNull(); // parent_span_id — root span
     expect(row.args[4]).toBe('mcp-servicetitan'); // service_name
     expect(row.args[5]).toBe('search_pricebook_services'); // operation
-    expect(row.args[6]).toBe('luke'); // actor
+    expect(row.args[6]).toBe('retell'); // actor — real caller, not hardcoded 'luke'
     expect(row.args[7]).toBe('interactive'); // qsc_run_kind
     expect(row.args[8]).toBe('ok'); // status
     expect(row.args[9]).toBe(42); // latency_ms
     expect(JSON.parse(row.args[10])).toEqual(attrs); // attrs_json — exactly what was passed, nothing more
   });
 
-  it('writes exactly one error root span when fn resolves with status error', async () => {
+  it('writes exactly one error root span when fn resolves with status error, using the REAL caller actor (not a hardcoded default)', async () => {
     const { DB, rows } = fakeD1();
-    const attrs = { correlation: 'c-456', role: 'admin', actor: 'luke', code: 'upstream_error' };
+    const attrs = { correlation: 'c-456', role: 'admin', actor: 'automation-x', code: 'upstream_error' };
 
     await traceTool(
       { DB },
       'book_job',
+      'automation-x',
       attrs,
       async () => ({ status: 'error', latencyMs: 7 })
     );
 
     expect(rows).toHaveLength(1);
     const [row] = rows;
+    expect(row.args[6]).toBe('automation-x'); // actor — real caller, not hardcoded 'luke'
     expect(row.args[3]).toBeNull();
     expect(row.args[8]).toBe('error');
     expect(row.args[9]).toBe(7);
     expect(JSON.parse(row.args[10])).toEqual(attrs);
   });
 
-  it('never throws even when the inner fn itself throws, and still emits an error span', async () => {
+  it('never throws even when the inner fn itself throws, and still emits an error span with the real caller actor', async () => {
     const { DB, rows } = fakeD1();
-    const attrs = { correlation: 'c-789', role: 'default', actor: 'luke' };
+    const attrs = { correlation: 'c-789', role: 'default', actor: 'retell' };
 
     await expect(
-      traceTool({ DB }, 'get_customer', attrs, async () => {
+      traceTool({ DB }, 'get_customer', 'retell', attrs, async () => {
         throw new Error('unexpected fn throw');
       })
     ).resolves.toBeUndefined();
 
     expect(rows).toHaveLength(1);
     const [row] = rows;
+    expect(row.args[6]).toBe('retell'); // actor — real caller, not hardcoded 'luke'
     expect(row.args[8]).toBe('error');
     const parsedAttrs = JSON.parse(row.args[10]);
     expect(parsedAttrs).toMatchObject(attrs);
@@ -97,7 +105,7 @@ describe('traceTool', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await expect(
-      traceTool({ DB }, 'get_job', {}, async () => ({ status: 'ok', latencyMs: 1 }))
+      traceTool({ DB }, 'get_job', 'retell', {}, async () => ({ status: 'ok', latencyMs: 1 }))
     ).resolves.toBeUndefined();
 
     spy.mockRestore();
@@ -108,7 +116,7 @@ describe('traceTool', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await expect(
-      traceTool({ DB }, 'get_job', {}, async () => {
+      traceTool({ DB }, 'get_job', 'retell', {}, async () => {
         throw new Error('boom');
       })
     ).resolves.toBeUndefined();
