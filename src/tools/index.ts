@@ -82,6 +82,7 @@ import { get_capacity } from './dispatch/get_capacity';
 import { list_technicians_available } from './dispatch/list_technicians_available';
 import { get_technician_shifts } from './dispatch/get_technician_shifts';
 import { list_non_job_events } from './dispatch/list_non_job_events';
+import { find_technician_by_name } from './dispatch/find_technician_by_name';
 // v1.2 F.1.a — Dispatch (slot finder)
 import { st_get_capacity_slots } from './dispatch/st_get_capacity_slots';
 // T7 — Marketing
@@ -222,7 +223,7 @@ export const TOOLS: readonly ToolDef<any>[] = [
   update_estimate_template, delete_estimate_template,
   // T7 Dispatch
   get_capacity, list_technicians_available, get_technician_shifts, list_non_job_events,
-  st_get_capacity_slots,
+  st_get_capacity_slots, find_technician_by_name,
   // T7 Marketing
   list_campaigns, get_campaign_performance, create_call_with_campaign,
   // T12 Marketing-attribution (v1.2)
