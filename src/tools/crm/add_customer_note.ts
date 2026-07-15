@@ -19,7 +19,8 @@ export const add_customer_note = defineWriteTool<Args>({
   },
   endpoint: ({ customerId }) => `/crm/v2/tenant/000000000/customers/${customerId}/notes`,
   method: 'POST',
-  payload: ({ note }) => ({ note }),
+  // ST CRM notes API expects { text, pinToTop } — NOT { note } (the latter 400s). Fixed 2026-07-15.
+  payload: ({ note }) => ({ text: note, pinToTop: false }),
   businessArgs: ({ customerId, note }) => ({ customerId, note }),
   stEndpointTemplate: '/crm/v2/tenant/{tid}/customers/{customerId}/notes',
   invalidatesCache: () => ['servicetitan:get_customer', 'servicetitan:find_customer'],
