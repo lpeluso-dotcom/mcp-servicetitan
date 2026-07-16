@@ -8,21 +8,19 @@
 // actually owns (skuId, skuType, quantity, isAddOn, chargeable,
 // allowDiscounts, memo, order).
 //
-// ⚠ KNOWN-BROKEN, live-verified 2026-07-09 (2 real POSTs against prod, both
-// 400'd before any record was created — no orphaned data left behind):
-//   1. `internalName` IS REQUIRED — ST rejects a create without it (the GET
-//      shape's optionality does NOT carry over to create). Fixed here.
-//   2. ST's validation ALSO demands a field literally named "model", SEPARATE
-//      from "mode" — sending `model:"Dynamic"` (a plain string) still failed
-//      with "The model field is required", which is the classic ASP.NET
-//      signature of a type/shape mismatch (bind failure), not a missing
-//      value. The real shape of this field is UNRESOLVED. Root-causing it
-//      needs a live ST UI network capture (Playwright + an authenticated ST
-//      session — see the st-internal-api skill) rather than further blind
-//      guessing against production. Filed as a follow-up (QUA-781).
-// UNTIL QUA-781 RESOLVES THIS: calling this tool with dryRun=false WILL FAIL
-// with a live 400 from ST. dryRun=true (the default) is safe and useful for
-// previewing the request shape; do not attempt a live write yet.
+// History (QUA-780, resolved 2026-07-16):
+//   1. `internalName` IS REQUIRED at create — ST rejects a create without it
+//      (the GET shape's optionality does NOT carry over). Enforced here.
+//   2. 2026-07-09: live POSTs 400'd with "The model field is required" —
+//      that was ASP.NET's whole-body bind failure (the controller param is
+//      named `model`), NOT a missing payload field. ST fixed the endpoint's
+//      binder server-side between 2026-07-09 and 2026-07-16; this exact
+//      payload shape now succeeds with NO code change. Verified 2026-07-16
+//      with a full live round-trip: dryRun → confirm → create (template
+//      83392649, auto-explode + dynamic pricing correct) → GET verify →
+//      DELETE (soft-deactivate). If "The model field is required" ever
+//      reappears, suspect a body-deserialization break (a wrong-typed or
+//      newly-required field), not a field literally named "model".
 import { z } from 'zod';
 import { defineWriteTool } from '../../write-tool-factory';
 
@@ -82,9 +80,8 @@ export const create_estimate_template = defineWriteTool<Args>({
     'Create a new estimate template. Item input excludes unitPrice/totalPrice/unitCost/description/skuName — ' +
     "those are ST-computed/denormalized from each item's sku, not caller-supplied. allowDiscounts on an item " +
     'defaults to true when omitted (QSC convention). dryRun=true (default) → token → dryRun=false to write. ' +
-    '⚠ KNOWN-BROKEN as of 2026-07-09: live-verified against prod, ST additionally requires a "model" field ' +
-    'whose real shape is unresolved (see QUA-781) — dryRun=false WILL currently fail with a live 400 from ST. ' +
-    'dryRun=true previews are safe; do not attempt a live write until QUA-781 resolves the model-field shape.',
+    "Top-level Service items auto-explode ST-side into children from the service's pricebook links — do not " +
+    'send child items explicitly. Live create→verify→delete round-trip verified 2026-07-16 (QUA-780).',
   zodSchema: {
     name: z.string().min(1).describe('Template display name'),
     internalName: z.string().min(1).describe('Internal-only name (not shown to customers). REQUIRED by ST at create time (live-verified 2026-07-09) despite being optional on GET.'),
