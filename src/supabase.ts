@@ -7,6 +7,17 @@ import type { Env } from './env';
 
 export const EMBED_MODEL_ID = '@cf/baai/bge-base-en-v1.5';
 
+// Per-fetch abort budget for Supabase calls. 25s, not 10s: diagnosed
+// 2026-07-18 that the `authenticator` Postgres role (the login role
+// PostgREST always uses, regardless of the caller's effective RLS role)
+// carries its own `statement_timeout` in pg_roles.rolconfig, separate from
+// the database-level default -- a role-level override is NOT reset by a
+// mid-session `SET ROLE`. That role's timeout was raised 8s -> 30s to give
+// pgvector queries room on cold cache pages; this client-side budget stays
+// a few seconds under it so a genuine DB-side hang still surfaces as a
+// clear Postgres error instead of a generic client abort.
+const SUPABASE_FETCH_TIMEOUT_MS = 25_000;
+
 /** Exact embed input the app uses (lib/refresh.ts embedMissing) — keep in lockstep. */
 export function embedInputFor(row: {
   name?: string; description?: string | null; category_name?: string | null;
@@ -54,7 +65,7 @@ export async function sbRpc<T>(env: Env, fn: string, body: Record<string, unknow
   if (schema) h['Content-Profile'] = schema;
   const res = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
     method: 'POST', headers: h, body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
     const t = await res.text().catch(() => String(res.status));
@@ -65,7 +76,7 @@ export async function sbRpc<T>(env: Env, fn: string, body: Record<string, unknow
 
 export async function sbSelect<T>(env: Env, pathAndQuery: string): Promise<T> {
   const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
-    headers: headers(env), signal: AbortSignal.timeout(10_000),
+    headers: headers(env), signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
     const t = await res.text().catch(() => String(res.status));
@@ -81,7 +92,7 @@ export async function sbWriteEmbedding(
   const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${q}`, {
     method: 'PATCH', headers: headers(env),
     body: JSON.stringify({ embedding: `[${vector.join(',')}]` }),
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
   });
   if (!res.ok && res.status !== 204) {
     const t = await res.text().catch(() => String(res.status));
