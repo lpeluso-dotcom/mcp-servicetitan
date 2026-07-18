@@ -34,9 +34,26 @@ function headers(env: Env): Record<string, string> {
   };
 }
 
-export async function sbRpc<T>(env: Env, fn: string, body: Record<string, unknown>): Promise<T> {
+/**
+ * Calls a Postgres function via PostgREST's `/rpc/<fn>` route.
+ *
+ * `schema`, when given, selects a non-`public` exposed schema via the
+ * `Content-Profile` header (PostgREST's per-request schema switch for
+ * write-method requests, which RPC POSTs are). Without it PostgREST
+ * resolves the function name against the FIRST schema in the project's
+ * `pgrst.db_schemas` list (`public`) and 404s (`PGRST202`) for a function
+ * that only exists in another exposed schema — verified live 2026-07-18
+ * calling `vec.match_entities` on project nlaaliehqpgskjmiuzze (which
+ * exposes `public, gold, vec`): identical request minus this header
+ * returns `PGRST202 Could not find the function public.match_entities`.
+ * omit `schema` for `public`-schema RPCs (e.g. `search_pricebook_hybrid`)
+ * — existing callers are unaffected.
+ */
+export async function sbRpc<T>(env: Env, fn: string, body: Record<string, unknown>, schema?: string): Promise<T> {
+  const h = headers(env);
+  if (schema) h['Content-Profile'] = schema;
   const res = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
-    method: 'POST', headers: headers(env), body: JSON.stringify(body),
+    method: 'POST', headers: h, body: JSON.stringify(body),
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) {
