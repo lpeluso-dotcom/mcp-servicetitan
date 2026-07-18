@@ -130,22 +130,42 @@ describe('search_materials', () => {
 });
 
 describe('get_configurable_equipment_children', () => {
+  // Single-record GET returns the resource directly — no { data } envelope.
+  const singleOk = (record: unknown) => async () =>
+    new Response(JSON.stringify(record), { status: 200 });
+
   it('requires parentEquipmentId', async () => {
     const schema = z.object(get_configurable_equipment_children.zodSchema);
     expect(schema.safeParse({}).success).toBe(false);
   });
 
-  it('fetches children for parent equipment ID', async () => {
-    const env = makeEnv(liveOk([{ id: 101 }, { id: 102 }]));
-    const result: any = await get_configurable_equipment_children.handler(env, { parentEquipmentId: 99 }, CTX);
-    expect(result.equipment).toBeDefined();
-  });
-
-  it('calls equipment endpoint with correct parent ID', async () => {
-    const env = makeEnv(liveOk([]));
+  it('GETs the parent record by id — never the list endpoint with a parentEquipmentId param', async () => {
+    // ST's /equipment list endpoint has no parentEquipmentId filter; it silently
+    // ignores unknown query params and returns the unfiltered first page.
+    const env = makeEnv(singleOk({ id: 99, isConfigurableEquipment: true, variationsOrConfigurableEquipment: [] }));
     await get_configurable_equipment_children.handler(env, { parentEquipmentId: 99 }, CTX);
     const [url] = env.ST_PROXY.fetch.mock.calls[0];
-    expect(url).toContain('equipment');
+    const endpoint = decodeURIComponent(url.split('endpoint=')[1]);
+    expect(endpoint).toContain('/equipment/99');
+    expect(endpoint).not.toContain('parentEquipmentId');
+  });
+
+  it("returns the parent's variationsOrConfigurableEquipment as equipment", async () => {
+    const variants = [{ id: 76332415, active: true }];
+    const env = makeEnv(
+      singleOk({ id: 77672766, isConfigurableEquipment: true, variationsOrConfigurableEquipment: variants }),
+    );
+    const result: any = await get_configurable_equipment_children.handler(env, { parentEquipmentId: 77672766 }, CTX);
+    expect(result.equipment).toEqual(variants);
+    expect(result.parentEquipmentId).toBe(77672766);
+    expect(result.isConfigurableEquipment).toBe(true);
+  });
+
+  it('returns empty equipment for a non-configurable parent with no variations field', async () => {
+    const env = makeEnv(singleOk({ id: 99, isConfigurableEquipment: false }));
+    const result: any = await get_configurable_equipment_children.handler(env, { parentEquipmentId: 99 }, CTX);
+    expect(result.equipment).toEqual([]);
+    expect(result.isConfigurableEquipment).toBe(false);
   });
 });
 

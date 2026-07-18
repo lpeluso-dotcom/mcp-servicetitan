@@ -5,30 +5,37 @@ import { defaultShaper } from '../../response-shape';
 
 const TENANT_ID = '000000000';
 
-interface Args { parentEquipmentId: number; active?: boolean }
+interface Args { parentEquipmentId: number }
 
-// T8 catalog correction: renamed from get_equipment_variants to match ST vocabulary.
-// ST uses "variations" / isConfigurableEquipment — children are queried by parent ID.
+interface ParentEquipment {
+  id?: number;
+  isConfigurableEquipment?: boolean;
+  variationsOrConfigurableEquipment?: unknown[];
+}
+
+// ST has no parentEquipmentId filter on the /equipment list endpoint — unknown
+// query params are silently ignored and the unfiltered first page comes back.
+// Variant linkage is only readable on the parent record itself, via the
+// read-only variationsOrConfigurableEquipment array.
 export const get_configurable_equipment_children: ToolDef<Args> = {
   name: 'get_configurable_equipment_children',
-  description: 'Get child equipment variations for a configurable (parent) equipment item. ST vocabulary: isConfigurableEquipment=true on the parent. Source: live ST (pb_equipment 37d stale in D1).',
+  description: 'Get child equipment variations for a configurable (parent) equipment item, read from the parent record\'s variationsOrConfigurableEquipment array. ST vocabulary: isConfigurableEquipment=true on the parent. Source: live ST (pb_equipment 37d stale in D1).',
   zodSchema: {
     parentEquipmentId: z.number().int().positive().describe('ST pricebook equipment ID of the parent (isConfigurableEquipment=true)'),
-    active: z.boolean().optional().describe('Filter by active status (default: all)'),
   },
-  stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/equipment', source: 'live' },
+  stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/equipment/{parentEquipmentId}', source: 'live' },
   async handler(env, args, { actor, correlation }) {
-    const query: Record<string, unknown> = {
-      parentEquipmentId: args.parentEquipmentId,
-      active: args.active,
-    };
-    const data = await readST<{ data?: unknown[] }>(
+    const parent = await readST<ParentEquipment>(
       env,
       { actor, correlation },
-      `/pricebook/v2/tenant/${TENANT_ID}/equipment`,
-      query,
+      `/pricebook/v2/tenant/${TENANT_ID}/equipment/${args.parentEquipmentId}`,
     );
-    return { equipment: data.data ?? [], _source: 'live' };
+    return {
+      parentEquipmentId: args.parentEquipmentId,
+      isConfigurableEquipment: parent.isConfigurableEquipment ?? false,
+      equipment: parent.variationsOrConfigurableEquipment ?? [],
+      _source: 'live',
+    };
   },
   transformResult: defaultShaper,
 };
