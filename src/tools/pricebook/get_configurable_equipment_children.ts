@@ -4,6 +4,8 @@ import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
 
 const TENANT_ID = '000000000';
+// Configurable parents carry a handful of variants; bound the hydration fan-out.
+const MAX_VARIANTS = 25;
 
 interface Args { parentEquipmentId: number }
 
@@ -30,10 +32,19 @@ export const get_configurable_equipment_children: ToolDef<Args> = {
       { actor, correlation },
       `/pricebook/v2/tenant/${TENANT_ID}/equipment/${args.parentEquipmentId}`,
     );
+    // ST returns variants as bare integer ids; hydrate each into its record.
+    const variants = (parent.variationsOrConfigurableEquipment ?? []).slice(0, MAX_VARIANTS);
+    const equipment = await Promise.all(
+      variants.map((v) =>
+        typeof v === 'number'
+          ? readST<unknown>(env, { actor, correlation }, `/pricebook/v2/tenant/${TENANT_ID}/equipment/${v}`)
+          : Promise.resolve(v),
+      ),
+    );
     return {
       parentEquipmentId: args.parentEquipmentId,
       isConfigurableEquipment: parent.isConfigurableEquipment ?? false,
-      equipment: parent.variationsOrConfigurableEquipment ?? [],
+      equipment,
       _source: 'live',
     };
   },

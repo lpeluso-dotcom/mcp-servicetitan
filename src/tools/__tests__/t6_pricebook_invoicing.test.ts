@@ -150,13 +150,22 @@ describe('get_configurable_equipment_children', () => {
     expect(endpoint).not.toContain('parentEquipmentId');
   });
 
-  it("returns the parent's variationsOrConfigurableEquipment as equipment", async () => {
-    const variants = [{ id: 76332415, active: true }];
-    const env = makeEnv(
-      singleOk({ id: 77672766, isConfigurableEquipment: true, variationsOrConfigurableEquipment: variants }),
-    );
+  it('hydrates variationsOrConfigurableEquipment ids into equipment records', async () => {
+    // ST returns the variants as bare integer ids (verified live 2026-07-18 on
+    // parent 77672766 → [76332415]); each is fetched to keep the tool's
+    // equipment-records contract.
+    const records: Record<string, unknown> = {
+      '/equipment/77672766': { id: 77672766, isConfigurableEquipment: true, variationsOrConfigurableEquipment: [76332415] },
+      '/equipment/76332415': { id: 76332415, displayName: 'Variant WH', active: true },
+    };
+    const env = makeEnv(async (url: string) => {
+      const endpoint = decodeURIComponent(url.split('endpoint=')[1]);
+      const match = Object.entries(records).find(([suffix]) => endpoint.endsWith(suffix));
+      if (!match) throw new Error(`unexpected URL: ${endpoint}`);
+      return new Response(JSON.stringify(match[1]), { status: 200 });
+    });
     const result: any = await get_configurable_equipment_children.handler(env, { parentEquipmentId: 77672766 }, CTX);
-    expect(result.equipment).toEqual(variants);
+    expect(result.equipment).toEqual([{ id: 76332415, displayName: 'Variant WH', active: true }]);
     expect(result.parentEquipmentId).toBe(77672766);
     expect(result.isConfigurableEquipment).toBe(true);
   });
