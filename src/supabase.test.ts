@@ -57,6 +57,27 @@ describe('supabase helpers', () => {
     await expect(sbRpc(env(), 'fn', {})).rejects.toThrow(/supabase rpc fn failed 500/);
   });
 
+  it('sbRpc omits Content-Profile when no schema is given (default public-schema RPCs unaffected)', async () => {
+    const fetchImpl: FetchMock = async () => new Response('[]', { status: 200 });
+    const fetchMock = vi.fn(fetchImpl);
+    vi.stubGlobal('fetch', fetchMock);
+    await sbRpc(env(), 'search_pricebook_hybrid', { query_text: 'cap' });
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers['Content-Profile']).toBeUndefined();
+  });
+
+  it('sbRpc sets Content-Profile to the given schema (non-public PostgREST schema selection)', async () => {
+    const fetchImpl: FetchMock = async () => new Response('[]', { status: 200 });
+    const fetchMock = vi.fn(fetchImpl);
+    vi.stubGlobal('fetch', fetchMock);
+    await sbRpc(env(), 'match_entities', { query_embedding: [0.1] }, 'vec');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://proj.supabase.co/rest/v1/rpc/match_entities');
+    expect(init.headers['Content-Profile']).toBe('vec');
+    // apikey/Authorization still present — schema selection is additive, not a replacement
+    expect(init.headers.apikey).toBe('sb-key');
+  });
+
   it('sbSelect GETs /rest/v1/<pathAndQuery>', async () => {
     const fetchImpl: FetchMock = async () => new Response(JSON.stringify([{ st_id: 1 }]), { status: 200 });
     const fetchMock = vi.fn(fetchImpl);

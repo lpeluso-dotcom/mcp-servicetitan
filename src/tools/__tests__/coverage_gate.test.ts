@@ -32,6 +32,8 @@ const COVERAGE_EXEMPT = new Set<string>([
   'get_proposal_tiers',
   'find_packages_with_item',
   'get_service_breakout',
+  // Supabase-backed Woz gold vector search (TAI-STV2) — hits Supabase, not ServiceTitan.
+  'semantic_search_gold',
 ]);
 
 describe('stEndpoint coverage gate', () => {
