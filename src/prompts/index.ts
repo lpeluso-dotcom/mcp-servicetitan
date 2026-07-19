@@ -242,8 +242,9 @@ export const WINDOW_OPTIONS = ['7d', '30d', '60d', '90d'] as const;
 export const DAYS_BACK_OPTIONS = ['7', '14', '30', '60'] as const;
 
 /**
- * ar-chase.businessUnitId completion: businessUnitId coerces to a number
- * (z.coerce.number()), so the completion returns numeric-id STRINGS (the
+ * businessUnitId completion (used by job-cost-margin and pricebook-health):
+ * businessUnitId coerces to a number (z.coerce.number()), so the
+ * completion returns numeric-id STRINGS (the
  * form the arg itself parses cleanly), filtered by the typed prefix
  * matching either the BU name (case-insensitive) or the id itself. Backed
  * by listBusinessUnits() (KV-cached, D1 `business_units` source) — never
