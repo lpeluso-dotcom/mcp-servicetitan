@@ -24,7 +24,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { listBusinessUnits } from '../name-cache';
-import { businessUnitIdCompletion, staticCompletion, WINDOW_OPTIONS, DAYS_BACK_OPTIONS } from '../prompts/index';
+import { businessUnitIdCompletion } from '../prompts/index';
 
 // ─── env fakes (same shape as catalog-resources.test.ts) ───────────────
 
@@ -178,21 +178,6 @@ describe('businessUnitIdCompletion (src/prompts/index.ts)', () => {
     const complete = businessUnitIdCompletion(env);
     const values = await complete('Plumb');
     expect(values).toEqual([]);
-  });
-});
-
-describe('staticCompletion (src/prompts/index.ts)', () => {
-  it('window: returns the 4 options filtered by prefix', async () => {
-    const complete = staticCompletion(WINDOW_OPTIONS);
-    expect(await complete('')).toEqual(['7d', '30d', '60d', '90d']);
-    expect(await complete('9')).toEqual(['90d']);
-    expect(await complete('999')).toEqual([]);
-  });
-
-  it('daysBack: returns the 4 options filtered by prefix', async () => {
-    const complete = staticCompletion(DAYS_BACK_OPTIONS);
-    expect(await complete('')).toEqual(['7', '14', '30', '60']);
-    expect(await complete('6')).toEqual(['60']);
   });
 });
 

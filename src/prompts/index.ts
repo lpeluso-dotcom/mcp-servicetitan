@@ -229,18 +229,6 @@ type CompleteFn = (value: string, context?: { arguments?: Record<string, string>
 
 const MAX_COMPLETIONS = 20;
 
-/** Case-insensitive prefix-match completion over a fixed static option list. */
-export function staticCompletion(options: readonly string[]): CompleteFn {
-  return async (value: string) => {
-    const v = (value ?? '').trim().toLowerCase();
-    if (!v) return options.slice(0, MAX_COMPLETIONS);
-    return options.filter((o) => o.toLowerCase().startsWith(v)).slice(0, MAX_COMPLETIONS);
-  };
-}
-
-export const WINDOW_OPTIONS = ['7d', '30d', '60d', '90d'] as const;
-export const DAYS_BACK_OPTIONS = ['7', '14', '30', '60'] as const;
-
 /**
  * businessUnitId completion (used by job-cost-margin and pricebook-health):
  * businessUnitId coerces to a number (z.coerce.number()), so the
