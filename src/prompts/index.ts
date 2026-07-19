@@ -51,130 +51,126 @@ function userText(text: string): PromptMessage[] {
 }
 
 export const PROMPTS: readonly PromptDef[] = [
-  // ── 1. morning-dispatch-brief ──────────────────────────────────────────
+  // ── 1. job-cost-margin ──────────────────────────────────────────────────
   {
-    name: 'morning-dispatch-brief',
-    title: 'Morning Dispatch Brief',
+    name: 'job-cost-margin',
+    title: 'Job / BU Margin',
     description:
-      'Pull today\'s job load, capacity, and Dispatch Pro alerts, and produce a capacity/risk brief for the dispatch team.',
+      'Real margin for one job (labor-inclusive) or a business unit over a window (item/material margin from gold).',
     argsSchema: {
-      date: z.string().optional().describe('ISO date to brief on (default: "today")'),
+      jobId: z.coerce.number().optional().describe('Single job to margin-review (labor-inclusive).'),
+      businessUnitId: z.coerce.number().optional().describe('Business unit ID for a windowed roll-up.'),
+      from: z.string().optional().describe('Window start YYYY-MM-DD (BU mode).'),
+      to: z.string().optional().describe('Window end YYYY-MM-DD (BU mode).'),
     },
+    build(args: { jobId?: number; businessUnitId?: number; from?: string; to?: string }) {
+      if (args.jobId !== undefined) {
+        return userText(
+          `Produce a labor-inclusive margin review for job ${args.jobId}. Call:\n` +
+            `1. job_cost_actuals (jobId=${args.jobId}) — revenue, invoice, and computed labor burden ` +
+            `(drive+work minutes × rate) plus material/equipment cost lines.\n\n` +
+            `Report: revenue, total actual cost (labor + material), GP$ and GP% for job ${args.jobId}. ` +
+            `Note if any cost line looks incomplete. If the TAI-QBO connector is also connected, you may layer ` +
+            `in QBO-posted vendor/overhead cost for a fuller picture — otherwise report ST/D1 cost only.`,
+        );
+      }
+      const from = args.from ?? '(start of month)';
+      const to = args.to ?? '(today)';
+      const buClause = args.businessUnitId !== undefined ? `businessUnitId=${args.businessUnitId}` : '(all business units)';
+      return userText(
+        `Produce an item/material margin roll-up for ${buClause} from ${from} to ${to}. Call:\n` +
+          `1. gold_margin_by_bu (from=${from}, to=${to}${args.businessUnitId !== undefined ? `, businessUnitId=${args.businessUnitId}` : ''}) ` +
+          `— gold-sourced revenue, cost, GP$ and GP% by business unit.\n\n` +
+          `Report a table sorted by revenue descending: BU, revenue, cost, GP$, GP%. ` +
+          `IMPORTANT: this margin is item/material only — it EXCLUDES labor burden (gold has no timesheet grain). ` +
+          `Say so explicitly. For a single job's labor-inclusive margin, use the jobId form of this prompt instead.`,
+      );
+    },
+  },
+
+  // ── 2. daily-review ─────────────────────────────────────────────────────
+  {
+    name: 'daily-review',
+    title: 'Daily Review',
+    description: "Today's job load, capacity, holds, dispatch-pro alerts and a quick AR glance for the day.",
+    argsSchema: { date: z.string().optional().describe('ISO date (default: "today").') },
     build(args: { date?: string }) {
       const date = args.date ?? 'today';
       return userText(
-        `Produce a morning dispatch brief for ${date}. Call these tools in order:\n` +
-          `1. list_jobs_today (date=${date}) — get the full job load for the day.\n` +
-          `2. get_capacity — check dispatch capacity for the business units that have jobs scheduled on ${date}.\n` +
-          `3. dispatch_pro_alerts_list — pull any open Dispatch Pro alerts for ${date}.\n\n` +
-          `From these three results, produce a capacity/risk brief with:\n` +
-          `- Jobs count by business unit for ${date}.\n` +
-          `- Capacity gaps: any BU/skill combination where booked jobs exceed available capacity.\n` +
-          `- Any open dispatch-pro alerts, listed with severity and the job/technician they affect.\n` +
-          `Keep it scannable — dispatch needs to read this in under a minute before the day starts.`
+        `Produce a daily operations review for ${date}. Call in order:\n` +
+          `1. list_jobs_today (date=${date}) — the day's job load.\n` +
+          `2. get_capacity — capacity for the BUs with jobs on ${date}.\n` +
+          `3. dispatch_pro_alerts_list — open Dispatch Pro alerts for ${date}.\n` +
+          `4. jobs_hold_reasons_list — any jobs on hold and why.\n` +
+          `5. list_unpaid_invoices — a brief top-balances glance (top 5 only).\n\n` +
+          `Produce a scannable brief: jobs by BU, capacity gaps, open alerts (severity + affected job/tech), ` +
+          `held jobs, and the 5 largest open balances. Read in under a minute before the day starts.`,
       );
     },
   },
 
-  // ── 2. job-closeout-review ─────────────────────────────────────────────
+  // ── 3. pricebook-health ─────────────────────────────────────────────────
   {
-    name: 'job-closeout-review',
-    title: 'Job Closeout Review',
-    description:
-      'Review a completed job for margin and completeness — revenue, labor burden, GP%, and any missing closeout items.',
-    argsSchema: {
-      jobId: z.coerce.number().describe('The job ID to review (required)'),
-    },
-    build(args: { jobId: number }) {
-      const jobId = args.jobId;
-      return userText(
-        `Produce a margin + completeness review for job ${jobId}. Call these tools:\n` +
-          `1. job_closeout_report (jobId=${jobId}) — revenue, invoiced amount, and closeout status for job ${jobId}.\n` +
-          `2. payroll_job_timesheets_list (jobId=${jobId}) — technician time logged against job ${jobId}, to compute labor burden.\n` +
-          `3. job_cost_actuals (jobId=${jobId}) — actual material/labor/equipment cost lines for job ${jobId}.\n\n` +
-          `From these three results, produce a margin + completeness review for job ${jobId} with:\n` +
-          `- Revenue (invoiced total) for job ${jobId}.\n` +
-          `- Labor burden: technician hours × loaded labor rate from the timesheets.\n` +
-          `- GP% = (revenue - total actual cost) / revenue, computed from job_cost_actuals.\n` +
-          `- Missing items: anything job_closeout_report flags as incomplete (unclosed appointment, missing invoice, unsigned form, etc.) for job ${jobId}.`
-      );
-    },
-  },
-
-  // ── 3. ar-chase ─────────────────────────────────────────────────────────
-  {
-    name: 'ar-chase',
-    title: 'AR Chase',
-    description:
-      'Build a prioritized collections list from unpaid invoices, with customer contact context for the top balances.',
-    argsSchema: {
-      businessUnitId: z.coerce.number().optional().describe('Restrict to this business unit ID (optional)'),
-    },
+    name: 'pricebook-health',
+    title: 'Pricebook Health',
+    description: 'Pricebook margin-discipline sweep: health check + markup/cost drift + vendor part gaps.',
+    argsSchema: { businessUnitId: z.coerce.number().optional().describe('Restrict to one BU (optional).') },
     build(args: { businessUnitId?: number }) {
-      const buId = args.businessUnitId;
-      const buClause = buId !== undefined ? ` (businessUnitId=${buId})` : ' (all business units)';
+      const bu = args.businessUnitId !== undefined ? ` (businessUnitId=${args.businessUnitId})` : '';
       return userText(
-        `Build a prioritized collections list. Call these tools:\n` +
-          `1. list_unpaid_invoices${buClause} — get all unpaid invoices${buId !== undefined ? ` for business unit ${buId}` : ''}.\n` +
-          `2. For the top unpaid invoices by balance (largest first, and oldest-aged first as a tiebreaker), call get_customer for` +
-          ` each invoice's customer to get contact info (phone/email) and account context.\n\n` +
-          `From these results, produce a prioritized collections list, sorted by balance descending, with one row per invoice:\n` +
-          `- Customer name\n` +
-          `- Outstanding balance\n` +
-          `- Invoice age (days since invoice date)\n` +
-          `- Best contact (phone/email from get_customer)\n` +
-          `Flag anything over 60 days as high priority.`
+        `Run a pricebook health + margin-discipline sweep${bu}. Call:\n` +
+          `1. pricebook_health_check_services — structural health of the services catalog.\n` +
+          `2. pricebook_markup_drift — items whose markup has drifted from policy.\n` +
+          `3. pricebook_cost_drift — items whose cost has drifted.\n` +
+          `4. pricebook_vendor_part_gaps — items missing vendor part links.\n\n` +
+          `Summarize the worst offenders by category. DYNAMIC PRICING: a 0/null reference price does NOT mean ` +
+          `"unpriced" — QSC uses Pricebook Pro dynamic pricing, so never flag an item as unpriced from a 0 price ` +
+          `field; report the price_basis instead.`,
       );
     },
   },
 
-  // ── 4. quote-follow-up ──────────────────────────────────────────────────
+  // ── 4. weekly-tech-review ───────────────────────────────────────────────
   {
-    name: 'quote-follow-up',
-    title: 'Quote Follow-Up',
-    description:
-      'Surface stale open estimates and assigned-vs-sold gaps into a follow-up queue for sales/CSR to work.',
+    name: 'weekly-tech-review',
+    title: 'Weekly Tech Review',
+    description: "A technician's week: jobs, drive%, labor burden, dispatch-pro utilization and assigned-vs-sold gap.",
     argsSchema: {
-      daysBack: z.coerce.number().optional().describe('How many days back to look for stale estimates (default: 14)'),
+      technicianId: z.coerce.number().optional().describe('One tech (optional; omitted = all techs).'),
+      weekStart: z.string().optional().describe('Week start YYYY-MM-DD.'),
+      weekEnd: z.string().optional().describe('Week end YYYY-MM-DD.'),
     },
-    build(args: { daysBack?: number }) {
-      const daysBack = args.daysBack ?? 14;
+    build(args: { technicianId?: number; weekStart?: string; weekEnd?: string }) {
+      const ws = args.weekStart ?? '(Monday of the target week)';
+      const we = args.weekEnd ?? '(Sunday of the target week)';
+      const techClause = args.technicianId !== undefined ? `technicianId=${args.technicianId}, ` : '';
       return userText(
-        `Build a stale-estimate follow-up queue covering the last ${daysBack} days. Call these tools:\n` +
-          `1. open_opportunities_pulitzer_feed — get open sales opportunities/estimates from the last ${daysBack} days.\n` +
-          `2. assigned_vs_sold_estimate_audit — get estimates assigned to a technician that were never sold, over the same ${daysBack}-day window.\n\n` +
-          `From these two results, produce a stale-estimate follow-up queue, sorted oldest-first, with one row per estimate:\n` +
-          `- Estimate ID/name\n` +
-          `- Customer\n` +
-          `- Assigned technician\n` +
-          `- Age (days since presented, within the ${daysBack}-day window)\n` +
-          `- Dollar value\n` +
-          `Flag any estimate over ${daysBack} days old with no sold status as needing an immediate follow-up call.`
+        `Build a weekly technician review for ${ws}..${we}. Call:\n` +
+          `1. tech_scorecard (${techClause}weekStart=${ws}, weekEnd=${we}) — jobs, drive%, labor burden per tech.\n` +
+          `2. dispatch_pro_utilization_list and dispatch_pro_ratio_list — utilization + booked/available ratio.\n` +
+          `3. assigned_vs_sold_estimate_audit — estimates assigned to the tech that never sold.\n\n` +
+          `Produce a per-tech scorecard sorted by jobs descending: tech, jobs, drive%, labor burden, utilization, ` +
+          `assigned-vs-sold gap. Flag high drive% (>25%) and large unsold-estimate gaps for a coaching conversation.`,
       );
     },
   },
 
-  // ── 5. membership-outreach ──────────────────────────────────────────────
+  // ── 5. drive-time ───────────────────────────────────────────────────────
   {
-    name: 'membership-outreach',
-    title: 'Membership Outreach',
-    description:
-      'Build a call sheet of memberships expiring in the given window, with plan and contact detail for renewal outreach.',
+    name: 'drive-time',
+    title: 'Drive Time',
+    description: 'Per-tech drive/working-time rollup + windshield cost over a date window.',
     argsSchema: {
-      window: z.string().optional().describe('Expiration window, e.g. "30d" (default: "30d")'),
+      technicianId: z.coerce.number().describe('ST technician ID (required).'),
+      startDate: z.string().describe('Window start YYYY-MM-DD.'),
+      endDate: z.string().describe('Window end YYYY-MM-DD.'),
     },
-    build(args: { window?: string }) {
-      const window = args.window ?? '30d';
+    build(args: { technicianId: number; startDate: string; endDate: string }) {
       return userText(
-        `Build an expiring-membership call sheet for the next ${window}. Call these tools:\n` +
-          `1. list_memberships_expiring (window=${window}) — get memberships expiring within ${window}.\n` +
-          `2. get_customer_membership — for each expiring membership, get full plan and customer contact detail.\n\n` +
-          `From these results, produce an expiring-membership call sheet for the ${window} window, with one row per member:\n` +
-          `- Member/customer name\n` +
-          `- Plan tier\n` +
-          `- Expiry date\n` +
-          `- Best contact (phone/email)\n` +
-          `Sort soonest-to-expire first so the Membership Coordinator works the most urgent renewals first.`
+        `Produce a drive-time rollup for technician ${args.technicianId} from ${args.startDate} to ${args.endDate}. Call:\n` +
+          `1. tech_drive_time_summary (technicianId=${args.technicianId}, startDate=${args.startDate}, endDate=${args.endDate}).\n\n` +
+          `Report the window totals: days worked, jobs/day, drive vs working minutes, drive%, avg first-call drive, ` +
+          `and windshield cost. Call out days with unusually high drive%.`,
       );
     },
   },
@@ -274,25 +270,18 @@ export function registerPrompts(server: McpServer, env: Env): void {
     // object — required by quirk #1 above. The original arg's `.describe`
     // text is read (not mutated) off the shared schema so prompts/list
     // metadata is unchanged.
-    if (p.name === 'ar-chase' && argsSchema.businessUnitId) {
+    if (p.name === 'job-cost-margin' && argsSchema.businessUnitId) {
       argsSchema.businessUnitId = completableOptional(
         z.coerce.number(),
         businessUnitIdCompletion(env),
         argsSchema.businessUnitId.description ?? '',
       );
     }
-    if (p.name === 'quote-follow-up' && argsSchema.daysBack) {
-      argsSchema.daysBack = completableOptional(
+    if (p.name === 'pricebook-health' && argsSchema.businessUnitId) {
+      argsSchema.businessUnitId = completableOptional(
         z.coerce.number(),
-        staticCompletion(DAYS_BACK_OPTIONS),
-        argsSchema.daysBack.description ?? '',
-      );
-    }
-    if (p.name === 'membership-outreach' && argsSchema.window) {
-      argsSchema.window = completableOptional(
-        z.string(),
-        staticCompletion(WINDOW_OPTIONS),
-        argsSchema.window.description ?? '',
+        businessUnitIdCompletion(env),
+        argsSchema.businessUnitId.description ?? '',
       );
     }
 
