@@ -87,6 +87,30 @@ describe('supabase helpers', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('https://proj.supabase.co/rest/v1/pricebook_items?st_id=eq.1');
   });
 
+  it('sbSelect sends Accept-Profile when a schema is given', async () => {
+    const seen: Record<string, string> = {};
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      for (const [k, v] of Object.entries(init.headers as Record<string, string>)) seen[k.toLowerCase()] = v;
+      return new Response(JSON.stringify([{ id: 1 }]), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_PB_KEY: 'k' } as any;
+    await sbSelect(env, 'dim_business_unit?select=*', 'gold');
+    expect(seen['accept-profile']).toBe('gold');
+  });
+
+  it('sbSelect omits Accept-Profile when no schema is given (public)', async () => {
+    const seen: Record<string, string> = {};
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      for (const [k, v] of Object.entries(init.headers as Record<string, string>)) seen[k.toLowerCase()] = v;
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_PB_KEY: 'k' } as any;
+    await sbSelect(env, 'pricebook_items?select=code');
+    expect(seen['accept-profile']).toBeUndefined();
+  });
+
   it('sbWriteEmbedding PATCHes by (code,item_type) with a bracketed vector literal', async () => {
     const fetchImpl: FetchMock = async () => new Response(null, { status: 204 });
     const fetchMock = vi.fn(fetchImpl);
