@@ -139,6 +139,8 @@ import { identify_tech_by_phone } from './dawn/identify_tech_by_phone';
 import { save_tech_debrief } from './dawn/save_tech_debrief';
 // TAI-STV2 — semantic search over the Woz gold vector index (Supabase vec schema)
 import { semantic_search_gold } from './gold/semantic_search_gold';
+import { gold_margin_by_bu } from './gold/gold_margin_by_bu';
+import { tech_scorecard } from './composites/tech_scorecard';
 
 export interface ToolContext {
   actor: string;
@@ -265,6 +267,8 @@ export const TOOLS: readonly ToolDef<any>[] = [
   pricebook_markup_drift, pricebook_cost_drift, pricebook_vendor_part_gaps,
   // TAI-STV2 — Woz gold vector search (Supabase vec schema)
   semantic_search_gold,
+  // TAI-STV2 rebuild — guided-surface backing tools
+  gold_margin_by_bu, tech_scorecard,
 ] as const;
 
 export function findTool(name: string): ToolDef<any> | undefined {
