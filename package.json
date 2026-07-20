@@ -17,10 +17,10 @@
     "preflight:dev": "bash scripts/preflight.sh --env dev"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^0.8.1",
+    "@cloudflare/workers-oauth-provider": "^0.8.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "agents": "^0.17.3",
-    "hono": "^4.12.30",
+    "agents": "^0.17.4",
+    "hono": "^4.12.31",
     "jose": "^6.2.3",
     "zod": "^4.4.3"
   },
