@@ -106,15 +106,21 @@ describe('semantic_search_gold (Supabase vec.match_entities)', () => {
     expect(s.safeParse({ query: 'water heater' }).success).toBe(true);
   });
 
-  it('Zod schema rejects an entity_key outside the 12 known gold nouns', () => {
+  it('Zod schema rejects an entity_key outside the known gold nouns', () => {
     const s = z.object(semantic_search_gold.zodSchema);
     expect(s.safeParse({ query: 'x', entity_key: 'bogus_noun' }).success).toBe(false);
+    // Original 12 nouns (shipped with the tool):
     for (const key of [
       'job', 'invoice_item', 'estimate', 'estimate_line', 'pricebook',
       'pricebook_category', 'business_unit', 'job_type', 'lead_source',
       'location', 'truck', 'membership',
     ]) {
       expect(s.safeParse({ query: 'x', entity_key: key }).success).toBe(true);
+    }
+    // Tier-3 nouns (shipped with qsc-vector migrations 0013-0014; 62,740 chunks embedded):
+    for (const key of ['technician', 'account', 'tech_hours_week', 'labor', 'invoice']) {
+      const result = s.safeParse({ query: 'x', entity_key: key });
+      if (!result.success) throw new Error(`Tier-3 key "${key}" should be valid but Zod rejected it`);
     }
   });
 

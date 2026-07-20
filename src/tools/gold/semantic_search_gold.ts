@@ -44,9 +44,12 @@ import type { ToolDef } from '../index';
 import { embedQuery, sbRpc } from '../../supabase';
 
 const ENTITY_KEYS = [
+  // Original 12 nouns (shipped with the tool, qsc-vector migrations 0001-0010):
   'job', 'invoice_item', 'estimate', 'estimate_line', 'pricebook',
   'pricebook_category', 'business_unit', 'job_type', 'lead_source',
   'location', 'truck', 'membership',
+  // Tier-3 nouns (qsc-vector migrations 0013-0014, 62,740 chunks embedded 2026-07-19):
+  'technician', 'account', 'tech_hours_week', 'labor', 'invoice',
 ] as const;
 
 interface Args {
@@ -70,13 +73,15 @@ export const semantic_search_gold: ToolDef<Args> = {
   description:
     'Natural-language semantic search over the QSC gold warehouse vector index (Woz gold — jobs, invoice line items, ' +
     'estimates, estimate lines, pricebook items, pricebook categories, business units, job types, lead sources, ' +
-    'locations, trucks, memberships). Embeds the query and returns the closest content chunks ranked by cosine ' +
-    'similarity. Cross-entity by default — narrow with entity_key and/or trade. Results carry no PII by construction.',
+    'locations, trucks, memberships, technicians, accounts, tech-hours-week aggregates, labor timesheets, invoices). ' +
+    'Embeds the query and returns the closest content chunks ranked by cosine similarity. Cross-entity by default — ' +
+    'narrow with entity_key and/or trade. Results carry no PII by construction.',
   zodSchema: {
     query: z.string().min(1).max(500).describe('Natural-language search query'),
     entity_key: z.enum(ENTITY_KEYS).optional().describe(
       'Restrict to one gold noun: job, invoice_item, estimate, estimate_line, pricebook, pricebook_category, ' +
-      'business_unit, job_type, lead_source, location, truck, membership',
+      'business_unit, job_type, lead_source, location, truck, membership, ' +
+      'technician, account, tech_hours_week, labor, invoice',
     ),
     trade: z.string().min(1).max(200).optional().describe('Restrict to a trade/business-unit label (e.g. "HVAC Service Residential")'),
     k: z.number().int().min(1).max(20).default(10).optional().describe('Max results (default 10, max 20)'),
