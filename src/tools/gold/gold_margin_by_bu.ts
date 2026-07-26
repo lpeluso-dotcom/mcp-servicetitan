@@ -31,9 +31,13 @@ export const gold_margin_by_bu: ToolDef<Args> = {
   name: 'gold_margin_by_bu',
   description:
     'Item/material margin by business unit over a completed-date window, from the Woz gold warehouse. ' +
-    'Returns revenue, cost, GP$ and GP% per BU. IMPORTANT: this is item/material margin only — it does NOT ' +
-    'include labor burden (gold has no timesheet grain). For one job with labor burden, use job_cost_actuals. ' +
-    'Source: Supabase gold.margin_by_bu RPC.',
+    'Returns revenue, cost, GP$ and GP% per BU. ' +
+    'IMPORTANT — GP% here is NOT a true margin and will look implausibly high (often 93-100%). Two costs ' +
+    'are missing, not zero: (1) labor burden, because gold has no timesheet grain; (2) item cost for ' +
+    'dynamically-priced pricebook items, because ServiceTitan does not return a cost for them via API — ' +
+    'QSC prices dynamically by default, so cost_$ reads 0 for whole business units. Treat GP% as a ' +
+    'relative signal between BUs over the same window, never as a reportable margin. ' +
+    'For one job with real labor burden, use job_cost_actuals. Source: Supabase gold.margin_by_bu RPC.',
   stEndpoint: { method: 'GET', path: 'supabase://gold/margin_by_bu', source: 'computed' },
   zodSchema: {
     from: z.string().describe("Window start, ISO 'YYYY-MM-DD' (fct_job.completed_date >= from)."),
@@ -59,7 +63,12 @@ export const gold_margin_by_bu: ToolDef<Args> = {
       })),
       count: rows.length,
       _source: 'gold',
-      _margin_basis: 'item/material only — excludes labor burden (no gold timesheet grain)',
+      // Travels WITH the rows, not just in the tool description — a caller that already has the
+      // numbers in hand is exactly who is about to quote GP% at someone.
+      _margin_basis:
+        'NOT a true margin — two costs are missing, not zero: labor burden (no gold timesheet grain) ' +
+        'and item cost for dynamically-priced pricebook items (ServiceTitan returns no cost for them, ' +
+        'and QSC prices dynamically by default). Relative signal between BUs only.',
     };
   },
   transformResult: defaultShaper,
