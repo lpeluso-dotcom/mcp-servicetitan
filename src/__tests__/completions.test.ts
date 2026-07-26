@@ -8,10 +8,13 @@
 //      no protocol machinery) — src/prompts/index.ts.
 //   3. Protocol path: a real Client, connected to buildServer()'s
 //      per-request McpServer, driving `completion/complete` against the
-//      ar-chase prompt's businessUnitId argument (mirrors the
+//      job-cost-margin prompt's businessUnitId argument (mirrors the
 //      InMemoryTransport+Client pattern in mcp-protocol.test.ts /
 //      catalog-resources.test.ts / prompts.test.ts).
-//   4. Static completions (window / daysBack) via the same protocol path.
+//   4. staticCompletion / WINDOW_OPTIONS / DAYS_BACK_OPTIONS are exercised
+//      at the unit level only — no current prompt wires a static
+//      completion, so there's no protocol-path prompt arg to drive them
+//      through; the exports stay for future use (e.g. a window-style arg).
 //
 // Mocking convention: matches the rest of this codebase — mock
 // env.ST_PROXY.fetch (the single transport readD1 goes through) and a
@@ -21,7 +24,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { listBusinessUnits } from '../name-cache';
-import { businessUnitIdCompletion, staticCompletion, WINDOW_OPTIONS, DAYS_BACK_OPTIONS } from '../prompts/index';
+import { businessUnitIdCompletion } from '../prompts/index';
 
 // ─── env fakes (same shape as catalog-resources.test.ts) ───────────────
 
@@ -178,21 +181,6 @@ describe('businessUnitIdCompletion (src/prompts/index.ts)', () => {
   });
 });
 
-describe('staticCompletion (src/prompts/index.ts)', () => {
-  it('window: returns the 4 options filtered by prefix', async () => {
-    const complete = staticCompletion(WINDOW_OPTIONS);
-    expect(await complete('')).toEqual(['7d', '30d', '60d', '90d']);
-    expect(await complete('9')).toEqual(['90d']);
-    expect(await complete('999')).toEqual([]);
-  });
-
-  it('daysBack: returns the 4 options filtered by prefix', async () => {
-    const complete = staticCompletion(DAYS_BACK_OPTIONS);
-    expect(await complete('')).toEqual(['7', '14', '30', '60']);
-    expect(await complete('6')).toEqual(['60']);
-  });
-});
-
 // ─── 3+4. Protocol path — real Client, buildServer(), completion/complete ─
 
 vi.mock('agents/mcp', () => ({ createMcpHandler: () => () => new Response() }));
@@ -216,28 +204,40 @@ async function connectedClient(env: ReturnType<typeof makeEnv>) {
 }
 
 describe('protocol path — completion/complete via buildServer()', () => {
-  it('ar-chase.businessUnitId: completes "Plumb" to the Plumbing BU id', async () => {
+  it('job-cost-margin.businessUnitId: completes "Plumb" to the Plumbing BU id', async () => {
     const env = makeEnv(() => ({ success: true, results: FIXTURE_BUS }));
     const client = await connectedClient(env);
 
     const result = await client.complete({
-      ref: { type: 'ref/prompt', name: 'ar-chase' },
+      ref: { type: 'ref/prompt', name: 'job-cost-margin' },
       argument: { name: 'businessUnitId', value: 'Plumb' },
     });
 
     expect(result.completion.values).toEqual(['2']);
   });
 
-  it('ar-chase.businessUnitId: empty value returns all BU ids', async () => {
+  it('job-cost-margin.businessUnitId: empty value returns all BU ids', async () => {
     const env = makeEnv(() => ({ success: true, results: FIXTURE_BUS }));
     const client = await connectedClient(env);
 
     const result = await client.complete({
-      ref: { type: 'ref/prompt', name: 'ar-chase' },
+      ref: { type: 'ref/prompt', name: 'job-cost-margin' },
       argument: { name: 'businessUnitId', value: '' },
     });
 
     expect(result.completion.values.sort()).toEqual(['1', '2', '3']);
+  });
+
+  it('pricebook-health.businessUnitId: completes "Elect" to the Electrical BU id', async () => {
+    const env = makeEnv(() => ({ success: true, results: FIXTURE_BUS }));
+    const client = await connectedClient(env);
+
+    const result = await client.complete({
+      ref: { type: 'ref/prompt', name: 'pricebook-health' },
+      argument: { name: 'businessUnitId', value: 'Elect' },
+    });
+
+    expect(result.completion.values).toEqual(['3']);
   });
 
   it('a second request against a fresh buildServer() does not throw ("Cannot redefine property")', async () => {
@@ -255,33 +255,9 @@ describe('protocol path — completion/complete via buildServer()', () => {
 
     const client2 = await connectedClient(env2);
     const result = await client2.complete({
-      ref: { type: 'ref/prompt', name: 'ar-chase' },
+      ref: { type: 'ref/prompt', name: 'job-cost-margin' },
       argument: { name: 'businessUnitId', value: 'Elect' },
     });
     expect(result.completion.values).toEqual(['3']);
-  });
-
-  it('membership-outreach.window: completes via the static option list', async () => {
-    const env = makeEnv();
-    const client = await connectedClient(env);
-
-    const result = await client.complete({
-      ref: { type: 'ref/prompt', name: 'membership-outreach' },
-      argument: { name: 'window', value: '6' },
-    });
-
-    expect(result.completion.values).toEqual(['60d']);
-  });
-
-  it('quote-follow-up.daysBack: completes via the static option list', async () => {
-    const env = makeEnv();
-    const client = await connectedClient(env);
-
-    const result = await client.complete({
-      ref: { type: 'ref/prompt', name: 'quote-follow-up' },
-      argument: { name: 'daysBack', value: '' },
-    });
-
-    expect(result.completion.values).toEqual(['7', '14', '30', '60']);
   });
 });

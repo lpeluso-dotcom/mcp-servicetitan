@@ -74,9 +74,11 @@ export async function sbRpc<T>(env: Env, fn: string, body: Record<string, unknow
   return res.json() as Promise<T>;
 }
 
-export async function sbSelect<T>(env: Env, pathAndQuery: string): Promise<T> {
+export async function sbSelect<T>(env: Env, pathAndQuery: string, schema?: string): Promise<T> {
+  const h = headers(env);
+  if (schema) h['Accept-Profile'] = schema;
   const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
-    headers: headers(env), signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
+    headers: h, signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
     const t = await res.text().catch(() => String(res.status));
