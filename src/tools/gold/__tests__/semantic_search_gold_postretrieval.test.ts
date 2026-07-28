@@ -13,11 +13,19 @@
 //     (132,684 + 43,725), so the line grains monopolise every unfiltered call.
 //  3. FLOOR — the nonsense query "asdkjqwoeiuzxcv" returned 5 confident-looking
 //     matches at similarity 0.723-0.735.
-//  4. TRADE WARNING — 217,581 chunks (62.3%) carry a NULL trade_bu, so passing
-//     `trade` silently excludes most of the corpus. Verified live: the same
-//     query with trade="HVAC Service Residential" drops the 0.886 estimate_line
-//     hits entirely and returns only job rows. These tools feed Miss Dawn
-//     (Retell), so a silently-truncated answer can reach a customer on a call.
+//  4. TRADE WARNING — chunks with a NULL trade_bu can never match `trade`, so
+//     passing it silently excludes them. Verified live 2026-07-18: the same
+//     query with trade="HVAC Service Residential" dropped the 0.886
+//     estimate_line hits entirely and returned only job rows. These tools feed
+//     Miss Dawn (Retell), so a silently-truncated answer can reach a customer
+//     on a call.
+//
+//     That warning originally hardcoded the share (62.3%, 217,581 of 348,996
+//     chunks). QUA-1059 + QUA-1060 re-embedded the index and the real figure
+//     became 8.9% with invoice_item at 0.0%, so prod was both misstating the
+//     number and giving inverted advice ("re-run without trade to search the
+//     full corpus"). The figures are now derived at runtime — see
+//     trade_coverage.ts and its tests.
 // ============================================================
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { semantic_search_gold } from '../semantic_search_gold';
@@ -158,23 +166,74 @@ describe('semantic_search_gold post-retrieval: relevance floor', () => {
 });
 
 describe('semantic_search_gold post-retrieval: trade warning', () => {
-  it('warns that a trade filter silently excludes the NULL-trade_bu majority of the index', async () => {
-    rpcReturning([
-      { entity_key: 'job', source_key: '19142515', content_text: 'condenser fan motor · HVAC Service Residential', grain: 'job', trade_bu: 'HVAC Service Residential', similarity: 0.827913305266409 },
-    ]);
+  const HIT = { entity_key: 'job', source_key: '19142515', content_text: 'condenser fan motor · HVAC Service Residential', grain: 'job', trade_bu: 'HVAC Service Residential', similarity: 0.827913305266409 };
+
+  /** match_entities returns rows; the coverage probes answer with PostgREST counts. */
+  function rpcPlusCoverage(nulls: Record<string, number>, totals: Record<string, number>, total: number, untagged: number) {
+    const count = (n: number) => new Response('[]', {
+      status: 206, headers: { 'content-range': n === 0 ? '*/0' : `0-0/${n}` },
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/rpc/match_entities')) return new Response(JSON.stringify([HIT]), { status: 200 });
+      if (url.includes('pii_allowlist')) {
+        return new Response(JSON.stringify(Object.keys(nulls).map((entity_key) => ({ entity_key }))), { status: 200 });
+      }
+      const entity = /entity_key=eq\.([a-z_]+)/.exec(url)?.[1];
+      const isNull = url.includes('trade_bu=is.null');
+      if (entity && isNull) return count(nulls[entity] ?? 0);
+      if (entity) return count(totals[entity] ?? 0);
+      return count(isNull ? untagged : total);
+    });
+    vi.stubGlobal('fetch', fetchMock as any);
+    return fetchMock;
+  }
+
+  it('reports the CURRENT untagged share, derived at runtime — not the frozen 62.3% figure', async () => {
+    rpcPlusCoverage(
+      { pricebook: 11043, pricebook_category: 10378, location: 5803, invoice_item: 0 },
+      { pricebook: 11043, pricebook_category: 10378, location: 14479, invoice_item: 132684 },
+      349036, 31203,
+    );
 
     const out: any = await semantic_search_gold.handler(
       env(ai()), { query: 'condenser fan motor replacement', trade: 'HVAC Service Residential' }, ctx,
     );
 
-    expect(out._warnings).toBeDefined();
     const warned = out._warnings.join(' ');
     expect(warned).toMatch(/trade/i);
-    expect(warned).toMatch(/62\.3%|excl/i);
+    expect(warned).toContain('8.9%');
+    // The stale hardcoded claim must be gone in every form.
+    expect(warned).not.toContain('62.3');
+    expect(warned).not.toContain('217,581');
+    expect(warned).not.toMatch(/invoice_item[^.]*100%/);
+    // At 8.9% the old blanket "go search everything instead" advice is wrong.
+    expect(warned).not.toMatch(/search the full corpus/i);
+    // Still returns the actual search result.
+    expect(out.matches).toHaveLength(1);
   });
 
-  it('does not emit a trade warning when no trade filter was passed', async () => {
-    rpcReturning([
+  it('fails SOFT — a broken coverage probe degrades the warning but never the search', async () => {
+    const fetchMock = vi.fn(async (url: string) => (
+      url.includes('/rpc/match_entities')
+        ? new Response(JSON.stringify([HIT]), { status: 200 })
+        : new Response('nope', { status: 500 })
+    ));
+    vi.stubGlobal('fetch', fetchMock as any);
+
+    const out: any = await semantic_search_gold.handler(
+      env(ai()), { query: 'condenser fan motor replacement', trade: 'HVAC Service Residential' }, ctx,
+    );
+
+    expect(out.matches).toHaveLength(1);
+    expect(out.matches[0].content_text).toBe(HIT.content_text);
+    const warned = (out._warnings ?? []).join(' ');
+    expect(warned).toMatch(/trade/i);
+    // Degraded means figure-free, not a guessed percentage.
+    expect(warned).not.toMatch(/\d+\.\d%/);
+  });
+
+  it('does not emit a trade warning — or pay for a coverage probe — when no trade filter was passed', async () => {
+    const fetchMock = rpcReturning([
       { entity_key: 'job', source_key: '1', content_text: 'A', grain: 'job', trade_bu: 'HVAC', similarity: 0.90 },
     ]);
 
@@ -182,6 +241,8 @@ describe('semantic_search_gold post-retrieval: trade warning', () => {
 
     const warned = (out._warnings ?? []).join(' ');
     expect(warned).not.toMatch(/trade/i);
+    // Exactly one Supabase call: the RPC. No count over ~349k rows.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

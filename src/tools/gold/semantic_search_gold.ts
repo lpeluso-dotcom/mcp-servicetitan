@@ -42,6 +42,7 @@ import { z } from 'zod';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { embedQuery, sbRpc } from '../../supabase';
+import { buildTradeWarning, getTradeCoverage } from './trade_coverage';
 
 const ENTITY_KEYS = [
   'job', 'invoice_item', 'estimate', 'estimate_line', 'pricebook',
@@ -67,7 +68,13 @@ interface MatchRow {
 
 // ── Post-retrieval layer ────────────────────────────────────
 // match_entities is raw cosine-similarity top-k. Returning it verbatim is
-// wrong for this index for three measured reasons (all live 2026-07-28):
+// wrong for this index for three measured reasons (all live 2026-07-28).
+//
+// The counts below are a SNAPSHOT used to justify the design — they are not
+// load-bearing at runtime and will drift with each nightly re-embed. Any figure
+// this tool actually reports to a caller is measured live; see trade_coverage.ts
+// for why (a frozen 62.3% NULL-trade share here shipped as a warning and was
+// 8.9% two re-embeds later).
 //
 //   * DUPLICATION — the line grains compose content_text from just
 //     [sku_name, line_type], so one string recurs up to 71 times
@@ -213,13 +220,15 @@ export const semantic_search_gold: ToolDef<Args> = {
     const raw = rows ?? [];
     const warnings: string[] = [];
 
+    // Trade-coverage warning. The figures are MEASURED (see trade_coverage.ts) —
+    // this warning used to hardcode a 62.3% NULL share that two re-embeds later
+    // was 8.9%, so it was telling callers to abandon a filter that had become
+    // safe. Only probed when a trade filter was actually passed, and read
+    // through a 6h D1 cache; a failed probe degrades the warning, never the
+    // search.
     if (args.trade !== undefined) {
-      warnings.push(
-        `trade_filter_excludes_untagged: 62.3% of the index (217,581 of 348,996 chunks) has a NULL ` +
-        `trade_bu and can never match trade="${args.trade}". Whole nouns are invisible under this ` +
-        `filter — invoice_item, estimate_line, location, pricebook and membership are 100% untagged. ` +
-        `Re-run without \`trade\` to search the full corpus.`,
-      );
+      const warning = buildTradeWarning(await getTradeCoverage(env), args.trade);
+      if (warning) warnings.push(warning);
     }
 
     // 1. Relevance floor — drop nearest-available noise before anything else.
