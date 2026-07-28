@@ -87,6 +87,44 @@ export async function sbSelect<T>(env: Env, pathAndQuery: string, schema?: strin
   return res.json() as Promise<T>;
 }
 
+/**
+ * Row count for a PostgREST filter, read out of the `Content-Range` response
+ * header rather than by pulling rows.
+ *
+ * `Prefer: count=exact` makes PostgREST answer `content-range: <range>/<total>`
+ * (the range degrades to a bare `*` when the filtered set is empty, but the
+ * total after the slash is still exact). `limit=1` is forced on so the body
+ * stays one row: counting by reading rows would cap at the project's 1000-row
+ * ceiling and silently under-report.
+ *
+ * Deliberately NOT `count=planned`: the planner estimate for
+ * `vec.entity_chunks?trade_bu=is.null` measured 34,473 against an exact 31,203
+ * on 2026-07-28 — 10% out, which is the sort of "close enough" that turns a
+ * warning back into a lie. Callers that cannot afford an exact count should
+ * cache the result, not downgrade its accuracy.
+ */
+export async function sbCount(env: Env, pathAndQuery: string, schema?: string): Promise<number> {
+  const h = headers(env);
+  if (schema) h['Accept-Profile'] = schema;
+  h['Prefer'] = 'count=exact';
+  const q = /[?&]limit=/.test(pathAndQuery)
+    ? pathAndQuery
+    : `${pathAndQuery}${pathAndQuery.includes('?') ? '&' : '?'}limit=1`;
+  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${q}`, {
+    headers: h, signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => String(res.status));
+    throw new Error(`supabase count ${pathAndQuery} failed ${res.status}: ${t}`);
+  }
+  const range = res.headers.get('content-range');
+  const total = range?.split('/')[1];
+  if (!total || !/^\d+$/.test(total)) {
+    throw new Error(`supabase count ${pathAndQuery}: no exact count in content-range (${range ?? 'header absent'})`);
+  }
+  return Number(total);
+}
+
 export async function sbWriteEmbedding(
   env: Env, code: string, itemType: string, vector: number[],
 ): Promise<void> {
