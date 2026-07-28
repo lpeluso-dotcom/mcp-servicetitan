@@ -10,8 +10,13 @@ const TENANT_ID = '000000000';
 const TZ = 'America/New_York';
 
 /**
- * ST's cap on a simple-IDs lookup (`?ids=a,b,c`). Exceeding it returns HTTP 400
- * `{"errors":{"Ids":["Simple IDs lookup should not exceed 50 ids"]}}`.
+ * Cap on a simple-IDs lookup (`?ids=a,b,c`). Over the cap ST returns HTTP 400
+ * `{"errors":{"Ids":["Simple IDs lookup should n…"]}}` (ST truncates there).
+ *
+ * Verified live 2026-07-27/28 against tenant 431848990: a 200-id chunk 400s,
+ * a 50-id chunk succeeds. The exact ceiling is somewhere in (50, 200); 50 is
+ * the documented-safe batch size, so this stays at 50 rather than probing for
+ * the true edge.
  */
 const ST_IDS_BATCH_MAX = 50;
 

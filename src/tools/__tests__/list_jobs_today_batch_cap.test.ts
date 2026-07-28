@@ -2,9 +2,13 @@
 // list_jobs_today — ST simple-IDs batch cap.
 //
 // Step 2 batch-fetches the parent jobs via the ids-batch jobs call. That call
-// is capped by ServiceTitan at 50 ids; asking for more returns HTTP 400:
+// is capped by ServiceTitan; over the cap it returns HTTP 400:
 //
 //   {"status":400,"errors":{"Ids":["Simple IDs lookup should n…"]}}
+//
+// Verified live 2026-07-27/28 against tenant 431848990: a 200-id chunk 400s,
+// a 50-id chunk succeeds (57 distinct jobs that day -> chunks of 50 + 7).
+// The exact ceiling is in (50, 200); this pins the batch to the safe 50.
 //
 // The tool already chunks and already short-circuits on an empty id set — the
 // only defect was the chunk size (200). On a normal QSC day the appointment
@@ -16,7 +20,7 @@ import { list_jobs_today } from '../jobs/list_jobs_today';
 
 const CTX = { actor: 'vitest', correlation: 'test-corr' };
 
-/** ST's documented cap for the simple-IDs lookup. */
+/** Safe batch size for the simple-IDs lookup (see header for the live bounds). */
 const ST_SIMPLE_IDS_CAP = 50;
 
 function makeDB() {
@@ -69,7 +73,7 @@ describe('list_jobs_today ids-batch chunking', () => {
             JSON.stringify({
               status: 400,
               title: 'One or more validation errors occurred.',
-              errors: { Ids: ['Simple IDs lookup should not exceed 50 ids'] },
+              errors: { Ids: ['Simple IDs lookup should n...'] },
             }),
             { status: 400 },
           );
