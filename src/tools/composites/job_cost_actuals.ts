@@ -124,6 +124,7 @@ export const job_cost_actuals: ToolDef<Args> = {
     invoice: z.unknown().optional(),
     _partial: z.boolean().optional(),
     _failures: z.array(z.unknown()).optional(),
+    _warnings: z.array(z.string()).optional(),
     _composite: z.string().optional(),
     _source: z.string().optional(),
     correlation: z.string().optional(),
@@ -232,6 +233,30 @@ export const job_cost_actuals: ToolDef<Args> = {
     const laborBurden$ = Number(((totalMinutes / 60) * burdenRate).toFixed(2));
     const revenue = job?.revenue ?? null;
 
+    // Zero-by-absence is NOT zero-by-measurement. With no timesheet rows the
+    // burden computes to $0 and the margin to 100%, which reads as a great job
+    // rather than a missing input. D1 `job_timesheets` is a recent-window sync
+    // (7,910 rows spanning 2025-12-08..2026-07-27 as of 2026-07-28), so any
+    // older job has no rows at all — e.g. job 30035955 (completed 2023-02-21)
+    // returned labor_burden_$ 0 / gross_margin_pct 100 with three technicians
+    // assigned and marked Done. Withhold the derived figures and say why.
+    const warnings: string[] = [];
+    const hasTimesheets = tsRows.rows.some((t) => t.active !== 0);
+    if (!hasTimesheets) {
+      const assignedTechs = new Set(asgRows.rows.map((a) => a.technician_id)).size;
+      warnings.push(
+        `labor_burden_unavailable: no active timesheet rows in D1 for job ${jobId}, so labor_burden_$ is ` +
+        `0 by ABSENCE, not by measurement. gross_profit_$ and gross_margin_pct are withheld (null) rather ` +
+        `than reported as a 100% margin.` +
+        (assignedTechs > 0
+          ? ` ${assignedTechs} technician(s) are assigned to this job via appointment_assignments, so labor ` +
+            `almost certainly occurred — the timesheets are missing, not the work.`
+          : '') +
+        ` D1 job_timesheets is a recent-window sync; jobs completed before that window carry no rows. ` +
+        `Use payroll_job_timesheets_list for a live ST read of this job's labor.`,
+      );
+    }
+
     // Pull technician names for any per-tech row missing one (assignments may
     // miss a tech that's on a timesheet but not on appointment_assignments).
     const missingTechIds = [...perTech.values()].filter((p) => p.technician_name === null).map((p) => p.technician_id);
@@ -259,10 +284,13 @@ export const job_cost_actuals: ToolDef<Args> = {
         total_minutes: totalMinutes,
         burden_rate_per_hour: burdenRate,
         labor_burden_$: laborBurden$,
+        // 'none' means the $0 burden reflects missing timesheets, not free labor.
+        labor_burden_basis: hasTimesheets ? 'timesheets' : 'none',
         revenue,
-        gross_profit_$: revenue !== null ? Number((revenue - laborBurden$).toFixed(2)) : null,
+        gross_profit_$:
+          hasTimesheets && revenue !== null ? Number((revenue - laborBurden$).toFixed(2)) : null,
         gross_margin_pct:
-          revenue !== null && revenue > 0
+          hasTimesheets && revenue !== null && revenue > 0
             ? Number((((revenue - laborBurden$) / revenue) * 100).toFixed(1))
             : null,
       },
@@ -276,6 +304,7 @@ export const job_cost_actuals: ToolDef<Args> = {
       invoice: firstInvoice ?? null,
       _partial: invoiceFanout.partial,
       _failures: invoiceFanout.failures,
+      ...(warnings.length > 0 ? { _warnings: warnings } : {}),
       _composite: 'job_cost_actuals',
       _source: 'mixed',
       correlation,
