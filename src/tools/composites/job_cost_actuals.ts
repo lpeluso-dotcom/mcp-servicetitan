@@ -239,7 +239,9 @@ export const job_cost_actuals: ToolDef<Args> = {
       const placeholders = missingTechIds.map(() => '?').join(',');
       const { rows: techRows } = await readD1<TechnicianRow>(
         env,
-        `SELECT technician_id, name, business_unit FROM technicians WHERE technician_id IN (${placeholders})`,
+        // `technicians` is keyed on tech_id — alias it back to technician_id so
+        // the perTech.get(t.technician_id) lookup below keeps working.
+        `SELECT tech_id AS technician_id, name, business_unit FROM technicians WHERE tech_id IN (${placeholders})`,
         missingTechIds,
       );
       for (const t of techRows) {

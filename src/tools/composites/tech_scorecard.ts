@@ -64,7 +64,7 @@ export const tech_scorecard: ToolDef<Args> = {
               COALESCE(SUM(ts.drive_minutes), 0)  AS drive_minutes,
               COALESCE(SUM(ts.working_minutes), 0) AS working_minutes
          FROM job_timesheets ts
-         LEFT JOIN technicians t ON t.technician_id = ts.technician_id
+         LEFT JOIN technicians t ON t.tech_id = ts.technician_id
         WHERE ${where.join(' AND ')}
         GROUP BY ts.technician_id, t.name, t.business_unit
         ORDER BY jobs DESC`,
