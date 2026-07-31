@@ -617,7 +617,7 @@ describe('st_add_invoice_line_item', () => {
     });
     await expect(
       runConfirm(sim.env, { invoiceId: 111, lineItems: [{ skuName: 'HI1', description: 'x', quantity: 1, unitPrice: 10 }] })
-    ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('ok:false') });
+    ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('failure envelope') });
   });
 
   it('exported invoice still warns at dryRun and still proceeds through confirm (warn-only preserved, not blocked)', async () => {
@@ -1471,6 +1471,6 @@ describe('st_create_adjustment_invoice', () => {
     });
     await expect(
       runConfirm(sim.env, { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -9771 }] })
-    ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('ok:false') });
+    ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('failure envelope') });
   });
 });

@@ -101,16 +101,23 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Body-level failure check for the /api/st/write proxy: a 200 whose envelope
- * says `ok: false` is a failure the status code does not show. Returns a
- * message when the body looks like an error envelope, else undefined.
+ * Body-level failure check for the /api/st/write proxy. The REAL envelope
+ * (taylor-ai gate-st.js handleSTWrite, verified against source 2026-07-31) is:
+ *   success → { success: true, endpoint, method, response: <ST raw response> }
+ *   failure → { error: "ST API 4xx"/message, ... } with a NON-2xx status
+ * Failures normally arrive as non-2xx (resp.ok catches them), so this check is
+ * defense-in-depth for any 200 whose body still signals failure — `success:
+ * false`, an `error` string, or the legacy `ok: false` shape.
  */
 export function proxyEnvelopeError(body: unknown): string | undefined {
   if (body === null || typeof body !== 'object') return undefined;
   const rec = body as Record<string, unknown>;
-  if (rec.ok === false) {
-    const detail = typeof rec.message === 'string' ? rec.message : JSON.stringify(rec).slice(0, 300);
-    return `proxy returned HTTP 200 with an {ok:false} envelope: ${detail}`;
+  if (rec.ok === false || rec.success === false || typeof rec.error === 'string') {
+    const detail =
+      typeof rec.error === 'string' ? rec.error :
+      typeof rec.message === 'string' ? rec.message :
+      JSON.stringify(rec).slice(0, 300);
+    return `proxy returned HTTP 200 with a failure envelope: ${detail}`;
   }
   return undefined;
 }
@@ -120,11 +127,27 @@ export function proxyEnvelopeError(body: unknown): string | undefined {
  * shape ST/the proxy returned. Used to name what was written in error
  * messages — an id we learned and then dropped is an id someone has to hunt
  * for in the ST UI.
+ *
+ * THE REAL SHAPE (verified live 2026-07-31 + taylor-ai gate-st.js source): the
+ * proxy wraps ST's response as { success, endpoint, method, response: <raw> },
+ * and ST's POST /invoices (create adjustment) returns the new invoice id as a
+ * BARE NUMBER — so the live create envelope is { ..., response: 84402274 }.
+ * `rec.response` (bare number or {id}) is therefore the FIRST candidate; the
+ * others cover direct-ST and test shapes. (The items PATCH returns an empty
+ * body → { response: { raw: "" } } → correctly yields undefined here; the
+ * line-item tool verifies by baseline diff instead.)
  */
 export function extractEntityId(body: unknown): number | undefined {
+  if (typeof body === 'number' || typeof body === 'string') {
+    const n = Number(body);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  }
   if (body === null || typeof body !== 'object') return undefined;
   const rec = body as Record<string, unknown>;
+  const response = rec.response;
   const candidates: unknown[] = [
+    typeof response === 'number' || typeof response === 'string' ? response : undefined,
+    (response as Record<string, unknown> | undefined)?.id,
     rec.id,
     rec.invoiceId,
     (rec.data as Record<string, unknown> | undefined)?.id,
