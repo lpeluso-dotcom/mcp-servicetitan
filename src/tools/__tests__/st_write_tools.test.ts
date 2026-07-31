@@ -516,3 +516,99 @@ describe('st_create_material primaryVendor (QUA-685)', () => {
     expect(result.payload).not.toHaveProperty('primaryVendorCost');
   });
 });
+
+// ── st_create_adjustment_invoice ─────────────────────────────
+
+import { st_create_adjustment_invoice } from '../invoicing/st_create_adjustment_invoice';
+
+describe('st_create_adjustment_invoice', () => {
+  function makeParentEnv(parentInvoice: unknown) {
+    return {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          return new Response(JSON.stringify({ data: [parentInvoice] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+  }
+
+  it('throws validation_error when lineItems is empty', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null });
+    await expect(
+      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 222, lineItems: [] }, CTX)
+    ).rejects.toMatchObject({ code: 'validation_error' });
+  });
+
+  it('throws not_found when the parent invoice does not exist', async () => {
+    const env = {
+      ST_PROXY: { fetch: vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+    await expect(
+      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 999999, lineItems: [{ skuId: 1, quantity: 1, price: -200 }] }, CTX)
+    ).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('rejects a parent invoice not in Posted or Exported status', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Pending', adjustmentToId: null });
+    await expect(
+      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200 }] }, CTX)
+    ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('Posted') });
+  });
+
+  it('rejects a parent invoice that is itself an adjustment invoice', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: 111 });
+    await expect(
+      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200 }] }, CTX)
+    ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('adjustment') });
+  });
+
+  it('dryRun=true returns DryRunResult with token for a valid Exported parent', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    const result: any = await st_create_adjustment_invoice.handler(
+      env as any,
+      { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -998484, type: 'Service' }] },
+      CTX
+    );
+    expect(result.dryRun).toBe(true);
+    expect(result.tool).toBe('st_create_adjustment_invoice');
+    expect(result.confirmation_token).toBeTypeOf('string');
+  });
+
+  it('does not warn when adjustment line total nets the stated offsetAmount to zero, warns when it does not', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    const netted: any = await st_create_adjustment_invoice.handler(
+      env as any,
+      { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -100 }], offsetAmount: 100 },
+      CTX
+    );
+    expect(netted.warnings).toEqual([]);
+
+    const unnetted: any = await st_create_adjustment_invoice.handler(
+      env as any,
+      { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -50 }], offsetAmount: 100 },
+      CTX
+    );
+    expect(unnetted.warnings.some((w: string) => w.includes('does not net'))).toBe(true);
+  });
+
+  it('durableWrite submits operation invoice.create_adjustment with correct target and payload', async () => {
+    const output = { status: 'ok' };
+    const env = makeEnv(happyFetch(output));
+    const result = await durableWrite(env, {
+      actor: CTX.actor, operation: 'invoice.create_adjustment',
+      target: { id: '222', type: 'invoice' },
+      payload: { adjustmentToId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -998484 }] },
+      correlation: CORRELATION,
+    });
+    expect(result).toEqual(output);
+    const [, init] = env.ST_PROXY.fetch.mock.calls[0];
+    const body = JSON.parse(init.body);
+    expect(body.operation).toBe('invoice.create_adjustment');
+    expect(body.target).toEqual({ id: '222', type: 'invoice' });
+  });
+});
