@@ -6,7 +6,7 @@
 // Field names match the LIVE ST GET shape confirmed during design research
 // (2026-07-31), not the untrustworthy third-party OpenAPI mirror: `type`
 // (not `skuType`), `isChargeable` (not `chargeable`). generalLedgerAccountId/
-// businessUnitId are accepted here as plain ints — GET returns them as
+// businessUnitId/job are accepted here as plain ints — GET returns them as
 // nested objects ({id, name, ...}); the manual sandbox check (design doc,
 // Implementation Risk section) confirms whether PATCH wants the bare id or
 // the nested object before this tool's live write path ships.
@@ -115,6 +115,12 @@ export const st_add_invoice_line_item: ToolDef<Args> = {
     );
     const invoice = invoiceData.data?.[0];
     if (!invoice) throw new McpError('not_found', `invoice ${invoiceId} not found`, { correlation });
+    // Guard: this endpoint has a documented history of silently ignoring
+    // params (see balanceExcludeZero in list_unpaid_invoices). If ST ever
+    // ignores `ids`, data[0] would be an arbitrary invoice — fail loudly
+    // instead of writing to the wrong invoice.
+    if (Number(invoice.id) !== invoiceId)
+      throw new McpError('upstream_error', `ids filter not honored: asked ${invoiceId}, got ${invoice.id}`, { correlation });
 
     let jobLinkWarning: string | undefined;
     if (jobId) {
@@ -139,7 +145,12 @@ export const st_add_invoice_line_item: ToolDef<Args> = {
       jobLinkWarning = `Attempting to set job=${jobId} on invoice ${invoiceId} — ST may not support this on an existing invoice; verify the write actually took by re-reading the invoice after confirmation.`;
     }
 
-    const businessArgs = { invoiceId, jobId, lineItems };
+    // TOCTOU guard: fold read-derived state into the hashed args so a material
+    // change between the dryRun preview and the confirm call (e.g. the invoice
+    // becomes Exported, or its job link changes) invalidates the token via the
+    // existing "args changed since dryRun" path in WriteGate.verifyToken —
+    // instead of silently executing a write that differs from what was approved.
+    const businessArgs = { invoiceId, jobId, lineItems, syncStatus: invoice.syncStatus, hadJobLink: !!invoice.job };
     const gate = new WriteGate(env);
     const endpoint = `/accounting/v2/tenant/000000000/invoices/${invoiceId}`;
 

@@ -357,6 +357,57 @@ describe('st_add_invoice_line_item', () => {
     expect(body.operation).toBe('invoice.add_line_item');
     expect(body.target).toEqual({ id: '111', type: 'invoice' });
   });
+
+  // ── Fix 1: ids filter not honored guard ────────────────────
+  it('throws upstream_error when the invoices list endpoint returns a different id than requested (ids filter not honored)', async () => {
+    // Invoice read returns id 222 even though invoiceId 111 was requested —
+    // simulates ST silently ignoring the `ids` param.
+    const env = makeReadEnv({ id: 222, syncStatus: 'Pending', customer: { id: 5 }, job: null });
+    await expect(
+      st_add_invoice_line_item.handler(
+        env as any,
+        { invoiceId: 111, lineItems: [{ skuId: 1, quantity: 1, price: 200, type: 'Service' }] },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('ids filter not honored') });
+  });
+
+  // ── Fix 2: TOCTOU — confirm-phase re-reads and re-hashes state ──
+  it('rejects the confirm call when the invoice syncStatus changed between dryRun and confirm (TOCTOU)', async () => {
+    let call = 0;
+    const invoiceStates = [
+      { id: 111, syncStatus: 'Pending', customer: { id: 5 }, job: null },
+      { id: 111, syncStatus: 'Exported', customer: { id: 5 }, job: null },
+    ];
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          const state = invoiceStates[Math.min(call, invoiceStates.length - 1)];
+          call++;
+          return new Response(JSON.stringify({ data: [state] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key',
+      MCP_SERVICE_VERSION: '0.0.0-test',
+      ST_TENANT_ID: '000000000',
+      DB: makeDB(),
+      PROXY_STATE: {},
+      SIRO_API_TOKEN: '',
+    };
+
+    const args = { invoiceId: 111, lineItems: [{ skuId: 1, quantity: 1, price: 200, type: 'Service' as const }] };
+    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    expect(dr.dryRun).toBe(true);
+
+    await expect(
+      st_add_invoice_line_item.handler(
+        env,
+        { ...args, dryRun: false, confirmation_token: dr.confirmation_token },
+        CTX
+      )
+    ).rejects.toThrow(/args changed since dryRun/);
+  });
 });
 
 // ── Pricebook payload transform (Bugs 2 + 3) ─────────────────
@@ -610,5 +661,84 @@ describe('st_create_adjustment_invoice', () => {
     const body = JSON.parse(init.body);
     expect(body.operation).toBe('invoice.create_adjustment');
     expect(body.target).toEqual({ id: '222', type: 'invoice' });
+  });
+
+  // ── Fix 1: ids filter not honored guard ────────────────────
+  it('throws upstream_error when the invoices list endpoint returns a different id than requested (ids filter not honored)', async () => {
+    // Parent read returns id 999 even though parentInvoiceId 222 was requested —
+    // simulates ST silently ignoring the `ids` param.
+    const env = makeParentEnv({ id: 999, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    await expect(
+      st_create_adjustment_invoice.handler(
+        env as any,
+        { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200, type: 'Service' }] },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('ids filter not honored') });
+  });
+
+  // ── Fix 2: TOCTOU — confirm-phase re-reads and re-hashes parent state ──
+  it('rejects the confirm call when the parent syncStatus changed between dryRun and confirm (TOCTOU)', async () => {
+    let call = 0;
+    const parentStates = [
+      { id: 222, syncStatus: 'Posted', adjustmentToId: null, businessUnit: { id: 257 } },
+      { id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } },
+    ];
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          const state = parentStates[Math.min(call, parentStates.length - 1)];
+          call++;
+          return new Response(JSON.stringify({ data: [state] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+
+    const args = { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200, type: 'Service' as const }] };
+    const dr: any = await st_create_adjustment_invoice.handler(env, args, CTX);
+    expect(dr.dryRun).toBe(true);
+
+    // The hard-block (Fix 3) throws before verifyToken would even run, so this
+    // assertion is really exercising Fix 3 here — see the dedicated Fix 3 test
+    // below for the pending-sandbox-confirmation message. This test focuses on
+    // confirming dryRun=false is rejected regardless of state drift.
+    await expect(
+      st_create_adjustment_invoice.handler(
+        env,
+        { ...args, dryRun: false, confirmation_token: dr.confirmation_token },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'validation_error' });
+  });
+
+  // ── Fix 3: hard-block on dryRun=false pending sandbox confirmation ──
+  it('hard-blocks dryRun=false with validation_error mentioning sandbox/disabled, even with a token', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    await expect(
+      st_create_adjustment_invoice.handler(
+        env as any,
+        {
+          parentInvoiceId: 222,
+          lineItems: [{ skuId: 1, quantity: 1, price: -200, type: 'Service' }],
+          dryRun: false,
+          confirmation_token: 'any-token-value',
+        },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringMatching(/sandbox|disabled/i) });
+  });
+
+  it('dryRun=true still returns a normal preview (hard-block only applies to dryRun=false)', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    const result: any = await st_create_adjustment_invoice.handler(
+      env as any,
+      { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200, type: 'Service' }] },
+      CTX
+    );
+    expect(result.dryRun).toBe(true);
+    expect(result.confirmation_token).toBeTypeOf('string');
   });
 });

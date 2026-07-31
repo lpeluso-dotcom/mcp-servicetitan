@@ -19,7 +19,6 @@ import { McpError } from '../../errors';
 import { WriteGate } from '../../write-gate';
 import { readST } from '../../st';
 import type { ToolDef } from '../index';
-import { durableWrite } from '../st_patch_service';
 import type { InvoiceLineItemInput } from './st_add_invoice_line_item';
 
 interface Args {
@@ -71,10 +70,11 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
   name: 'st_create_adjustment_invoice',
   description:
     'Create an adjustment invoice against a parent invoice (must be Posted or Exported). ' +
-    'dryRun=true (default) validates and returns a confirmation_token — call again with dryRun=false + token to write. ' +
+    'dryRun=true (default) validates and returns a confirmation_token preview. LIVE WRITES ARE CURRENTLY DISABLED: ' +
+    'this tool hard-blocks dryRun=false (even with a valid token) pending manual sandbox-confirmation of the real ST adjustment-invoice endpoint/payload shape. ' +
     'Adjustment lines are typically negative to offset revenue, but sign is not enforced. ' +
     'UNCONFIRMED ENDPOINT: the real ST adjustment-invoice API shape has not been verified live as of 2026-07-31 — ' +
-    'run the manual sandbox-confirmation check before trusting the live write path (see design doc Implementation Risk).',
+    'run the manual sandbox-confirmation check before this tool\'s live write path can be enabled (see design doc Implementation Risk).',
   isWrite: true,
   stEndpoint: { method: 'POST', path: '/accounting/v2/tenant/{tid}/invoices', source: 'live' },
   zodSchema: {
@@ -98,6 +98,12 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
     );
     const parent = parentData.data?.[0];
     if (!parent) throw new McpError('not_found', `invoice ${parentInvoiceId} not found`, { correlation });
+    // Guard: this endpoint has a documented history of silently ignoring
+    // params (see balanceExcludeZero in list_unpaid_invoices). If ST ever
+    // ignores `ids`, data[0] would be an arbitrary invoice — fail loudly
+    // instead of authorizing an adjustment against the wrong invoice.
+    if (Number(parent.id) !== parentInvoiceId)
+      throw new McpError('upstream_error', `ids filter not honored: asked ${parentInvoiceId}, got ${parent.id}`, { correlation });
 
     if (parent.syncStatus !== 'Posted' && parent.syncStatus !== 'Exported') {
       throw new McpError(
@@ -122,14 +128,22 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
       }
     }
 
+    const resolvedBusinessUnitId = businessUnitId ?? parent.businessUnit?.id;
     const payload: Record<string, unknown> = {
       adjustmentToId: parentInvoiceId,
       lineItems,
-      businessUnitId: businessUnitId ?? parent.businessUnit?.id,
-      invoiceDate,
+      ...(resolvedBusinessUnitId !== undefined ? { businessUnitId: resolvedBusinessUnitId } : {}),
+      ...(invoiceDate ? { invoiceDate } : {}),
     };
 
-    const businessArgs = { parentInvoiceId, lineItems, businessUnitId, invoiceDate, offsetAmount };
+    // TOCTOU guard: fold read-derived parent state into the hashed args so a
+    // material change between the dryRun preview and the confirm call (e.g.
+    // the parent's syncStatus or adjustmentToId changes) invalidates the token
+    // via the existing "args changed since dryRun" path in WriteGate.verifyToken.
+    const businessArgs = {
+      parentInvoiceId, lineItems, businessUnitId, invoiceDate, offsetAmount,
+      syncStatus: parent.syncStatus, adjustmentToId: parent.adjustmentToId,
+    };
     const gate = new WriteGate(env);
     const endpoint = `/accounting/v2/tenant/000000000/invoices`;
 
@@ -137,14 +151,19 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
       const result = await gate.dryRun('st_create_adjustment_invoice', businessArgs, actor, correlation, payload, endpoint, 'POST', 15 * 60 * 1000);
       return { ...result, warnings };
     }
-    if (!confirmation_token) {
-      throw new McpError('validation_error', 'confirmation_token required when dryRun=false', { correlation });
-    }
-    await gate.verifyToken('st_create_adjustment_invoice', businessArgs, actor, confirmation_token);
-    return durableWrite(env, {
-      actor, operation: 'invoice.create_adjustment',
-      target: { id: String(parentInvoiceId), type: 'invoice' },
-      payload, correlation,
-    });
+
+    // Hard-block: the real ST adjustment-invoice endpoint/payload shape is an
+    // unconfirmed best-guess (see file header) pending a manual sandbox-confirmation
+    // step that is NOT part of this branch. Per Luke's explicit decision, this is
+    // enforced in code, not just documentation — dryRun=true previews above still
+    // work normally; only the live write is blocked. confirmation_token/verifyToken
+    // are intentionally not reached: this blocks before real writes could occur.
+    void confirmation_token;
+    void gate;
+    throw new McpError(
+      'validation_error',
+      'st_create_adjustment_invoice live writes are disabled pending manual sandbox-confirmation of the real ST adjustment-invoice endpoint/payload shape (see design doc Implementation Risk section and plan Task 5). dryRun=true previews still work.',
+      { correlation }
+    );
   },
 };
