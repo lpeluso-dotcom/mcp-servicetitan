@@ -4,17 +4,54 @@
 // (help.servicetitan.com/docs/create-an-adjustment-invoice).
 // F3: dryRun=true (default) → confirmation_token → dryRun=false → write via
 // /api/st/write (NOT durableWrite — the durable-write proxy only maps 4
-// pricebook operations; there is no proxy-side mapping for invoice creation).
+// pricebook operations; there is no proxy-side mapping for invoice creation)
+// → POST-WRITE VERIFY-READ (invoice-verify.ts). HTTP 200 from the proxy is
+// NOT evidence the adjustment carries any money; the re-read is.
 //
-// ENDPOINT is now CONFIRMED from the real ST Accounting v2 API catalog
-// (2026-07-31): POST /accounting/v2/tenant/{tid}/invoices, documented there
-// as "create adjustment invoice." The live write path below is now enabled.
+// ENDPOINT and BODY SHAPE are both CONFIRMED by live probing of prod tenant
+// 431848990 (2026-07-31): POST /accounting/v2/tenant/{tid}/invoices.
 //
-// The request BODY SHAPE is still UNCONFIRMED — the catalog gives paths/verbs
-// only, no request schemas. This tool's payload is a best-guess informed by
-// the one confirmed real field (`adjustmentToId`, seen live on GET responses).
-// Treat the payload shape as provisional until a live sandbox write confirms
-// it round-trips cleanly.
+// ┌──────────────────────────────────────────────────────────────────────┐
+// │ WIRE CONTRACT — POST /accounting/v2/tenant/{tid}/invoices            │
+// │ TOP LEVEL accepted:  adjustmentToId (REQUIRED), summary, items       │
+// │ items[] accepted:    skuName, description, quantity, cost, unitPrice │
+// │                                                                      │
+// │ DANGER: ASP.NET model binding SILENTLY DROPS anything else and still │
+// │ returns HTTP 200. Known-dropped, do NOT reintroduce:                 │
+// │   top level — lineItems, invoiceItems, invoiceDate, businessUnitId   │
+// │   items[]   — skuId, price, total, type, generalLedgerAccountId,     │
+// │               businessUnitId, technicianId, serviceDate,             │
+// │               membershipTypeId                                       │
+// │ The outbound body is built from the explicit allow-list below rather │
+// │ than spread from caller input, so a rename can't ride along unseen.  │
+// │ The line-item schema is `.strict()`, so a dropped-field name arrives │
+// │ as a LOUD validation error rather than being silently stripped.      │
+// └──────────────────────────────────────────────────────────────────────┘
+//
+// TWO SILENT DROPS CAUSED REAL DAMAGE (both fixed here):
+//  1. The line array is `items`, NOT `lineItems`. Sending `lineItems` created
+//     adjustment invoice 84402274 against parent 83058736 with ZERO items and
+//     a $0.00 total, behind an HTTP 200. It is not deletable via the API.
+//  2. The monetary field is `unitPrice`, NOT `price`. `price` is dropped and
+//     the line lands at $0.00. NEGATIVE unitPrice is allowed and is exactly
+//     how an offsetting adjustment line is expressed (cf. real invoice
+//     84399973, unit price -13674.00 on sku HI1). On the READ side ST returns
+//     that value as `price` — the verify-read accounts for the asymmetry.
+//
+// SKU NAMES ARE RESOLVED BEFORE THE WRITE (sku-resolve.ts). On the items-PATCH
+// endpoint an unresolvable SKU fails loudly (HTTP 500 "Sku (Name:) is not
+// found."); HERE it fails silently — the line is dropped and the adjustment is
+// created empty at $0.00, and it CANNOT be deleted via the API. A typo'd name
+// is indistinguishable from a missing one to ST, so presence-validation is not
+// enough: the name is checked against the D1 pricebook mirror first, and a
+// definite miss is a validation_error at dryRun time, before any undeletable
+// invoice exists. The check fails OPEN if the mirror is unreachable or empty
+// (surfaced as skuResolution.unverified), so infrastructure trouble cannot
+// block a legitimate write.
+//
+// ASYMMETRY vs. st_add_invoice_line_item: that endpoint ACCEPTS `skuId`; this
+// one does NOT — adjustment lines resolve by `skuName` only. Do not unify the
+// two item shapes.
 // ============================================================
 
 import { z } from 'zod';
@@ -22,58 +59,100 @@ import { McpError } from '../../errors';
 import { WriteGate } from '../../write-gate';
 import { readST } from '../../st';
 import { rewriteTenantPlaceholders } from '../../tenant';
+import { resolveSkuName, type SkuResolution } from './sku-resolve';
+import {
+  extractEntityId,
+  intendedAmount,
+  itemAmount,
+  proxyEnvelopeError,
+  reReadInvoiceForVerify,
+} from './invoice-verify';
+import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 
 // NOTE: this tool's line-item shape is intentionally NOT shared with
-// st_add_invoice_line_item's InvoiceLineItemInput. That type was rewritten
-// 2026-07-31 to the CONFIRMED schema for PATCH .../invoices/{id}/items
-// (proven by live probing — see that file's header). This tool targets a
-// different, still-UNCONFIRMED endpoint (POST /accounting/v2/tenant/{tid}/invoices
-// for adjustment-invoice creation), whose request body shape has not been
-// probed. Reusing the confirmed items-PATCH shape here would be wrong — it
-// would either wrongly forbid fields this endpoint might accept (price,
-// generalLedgerAccountId, businessUnitId, type) or wrongly imply they're
-// confirmed present. Keep this local and speculative until this endpoint
-// gets its own live-probe pass.
+// st_add_invoice_line_item's InvoiceLineItemInput. Both were live-probed
+// 2026-07-31 and they genuinely differ: the items-PATCH endpoint accepts
+// `skuId` and `technicianId`; this endpoint's items[] silently drops both and
+// resolves the line by `skuName`. Unifying them would smuggle dropped fields
+// onto one wire or wrongly forbid accepted fields on the other.
 interface AdjustmentLineItemInput {
-  skuId?: number;
-  skuName?: string;
+  skuName: string;
   description?: string;
   quantity: number;
-  price?: number;
   cost?: number;
-  generalLedgerAccountId?: number;
-  businessUnitId?: number;
-  type?: 'Service' | 'Material' | 'Equipment';
+  unitPrice?: number;
 }
 
 interface Args {
   parentInvoiceId: number;
   lineItems: AdjustmentLineItemInput[];
-  businessUnitId?: number;
-  invoiceDate?: string;
+  summary?: string;
   offsetAmount?: number;
   dryRun?: boolean;
   confirmation_token?: string;
 }
 
+// .strict(): an unknown key is a LOUD validation error, not a silent strip.
+// `price` and `skuId` are the two an LLM reaches for by reflex here, and both
+// are silently discarded by ServiceTitan on this endpoint — accepting an input
+// ST will drop is the exact pattern this file exists to repair.
 const lineItemSchema = z.object({
-  skuId: z.number().int().positive().optional(),
-  skuName: z.string().optional(),
-  description: z.string().optional(),
-  quantity: z.number().positive(),
-  price: z.number().optional(),
-  cost: z.number().optional(),
-  generalLedgerAccountId: z.number().int().positive().optional(),
-  businessUnitId: z.number().int().positive().optional(),
-  type: z.enum(['Service', 'Material', 'Equipment']).optional(),
-});
+  skuName: z.string().min(1).describe(
+    'Pricebook SKU code/name (e.g. "HI1"). REQUIRED — ST resolves an adjustment line by SKU NAME. ' +
+    'Unlike the invoice-items PATCH endpoint, `skuId` is silently IGNORED here. The name is checked ' +
+    'against the pricebook before the write: an unresolvable name would be dropped by ST and produce ' +
+    'an empty $0.00 adjustment invoice that cannot be deleted via the API.'
+  ),
+  description: z.string().optional().describe('Line description'),
+  quantity: z.number().positive().describe('Line quantity'),
+  cost: z.number().optional().describe('Line cost basis (not the sell amount — see unitPrice)'),
+  unitPrice: z.number().optional().describe(
+    'Sell price per unit — THE monetary field on this endpoint. ServiceTitan silently IGNORES a field named ' +
+    '`price` (HTTP 200, $0.00 line). NEGATIVE values are allowed and are how an offsetting adjustment line is ' +
+    'expressed — e.g. unitPrice: -13674 to back out revenue booked on the parent invoice. Omitting it creates ' +
+    'the line at $0.00 (ST does not apply dynamic pricing to API-created invoice lines), which is almost never ' +
+    'what an adjustment wants — the tool warns when it is omitted.'
+  ),
+  // TOMBSTONES. Declared only so they are REJECTED with a message naming the
+  // replacement. .strict() alone would reject them with an opaque
+  // "unrecognized key" error, and these two are precisely the names an LLM
+  // reaches for: `price` (every pricebook tool uses it) and `skuId` (accepted
+  // by the sibling items-PATCH endpoint, silently dropped by this one).
+  price: z.any().optional().refine((v) => v === undefined, {
+    message:
+      '`price` is NOT a field on ServiceTitan\'s adjustment items[] model — ST silently drops it and the line lands at $0.00 behind an HTTP 200. Use `unitPrice` instead.',
+  }),
+  skuId: z.any().optional().refine((v) => v === undefined, {
+    message:
+      '`skuId` is silently IGNORED by this endpoint (unlike the invoice-items PATCH endpoint, which accepts it) — ServiceTitan resolves an adjustment line by SKU NAME. Use `skuName` instead; a line ST cannot resolve is dropped and yields an empty $0.00 adjustment invoice that is not deletable via the API.',
+  }),
+}).strict();
+
+// Explicit allow-list of the fields ST actually binds on an adjustment items[]
+// element. The outbound body is BUILT from this list, never spread from caller
+// input, so nothing outside the confirmed set can reach the wire and be
+// silently discarded. Adding a name here is a claim that it was live-probed.
+// The `keyof` annotation is the cheap fail-loudly mechanism: renaming a field
+// on AdjustmentLineItemInput without updating this list is a COMPILE error,
+// not a silent HTTP 200 that creates an empty $0.00 adjustment invoice.
+const ST_ADJUSTMENT_ITEM_FIELDS: readonly (keyof AdjustmentLineItemInput)[] = [
+  'skuName', 'description', 'quantity', 'cost', 'unitPrice',
+];
+
+function toStAdjustmentItemPayload(item: AdjustmentLineItemInput): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const field of ST_ADJUSTMENT_ITEM_FIELDS) {
+    const value = item[field];
+    if (value !== undefined) out[field] = value;
+  }
+  return out;
+}
 
 interface RawInvoice {
   id?: number;
   syncStatus?: string;
   adjustmentToId?: number | null;
-  businessUnit?: { id?: number };
   [key: string]: unknown;
 }
 
@@ -81,15 +160,47 @@ function validateLineItems(lineItems: AdjustmentLineItemInput[], correlation: st
   if (!lineItems || lineItems.length === 0) {
     throw new McpError('validation_error', 'st_create_adjustment_invoice requires at least one line item', { correlation });
   }
+  // CONFIRMED 2026-07-31: this endpoint's items[] ignores `skuId` entirely and
+  // resolves the line by SKU name. Without skuName ST has nothing to resolve
+  // and the line is dropped, yielding a $0.00 zero-item adjustment invoice
+  // behind an HTTP 200 (see file header). Reject locally instead.
   for (const [i, item] of lineItems.entries()) {
-    if (item.type === 'Equipment' && (item.price === undefined || item.cost === undefined)) {
+    if (!item.skuName) {
       throw new McpError(
         'validation_error',
-        `lineItems[${i}]: Equipment line items require both price and cost (QSC equipment is statically priced)`,
+        `lineItems[${i}]: skuName is required — ServiceTitan resolves adjustment lines by SKU name and silently ignores skuId on this endpoint. Without skuName the line is dropped and the adjustment invoice is created empty at $0.00.`,
         { correlation }
       );
     }
   }
+}
+
+/**
+ * Resolve every line's skuName against the D1 pricebook mirror. A definite
+ * miss is a hard validation_error BEFORE the write, because the alternative
+ * is an undeletable empty $0.00 adjustment invoice. An unavailable mirror is
+ * NOT a block — it is reported back so the caller knows the check did not run.
+ */
+async function checkSkuNames(
+  env: Env,
+  lineItems: AdjustmentLineItemInput[],
+  correlation: string,
+): Promise<{ resolved: SkuResolution[]; unverified: SkuResolution[] }> {
+  const resolved: SkuResolution[] = [];
+  const unverified: SkuResolution[] = [];
+  for (const [i, item] of lineItems.entries()) {
+    const res = await resolveSkuName(env, item.skuName, correlation);
+    if (res.status === 'not_found') {
+      throw new McpError(
+        'validation_error',
+        `lineItems[${i}]: skuName "${item.skuName}" does not exist in the pricebook (checked pb_services / pb_materials / pb_equipment, including case and hyphen variants). ServiceTitan resolves adjustment lines by SKU NAME and silently DROPS a line whose name it cannot resolve — the result is an adjustment invoice with zero items at $0.00, behind an HTTP 200, which is NOT deletable via the API (see 84402274). Use search_pricebook_all / search_pricebook_services to find the exact code.`,
+        { correlation, details: { index: i, skuName: item.skuName } },
+      );
+    }
+    if (res.status === 'unavailable') unverified.push(res);
+    else resolved.push(res);
+  }
+  return { resolved, unverified };
 }
 
 export const st_create_adjustment_invoice: ToolDef<Args> = {
@@ -97,23 +208,45 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
   description:
     'Create an adjustment invoice against a parent invoice (must be Posted or Exported). ' +
     'dryRun=true (default) validates and returns a confirmation_token — call again with dryRun=false + token to write. ' +
-    'Adjustment lines are typically negative to offset revenue, but sign is not enforced. ' +
-    'ENDPOINT is confirmed (ST Accounting v2 API catalog: POST /accounting/v2/tenant/{tid}/invoices); ' +
-    'the request BODY SHAPE is not confirmed — treat the payload as a best guess until verified against a live sandbox write.',
+    'Each line needs skuName (skuId is silently ignored by this endpoint) and unitPrice for the dollar amount — a field ' +
+    'named `price` is silently ignored and yields a $0.00 adjustment. skuName is resolved against the pricebook before ' +
+    'the write and an unknown name is rejected, because ST would silently drop the line and create an empty $0.00 ' +
+    'adjustment. Adjustment lines are typically NEGATIVE unitPrice to offset revenue, but sign is not enforced. ' +
+    'ENDPOINT and BODY SHAPE are both live-confirmed (2026-07-31): ' +
+    'POST /accounting/v2/tenant/{tid}/invoices with {adjustmentToId, summary?, items[]}. NOTE: ServiceTitan ignores a ' +
+    'business unit or invoice date on this call — the adjustment inherits the parent invoice\'s BU and is dated by ST — ' +
+    'so this tool has no businessUnitId/invoiceDate argument. Unknown line fields are rejected, not stripped. After the ' +
+    'write the tool RE-READS the created invoice and asserts the items and the total actually landed (silent_noop / ' +
+    'amount_mismatch / verify_unavailable, always naming the created invoice id) — HTTP 200 is not proof. Adjustment ' +
+    'invoices are NOT deletable via the API; a mistake has to be corrected in the ServiceTitan UI, so review the dryRun ' +
+    'preview carefully before confirming.',
   isWrite: true,
   stEndpoint: { method: 'POST', path: '/accounting/v2/tenant/{tid}/invoices', source: 'live' },
   zodSchema: {
     parentInvoiceId: z.number().int().positive().describe('ST invoice ID being adjusted'),
-    lineItems: z.array(lineItemSchema).min(1).describe('Adjustment line items — typically negative to offset revenue'),
-    businessUnitId: z.number().int().positive().optional().describe('Defaults to the parent invoice\'s business unit'),
-    invoiceDate: z.string().optional().describe('Defaults to today (ISO date)'),
-    offsetAmount: z.number().optional().describe('If provided, warns (does not block) when lineItems totals do not net this amount to zero'),
+    lineItems: z.array(lineItemSchema).min(1).describe('Adjustment line items — sent to ST as `items`; typically negative unitPrice to offset revenue'),
+    summary: z.string().optional().describe('Invoice summary/memo — accepted at the top level by ST (e.g. why the adjustment exists)'),
+    offsetAmount: z.number().optional().describe('If provided, warns (does not block) when the lineItems total does not net this amount to zero'),
     dryRun: z.boolean().default(true).describe('true (default) = preview + token; false = execute write'),
     confirmation_token: z.string().optional().describe('Token from prior dryRun=true call, required when dryRun=false'),
+    // TOMBSTONED TOP-LEVEL ARGS. ST silently ignores both on this endpoint, so
+    // quietly stripping them would tell the caller their business unit / date
+    // took effect when it did not — the same silent-no-op UX, one layer up.
+    businessUnitId: z.any().optional().refine((v) => v === undefined, {
+      message:
+        'businessUnitId was removed 2026-07-31: ServiceTitan silently ignores it on POST /invoices — the adjustment inherits the parent invoice\'s business unit. Do not send it.',
+    }),
+    invoiceDate: z.any().optional().refine((v) => v === undefined, {
+      message:
+        'invoiceDate was removed 2026-07-31: ServiceTitan silently ignores it on POST /invoices — the adjustment inherits the parent invoice\'s dating and is dated by ST. Do not send it.',
+    }),
   },
   async handler(env, args, { actor, correlation }) {
-    const { parentInvoiceId, lineItems, businessUnitId, invoiceDate, offsetAmount, dryRun = true, confirmation_token } = args;
+    const { parentInvoiceId, lineItems, summary, offsetAmount, dryRun = true, confirmation_token } = args;
     validateLineItems(lineItems, correlation);
+    // Runs on BOTH phases: a SKU that disappears between preview and confirm
+    // must not slip through into an undeletable empty adjustment.
+    const skuResolution = await checkSkuNames(env, lineItems, correlation);
 
     const tenant = env.ST_TENANT_ID;
     const parentData = await readST<{ data?: RawInvoice[] }>(
@@ -146,27 +279,46 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
     }
 
     const warnings: string[] = [];
+    // An adjustment line with no unitPrice is created at $0.00 — ST does not
+    // apply dynamic pricing to API-created lines (confirmed on the sibling
+    // endpoint by item 84402146). A $0.00 adjustment offsets nothing.
+    lineItems.forEach((li, i) => {
+      if (li.unitPrice === undefined) {
+        warnings.push(
+          `lineItems[${i}] (${li.skuName}): no unitPrice — ServiceTitan will create this adjustment line at $0.00 (no dynamic pricing on API-created lines), so it will not offset anything. Pass an explicit (usually negative) unitPrice.`
+        );
+      }
+    });
     if (offsetAmount !== undefined) {
-      const lineTotal = lineItems.reduce((sum, li) => sum + (li.price ?? 0) * li.quantity, 0);
+      const lineTotal = lineItems.reduce((sum, li) => sum + (li.unitPrice ?? 0) * li.quantity, 0);
       if (Math.abs(lineTotal + offsetAmount) > 0.01) {
         warnings.push(`adjustment line total (${lineTotal}) does not net offsetAmount (${offsetAmount}) to zero — informational only, not all adjustments are full offsets`);
       }
     }
 
-    const resolvedBusinessUnitId = businessUnitId ?? parent.businessUnit?.id;
+    // Built from the allow-list, NOT spread from args. `items` is the confirmed
+    // top-level array name — `lineItems` is silently dropped by ST and creates
+    // an empty $0.00 adjustment invoice behind an HTTP 200.
     const payload: Record<string, unknown> = {
       adjustmentToId: parentInvoiceId,
-      lineItems,
-      ...(resolvedBusinessUnitId !== undefined ? { businessUnitId: resolvedBusinessUnitId } : {}),
-      ...(invoiceDate ? { invoiceDate } : {}),
+      ...(summary ? { summary } : {}),
+      items: lineItems.map(toStAdjustmentItemPayload),
     };
 
     // TOCTOU guard: fold read-derived parent state into the hashed args so a
     // material change between the dryRun preview and the confirm call (e.g.
     // the parent's syncStatus or adjustmentToId changes) invalidates the token
     // via the existing "args changed since dryRun" path in WriteGate.verifyToken.
+    // `wireContract` pins the args→wire transformation VERSION into the hash:
+    // WriteGate.hashArgs drops undefined values, so an arg-shape change across
+    // a deploy (businessUnitId/invoiceDate removed, summary added, lineItems →
+    // items) is hash-INVISIBLE when the optionals are absent — a token minted
+    // by the old deployed code would verify here and execute a wire body the
+    // human never previewed (and vice versa on rollback). Bump this string any
+    // time the outbound payload construction changes.
     const businessArgs = {
-      parentInvoiceId, lineItems, businessUnitId, invoiceDate, offsetAmount,
+      wireContract: 'adjustment-items-v2-2026-07-31',
+      parentInvoiceId, lineItems, summary, offsetAmount,
       syncStatus: parent.syncStatus, adjustmentToId: parent.adjustmentToId,
     };
     const gate = new WriteGate(env);
@@ -174,7 +326,7 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
 
     if (dryRun) {
       const result = await gate.dryRun('st_create_adjustment_invoice', businessArgs, actor, correlation, payload, endpoint, 'POST', 15 * 60 * 1000);
-      return { ...result, warnings };
+      return { ...result, warnings, skuResolution };
     }
     if (!confirmation_token) {
       throw new McpError('validation_error', 'confirmation_token required when dryRun=false', { correlation });
@@ -194,7 +346,87 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
     if (!resp.ok) {
       throw new McpError('upstream_error', `st_create_adjustment_invoice failed: ${resp.status}`, { correlation });
     }
-    const result = await resp.json();
-    return { dryRun: false, tool: 'st_create_adjustment_invoice', result, correlation };
+    const result = await resp.json().catch(() => null);
+    // A 200 carrying an {ok:false} envelope is a failure the status code does
+    // not show — the proxy's status is not ServiceTitan's outcome.
+    const envelopeError = proxyEnvelopeError(result);
+    if (envelopeError) {
+      throw new McpError('upstream_error', `st_create_adjustment_invoice failed: ${envelopeError}`, { correlation, details: { result } });
+    }
+
+    // ── POST-WRITE VERIFY-READ ────────────────────────────────
+    // The create returned 200. That proves nothing about items or dollars:
+    // 84402274 was created by a 200 and carried zero items at $0.00. Every
+    // failure below NAMES the created invoice id — adjustment invoices cannot
+    // be deleted through the API, so a stray one that nobody can name is the
+    // worst outcome this tool has.
+    const createdId = extractEntityId(result);
+    const expectedTotal = lineItems.reduce((sum, li) => sum + intendedAmount(li), 0);
+    if (createdId === undefined) {
+      throw new McpError(
+        'verify_unavailable',
+        `st_create_adjustment_invoice: ServiceTitan returned HTTP 200 but no invoice id, so the adjustment against parent ${parentInvoiceId} could NOT be verified. AN ADJUSTMENT INVOICE MAY EXIST and adjustment invoices are not deletable via the API — find it in ServiceTitan under parent ${parentInvoiceId} before re-running, or a retry will create a second one. Raw response: ${JSON.stringify(result).slice(0, 500)}`,
+        { correlation, details: { parentInvoiceId, result } },
+      );
+    }
+
+    const stranded = `Adjustment invoice ${createdId} WAS created against parent ${parentInvoiceId} and is NOT deletable via the ST API — correct it in the ServiceTitan UI.`;
+    const post = await reReadInvoiceForVerify(env, { actor, correlation }, tenant, createdId, {
+      tool: 'st_create_adjustment_invoice',
+      stranded,
+    });
+
+    const items = post.items;
+    if (items === undefined) {
+      throw new McpError(
+        'verify_unavailable',
+        `st_create_adjustment_invoice: adjustment invoice ${createdId} was created but the verify-read carried no items field, so its contents could not be confirmed. ${stranded}`,
+        { correlation, details: { adjustmentInvoiceId: createdId, parentInvoiceId, result } },
+      );
+    }
+    if (items === null || items.length === 0) {
+      throw new McpError(
+        'silent_noop',
+        `st_create_adjustment_invoice: adjustment invoice ${createdId} was created against parent ${parentInvoiceId} but has ZERO line items — ServiceTitan accepted the request and dropped every line (this is exactly the 84402274 failure: HTTP 200, items null, total $0.00). ${stranded} Expected ${lineItems.length} line(s) totalling ${expectedTotal}.`,
+        { correlation, details: { adjustmentInvoiceId: createdId, parentInvoiceId, expectedItems: lineItems.length, expectedTotal, result } },
+      );
+    }
+    if (items.length !== lineItems.length) {
+      throw new McpError(
+        'silent_noop',
+        `st_create_adjustment_invoice: adjustment invoice ${createdId} carries ${items.length} line item(s) but ${lineItems.length} were submitted — ServiceTitan dropped ${lineItems.length - items.length} line(s) silently (an unresolvable skuName does this). ${stranded}`,
+        { correlation, details: { adjustmentInvoiceId: createdId, parentInvoiceId, submitted: lineItems.length, landed: items.length, result } },
+      );
+    }
+
+    const actualTotal = items.reduce((sum, it) => sum + itemAmount(it), 0);
+    if (Math.abs(actualTotal - expectedTotal) > 0.005) {
+      throw new McpError(
+        'amount_mismatch',
+        `st_create_adjustment_invoice: adjustment invoice ${createdId} has all ${items.length} line(s) but the money is wrong — sent ${expectedTotal}, ServiceTitan persisted ${actualTotal}. The offset will NOT net the parent invoice. ${stranded}`,
+        { correlation, details: { adjustmentInvoiceId: createdId, parentInvoiceId, expected: expectedTotal, actual: actualTotal, result } },
+      );
+    }
+
+    return {
+      dryRun: false,
+      tool: 'st_create_adjustment_invoice',
+      verified: true,
+      adjustmentInvoiceId: createdId,
+      result,
+      verification: {
+        adjustmentInvoiceId: createdId,
+        parentInvoiceId,
+        itemsSubmitted: lineItems.length,
+        itemsLanded: items.length,
+        expectedTotal,
+        actualTotal,
+        invoiceSubTotal: post.subTotal,
+        invoiceTotal: post.total,
+      },
+      warnings,
+      skuResolution,
+      correlation,
+    };
   },
 };

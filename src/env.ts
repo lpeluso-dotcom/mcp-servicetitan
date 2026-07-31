@@ -24,6 +24,10 @@ export interface Env {
   MCP_SERVICE_VERSION: string;
   ST_TENANT_ID: string;
   MCP_LOCKDOWN?: string; // "true" → server enters lockdown / read-only mode (v1.5.2)
+  // Post-write verify-read backoff schedule, in ms, for read-after-write lag
+  // (see src/tools/invoicing/invoice-verify.ts). Defaults to [2000, 10000].
+  // Present as an override/test seam only — production leaves it unset.
+  VERIFY_BACKOFF_MS?: number[];
 
   // Secrets
   MCP_SYNC_KEY: string; // For servicetitan-proxy /api/st/read proxy
