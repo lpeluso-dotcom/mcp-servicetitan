@@ -2,22 +2,26 @@
 // st_create_adjustment_invoice — create an adjustment invoice against a
 // parent invoice (Posted/Exported only), per ST's own documented behavior
 // (help.servicetitan.com/docs/create-an-adjustment-invoice).
-// F3: dryRun=true (default) → confirmation_token → dryRun=false → durable write.
+// F3: dryRun=true (default) → confirmation_token → dryRun=false → write via
+// /api/st/write (NOT durableWrite — the durable-write proxy only maps 4
+// pricebook operations; there is no proxy-side mapping for invoice creation).
 //
-// The exact ST endpoint/payload for adjustment-invoice creation is
-// UNCONFIRMED as of design (2026-07-31) — the only spec source available
-// (a third-party GitHub mirror) disagrees with live GET evidence, and
-// developer.servicetitan.io could not be rendered headlessly. This tool's
-// stEndpoint/payload below is a best-guess informed by the one confirmed
-// real field (`adjustmentToId`, seen live on GET responses). Per the design
-// doc's Implementation Risk section, do NOT rely on this tool's live write
-// path until the manual sandbox-confirmation check (plan Task 5) has run.
+// ENDPOINT is now CONFIRMED from the real ST Accounting v2 API catalog
+// (2026-07-31): POST /accounting/v2/tenant/{tid}/invoices, documented there
+// as "create adjustment invoice." The live write path below is now enabled.
+//
+// The request BODY SHAPE is still UNCONFIRMED — the catalog gives paths/verbs
+// only, no request schemas. This tool's payload is a best-guess informed by
+// the one confirmed real field (`adjustmentToId`, seen live on GET responses).
+// Treat the payload shape as provisional until a live sandbox write confirms
+// it round-trips cleanly.
 // ============================================================
 
 import { z } from 'zod';
 import { McpError } from '../../errors';
 import { WriteGate } from '../../write-gate';
 import { readST } from '../../st';
+import { rewriteTenantPlaceholders } from '../../tenant';
 import type { ToolDef } from '../index';
 import type { InvoiceLineItemInput } from './st_add_invoice_line_item';
 
@@ -70,11 +74,10 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
   name: 'st_create_adjustment_invoice',
   description:
     'Create an adjustment invoice against a parent invoice (must be Posted or Exported). ' +
-    'dryRun=true (default) validates and returns a confirmation_token preview. LIVE WRITES ARE CURRENTLY DISABLED: ' +
-    'this tool hard-blocks dryRun=false (even with a valid token) pending manual sandbox-confirmation of the real ST adjustment-invoice endpoint/payload shape. ' +
+    'dryRun=true (default) validates and returns a confirmation_token — call again with dryRun=false + token to write. ' +
     'Adjustment lines are typically negative to offset revenue, but sign is not enforced. ' +
-    'UNCONFIRMED ENDPOINT: the real ST adjustment-invoice API shape has not been verified live as of 2026-07-31 — ' +
-    'run the manual sandbox-confirmation check before this tool\'s live write path can be enabled (see design doc Implementation Risk).',
+    'ENDPOINT is confirmed (ST Accounting v2 API catalog: POST /accounting/v2/tenant/{tid}/invoices); ' +
+    'the request BODY SHAPE is not confirmed — treat the payload as a best guess until verified against a live sandbox write.',
   isWrite: true,
   stEndpoint: { method: 'POST', path: '/accounting/v2/tenant/{tid}/invoices', source: 'live' },
   zodSchema: {
@@ -151,19 +154,25 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
       const result = await gate.dryRun('st_create_adjustment_invoice', businessArgs, actor, correlation, payload, endpoint, 'POST', 15 * 60 * 1000);
       return { ...result, warnings };
     }
+    if (!confirmation_token) {
+      throw new McpError('validation_error', 'confirmation_token required when dryRun=false', { correlation });
+    }
+    await gate.verifyToken('st_create_adjustment_invoice', businessArgs, actor, confirmation_token);
 
-    // Hard-block: the real ST adjustment-invoice endpoint/payload shape is an
-    // unconfirmed best-guess (see file header) pending a manual sandbox-confirmation
-    // step that is NOT part of this branch. Per Luke's explicit decision, this is
-    // enforced in code, not just documentation — dryRun=true previews above still
-    // work normally; only the live write is blocked. confirmation_token/verifyToken
-    // are intentionally not reached: this blocks before real writes could occur.
-    void confirmation_token;
-    void gate;
-    throw new McpError(
-      'validation_error',
-      'st_create_adjustment_invoice live writes are disabled pending manual sandbox-confirmation of the real ST adjustment-invoice endpoint/payload shape (see design doc Implementation Risk section and plan Task 5). dryRun=true previews still work.',
-      { correlation }
-    );
+    const resp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-sync-key': env.MCP_SYNC_KEY,
+        'x-correlation-id': correlation,
+        'x-actor': actor,
+      },
+      body: JSON.stringify({ endpoint: rewriteTenantPlaceholders(env, endpoint), method: 'POST', payload }),
+    });
+    if (!resp.ok) {
+      throw new McpError('upstream_error', `st_create_adjustment_invoice failed: ${resp.status}`, { correlation });
+    }
+    const result = await resp.json();
+    return { dryRun: false, tool: 'st_create_adjustment_invoice', result, correlation };
   },
 };

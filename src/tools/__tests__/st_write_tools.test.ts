@@ -342,20 +342,103 @@ describe('st_add_invoice_line_item', () => {
     ).rejects.toMatchObject({ code: 'not_found' });
   });
 
-  it('durableWrite submits operation invoice.add_line_item with correct target and payload', async () => {
-    const output = { status: 'ok' };
-    const env = makeEnv(happyFetch(output));
-    const result = await durableWrite(env, {
-      actor: CTX.actor, operation: 'invoice.add_line_item',
-      target: { id: '111', type: 'invoice' },
-      payload: { lineItems: [{ skuId: 1, quantity: 1, price: 200 }] },
-      correlation: CORRELATION,
+  // ── Confirm path executes via /api/st/write (NOT durableWrite) ──
+  it('confirm call with no job link needed: 1 call, correct endpoint/method/payload for line items', async () => {
+    let writeCall: { url: string; body: any } | undefined;
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.includes('/jobs/')) return new Response(JSON.stringify({}), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            writeCall = { url, body: JSON.parse(init!.body as string) };
+            return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+          }
+          // invoices read
+          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 }, job: null }] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+
+    const args = { invoiceId: 111, lineItems: [{ skuId: 1, quantity: 1, price: 200, type: 'Service' as const }] };
+    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    const result: any = await st_add_invoice_line_item.handler(
+      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+    );
+
+    expect(result.dryRun).toBe(false);
+    // Only ONE /api/st/write call — no job link needed.
+    const writeCalls = env.ST_PROXY.fetch.mock.calls.filter((c: any[]) => c[0].endsWith('/api/st/write'));
+    expect(writeCalls.length).toBe(1);
+    expect(writeCall!.url).toBe('https://servicetitan-proxy/api/st/write');
+    expect(writeCall!.body.endpoint).toBe('/accounting/v2/tenant/000000000/invoices/111/items');
+    expect(writeCall!.body.method).toBe('PATCH');
+    expect(writeCall!.body.payload).toEqual({ items: args.lineItems });
+  });
+
+  it('confirm call with jobId + no existing job link: 2 sequential calls, second sets the job link', async () => {
+    const writeCalls: { url: string; body: any }[] = [];
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.includes('/jobs/')) return new Response(JSON.stringify({ id: 42, customerId: 5 }), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            writeCalls.push({ url, body: JSON.parse(init!.body as string) });
+            return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+          }
+          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 }, job: null }] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+
+    const args = { invoiceId: 111, jobId: 42, lineItems: [{ skuId: 1, quantity: 1, price: 200, type: 'Service' as const }] };
+    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    const result: any = await st_add_invoice_line_item.handler(
+      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+    );
+
+    expect(result.dryRun).toBe(false);
+    expect(writeCalls.length).toBe(2);
+    expect(writeCalls[0].body.endpoint).toBe('/accounting/v2/tenant/000000000/invoices/111/items');
+    expect(writeCalls[0].body.method).toBe('PATCH');
+    expect(writeCalls[1].body.endpoint).toBe('/accounting/v2/tenant/000000000/invoices/111');
+    expect(writeCalls[1].body.method).toBe('PATCH');
+    expect(writeCalls[1].body.payload).toEqual({ job: 42 });
+  });
+
+  it('partial failure: line items succeed, job link fails — error mentions items landed but job link did not', async () => {
+    let writeCallCount = 0;
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.includes('/jobs/')) return new Response(JSON.stringify({ id: 42, customerId: 5 }), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            writeCallCount++;
+            if (writeCallCount === 1) return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+            return new Response('Bad Request', { status: 400 });
+          }
+          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 }, job: null }] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+
+    const args = { invoiceId: 111, jobId: 42, lineItems: [{ skuId: 1, quantity: 1, price: 200, type: 'Service' as const }] };
+    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    await expect(
+      st_add_invoice_line_item.handler(env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX)
+    ).rejects.toMatchObject({
+      code: 'upstream_error',
+      message: expect.stringMatching(/line items.*(added|landed).*successfully.*job link.*fail/i),
     });
-    expect(result).toEqual(output);
-    const [, init] = env.ST_PROXY.fetch.mock.calls[0];
-    const body = JSON.parse(init.body);
-    expect(body.operation).toBe('invoice.add_line_item');
-    expect(body.target).toEqual({ id: '111', type: 'invoice' });
+    expect(writeCallCount).toBe(2);
   });
 
   // ── Fix 1: ids filter not honored guard ────────────────────
@@ -647,20 +730,40 @@ describe('st_create_adjustment_invoice', () => {
     expect(unnetted.warnings.some((w: string) => w.includes('does not net'))).toBe(true);
   });
 
-  it('durableWrite submits operation invoice.create_adjustment with correct target and payload', async () => {
-    const output = { status: 'ok' };
-    const env = makeEnv(happyFetch(output));
-    const result = await durableWrite(env, {
-      actor: CTX.actor, operation: 'invoice.create_adjustment',
-      target: { id: '222', type: 'invoice' },
-      payload: { adjustmentToId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -998484 }] },
-      correlation: CORRELATION,
+  it('confirm call executes via /api/st/write with correct endpoint/method/payload (NOT durableWrite)', async () => {
+    let writeCall: { url: string; body: any } | undefined;
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            writeCall = { url, body: JSON.parse(init!.body as string) };
+            return new Response(JSON.stringify({ id: 333, status: 'ok' }), { status: 200 });
+          }
+          return new Response(JSON.stringify({ data: [{ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } }] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+
+    const args = { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -998484, type: 'Service' as const }] };
+    const dr: any = await st_create_adjustment_invoice.handler(env, args, CTX);
+    const result: any = await st_create_adjustment_invoice.handler(
+      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+    );
+
+    expect(result.dryRun).toBe(false);
+    // durableWrite would hit /api/st/durable-write — assert it never does.
+    expect(env.ST_PROXY.fetch.mock.calls.some((c: any[]) => String(c[0]).includes('durable-write'))).toBe(false);
+    expect(writeCall!.url).toBe('https://servicetitan-proxy/api/st/write');
+    expect(writeCall!.body.endpoint).toBe('/accounting/v2/tenant/000000000/invoices');
+    expect(writeCall!.body.method).toBe('POST');
+    expect(writeCall!.body.payload).toMatchObject({
+      adjustmentToId: 222,
+      lineItems: args.lineItems,
+      businessUnitId: 257,
     });
-    expect(result).toEqual(output);
-    const [, init] = env.ST_PROXY.fetch.mock.calls[0];
-    const body = JSON.parse(init.body);
-    expect(body.operation).toBe('invoice.create_adjustment');
-    expect(body.target).toEqual({ id: '222', type: 'invoice' });
   });
 
   // ── Fix 1: ids filter not honored guard ────────────────────
@@ -677,8 +780,11 @@ describe('st_create_adjustment_invoice', () => {
     ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('ids filter not honored') });
   });
 
-  // ── Fix 2: TOCTOU — confirm-phase re-reads and re-hashes parent state ──
-  it('rejects the confirm call when the parent syncStatus changed between dryRun and confirm (TOCTOU)', async () => {
+  // ── Fix 2: TOCTOU — now LIVE end-to-end (the Fix-3 hard-block previously
+  // short-circuited before verifyToken ran; now that the hard-block is
+  // lifted, this test proves the "args changed since dryRun" rejection
+  // actually fires on the real confirm path). ──
+  it('rejects the confirm call when the parent syncStatus changed between dryRun and confirm (TOCTOU, end-to-end)', async () => {
     let call = 0;
     const parentStates = [
       { id: 222, syncStatus: 'Posted', adjustmentToId: null, businessUnit: { id: 257 } },
@@ -688,6 +794,9 @@ describe('st_create_adjustment_invoice', () => {
       ST_PROXY: {
         fetch: vi.fn(async (url: string) => {
           if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            throw new Error('should not reach the live write — TOCTOU must reject before this');
+          }
           const state = parentStates[Math.min(call, parentStates.length - 1)];
           call++;
           return new Response(JSON.stringify({ data: [state] }), { status: 200 });
@@ -697,39 +806,27 @@ describe('st_create_adjustment_invoice', () => {
       DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '',
     };
 
+    // dryRun call reads parent with syncStatus=Posted (parentStates[0]).
     const args = { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200, type: 'Service' as const }] };
     const dr: any = await st_create_adjustment_invoice.handler(env, args, CTX);
     expect(dr.dryRun).toBe(true);
 
-    // The hard-block (Fix 3) throws before verifyToken would even run, so this
-    // assertion is really exercising Fix 3 here — see the dedicated Fix 3 test
-    // below for the pending-sandbox-confirmation message. This test focuses on
-    // confirming dryRun=false is rejected regardless of state drift.
+    // Confirm call re-reads parent — now syncStatus=Exported (parentStates[1]) —
+    // a *different* value than what was hashed into the token during dryRun.
+    // gate.verifyToken must throw "args changed since dryRun", and the live
+    // /api/st/write call must never be reached.
     await expect(
       st_create_adjustment_invoice.handler(
         env,
         { ...args, dryRun: false, confirmation_token: dr.confirmation_token },
         CTX
       )
-    ).rejects.toMatchObject({ code: 'validation_error' });
+    ).rejects.toThrow(/args changed since dryRun/);
   });
 
-  // ── Fix 3: hard-block on dryRun=false pending sandbox confirmation ──
-  it('hard-blocks dryRun=false with validation_error mentioning sandbox/disabled, even with a token', async () => {
-    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
-    await expect(
-      st_create_adjustment_invoice.handler(
-        env as any,
-        {
-          parentInvoiceId: 222,
-          lineItems: [{ skuId: 1, quantity: 1, price: -200, type: 'Service' }],
-          dryRun: false,
-          confirmation_token: 'any-token-value',
-        },
-        CTX
-      )
-    ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringMatching(/sandbox|disabled/i) });
-  });
+  // Fix 3 (the sandbox hard-block) has been REMOVED: the endpoint is now
+  // confirmed by the ST Accounting v2 API catalog, so live writes are enabled.
+  // See "confirm call executes via /api/st/write" above for the now-live path.
 
   it('dryRun=true still returns a normal preview (hard-block only applies to dryRun=false)', async () => {
     const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
