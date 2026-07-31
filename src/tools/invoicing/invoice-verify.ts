@@ -33,17 +33,20 @@ import { McpError } from '../../errors';
 import { readST } from '../../st';
 import type { Env } from '../../env';
 
+// NOTE: ST's read side serializes numeric fields as JSON STRINGS ("9771.00",
+// "1.0000000000000000000") — every numeric field here admits both, and all
+// comparisons must go through toMoney(), never typeof-number checks.
 export interface VerifyInvoiceItem {
   id?: number;
   skuName?: string;
   description?: string;
-  quantity?: number;
-  cost?: number;
+  quantity?: number | string;
+  cost?: number | string;
   /** READ-side monetary field. */
-  price?: number;
+  price?: number | string;
   /** WRITE-side monetary field name; tolerated on read in case ST unifies. */
-  unitPrice?: number;
-  total?: number;
+  unitPrice?: number | string;
+  total?: number | string;
   [key: string]: unknown;
 }
 
@@ -56,8 +59,8 @@ export interface VerifyInvoice {
    * can be concluded from it: that is verify_unavailable, never silent_noop.
    */
   items?: VerifyInvoiceItem[] | null;
-  subTotal?: number;
-  total?: number;
+  subTotal?: number | string;
+  total?: number | string;
   [key: string]: unknown;
 }
 
@@ -68,15 +71,34 @@ export function moneyEquals(a: number, b: number): boolean {
   return Math.abs(a - b) <= MONEY_EPSILON;
 }
 
-/** Monetary value of a read-side invoice item, or undefined if ST sent none. */
-export function itemPrice(item: VerifyInvoiceItem): number | undefined {
-  const v = item.price ?? item.unitPrice;
-  return typeof v === 'number' ? v : undefined;
+/**
+ * Coerce a read-side numeric field to a number, or undefined if absent/junk.
+ *
+ * ST RETURNS MONEY AND QUANTITY AS JSON *STRINGS* ON THE READ SIDE — live
+ * reads this session show items[].price="-13674.00", cost="0.0000000000",
+ * quantity="1.0000000000000000000", subTotal/total as strings too. A
+ * `typeof v === 'number'` check therefore reads every live value as absent,
+ * which made every successful nonzero write report amount_mismatch (and made
+ * the null-overwrite baseline guard silently unable to fire). Accept both
+ * number and numeric string; empty string and non-numeric junk → undefined.
+ */
+export function toMoney(v: unknown): number | undefined {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
 }
 
-/** price × quantity for a read-side item; absent price counts as 0. */
+/** Monetary value of a read-side invoice item, or undefined if ST sent none. */
+export function itemPrice(item: VerifyInvoiceItem): number | undefined {
+  return toMoney(item.price) ?? toMoney(item.unitPrice);
+}
+
+/** price × quantity for a read-side item; absent price/quantity counts as 0. */
 export function itemAmount(item: VerifyInvoiceItem): number {
-  const qty = typeof item.quantity === 'number' ? item.quantity : 0;
+  const qty = toMoney(item.quantity) ?? 0;
   return (itemPrice(item) ?? 0) * qty;
 }
 
@@ -172,16 +194,28 @@ export interface VerifyContext {
  * when the invoice cannot be observed — the write may still have landed, so
  * `stranded` MUST describe exactly what was written so the operator can find
  * it. The write is never re-sent from here.
+ *
+ * `accept` extends the backoff to ITEM-LEVEL lag: for a write against an
+ * EXISTING invoice, the row itself is returned immediately on every read, so
+ * without a predicate the backoff never engages and the caller's item
+ * assertions run against a zero-delay, possibly stale read — turning ordinary
+ * replication lag into a false silent_noop on a successful write. A returned
+ * row that does not satisfy `accept` is treated like a miss and retried
+ * through the same schedule. On exhaustion the LAST OBSERVED row is returned
+ * anyway (the invoice WAS observed — the caller adjudicates silent_noop vs
+ * amount_mismatch on real data); verify_unavailable is thrown only when no
+ * valid row was ever observed.
  */
 export async function reReadInvoiceForVerify(
   env: Env,
   ctx: VerifyContext,
   tenant: string,
   invoiceId: number,
-  opts: { tool: string; stranded: string },
+  opts: { tool: string; stranded: string; accept?: (inv: VerifyInvoice) => boolean },
 ): Promise<VerifyInvoice> {
   const delays = verifyBackoffMs(env);
   let lastReason = 'invoice not returned by the verify-read';
+  let lastObserved: VerifyInvoice | undefined;
 
   for (let attempt = 0; ; attempt++) {
     try {
@@ -192,13 +226,18 @@ export async function reReadInvoiceForVerify(
         { ids: invoiceId },
       );
       const row = data.data?.[0];
-      if (row && Number(row.id) === invoiceId) return row;
-      // Same guard as the pre-write read: if ST ever stops honoring `ids`,
-      // data[0] is an arbitrary invoice — verifying against it would be worse
-      // than not verifying at all.
-      lastReason = row
-        ? `ids filter not honored on the verify-read: asked ${invoiceId}, got ${row.id}`
-        : `invoice ${invoiceId} not present in the verify-read (empty data — the normal read-after-write-lag signature)`;
+      if (row && Number(row.id) === invoiceId) {
+        if (!opts.accept || opts.accept(row)) return row;
+        lastObserved = row;
+        lastReason = `invoice ${invoiceId} observed but the expected write effect is not visible yet (read-after-write lag)`;
+      } else {
+        // Same guard as the pre-write read: if ST ever stops honoring `ids`,
+        // data[0] is an arbitrary invoice — verifying against it would be worse
+        // than not verifying at all.
+        lastReason = row
+          ? `ids filter not honored on the verify-read: asked ${invoiceId}, got ${row.id}`
+          : `invoice ${invoiceId} not present in the verify-read (empty data — the normal read-after-write-lag signature)`;
+      }
     } catch (err) {
       lastReason = `verify-read failed: ${(err as Error).message}`;
     }
@@ -206,6 +245,11 @@ export async function reReadInvoiceForVerify(
     if (attempt >= delays.length) break;
     await sleep(delays[attempt]);
   }
+
+  // The row was seen but never satisfied `accept` — hand it to the caller for
+  // a verdict on real observed data rather than hiding it behind
+  // verify_unavailable.
+  if (lastObserved) return lastObserved;
 
   throw new McpError(
     'verify_unavailable',

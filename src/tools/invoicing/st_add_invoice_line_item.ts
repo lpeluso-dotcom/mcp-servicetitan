@@ -111,6 +111,7 @@ import {
   moneyEquals,
   proxyEnvelopeError,
   reReadInvoiceForVerify,
+  toMoney,
   type VerifyInvoiceItem,
 } from './invoice-verify';
 import type { ToolDef } from '../index';
@@ -187,7 +188,7 @@ const lineItemSchema = z.object({
   price: z.any().optional().refine((v) => v === undefined, {
     message:
       '`price` is NOT a field on ServiceTitan\'s InvoiceItemUpdateRequest — ST silently drops it and writes a $0.00 line behind an HTTP 200 (real damage: item 84402146 on invoice 83052705). Use `unitPrice` instead.',
-  }),
+  }).describe('DO NOT SEND — ST silently drops `price` and writes a $0.00 line. Use `unitPrice`. Any value is rejected.'),
 }).strict();
 
 interface RawInvoice {
@@ -398,12 +399,18 @@ export const st_add_invoice_line_item: ToolDef<Args> = {
     const writtenItemIds: number[] = [];
     for (let i = 0; i < itemPayloads.length; i++) {
       const resp = await stWrite(env, { actor, correlation }, resolvedEndpoint, 'PATCH', itemPayloads[i]);
-      const body = resp.ok ? await resp.json().catch(() => null) : null;
-      // A 200 carrying an {ok:false} envelope is a failure the status code
+      // On failure the proxy's body carries the ST error message ({error:
+      // "ST API 4xx …"}). Read it either way — a bare status number is
+      // useless during a money incident.
+      const rawText = await resp.text().catch(() => '');
+      let body: unknown = null;
+      try { body = rawText ? JSON.parse(rawText) : null; } catch { body = { raw: rawText.slice(0, 600) }; }
+      // A 200 carrying a failure envelope is a failure the status code
       // does not show — the proxy's status is not ServiceTitan's outcome.
       const envelopeError = resp.ok ? proxyEnvelopeError(body) : undefined;
       if (!resp.ok || envelopeError) {
         const succeeded = i;
+        const cause = envelopeError ?? `${resp.status}${rawText ? ` — ${rawText.slice(0, 600)}` : ''}`;
         // Finding-4 fix: the ids of the items already written are the whole
         // point of the cleanup instruction. They were being dropped on the
         // floor here, leaving the operator to hunt for them in the ST UI.
@@ -412,7 +419,7 @@ export const st_add_invoice_line_item: ToolDef<Args> = {
           : `ServiceTitan returned no item id for the already-written item${succeeded === 1 ? '' : 's'} — find them by comparing the invoice against baseline item ids [${[...baselineIds].join(', ') || 'none'}]. `;
         throw new McpError(
           'upstream_error',
-          `st_add_invoice_line_item: item ${i + 1} of ${lineItems.length} failed (${envelopeError ?? resp.status}) on invoice ${invoiceId}. ` +
+          `st_add_invoice_line_item: item ${i + 1} of ${lineItems.length} failed (${cause}) on invoice ${invoiceId}. ` +
           `${succeeded} item${succeeded === 1 ? '' : 's'} already succeeded before the failure and ${succeeded === 1 ? 'is' : 'are'} ` +
           `ALREADY WRITTEN to the invoice — they are NOT rolled back. The invoice is now in a partially-updated state. ` +
           `${known}` +
@@ -447,18 +454,46 @@ export const st_add_invoice_line_item: ToolDef<Args> = {
       (writtenItemIds.length ? ` (item ids returned by ST: ${writtenItemIds.join(', ')})` : '') +
       `; ${appends.length} append(s), ${updates.length} update(s).`;
 
+    // Acceptance predicate: for a write against an EXISTING invoice the row
+    // itself returns immediately on every read, so without this the backoff
+    // never engages and ordinary read-after-write lag becomes a false
+    // silent_noop. Retry until the appended items are visible (or the
+    // schedule exhausts — the last observed row is then adjudicated below).
+    const countNewItems = (inv: { items?: VerifyInvoiceItem[] | null }): number =>
+      (inv.items ?? []).filter((it) => {
+        const id = Number(it.id);
+        return Number.isFinite(id) && !baselineIds.has(id);
+      }).length;
     const post = await reReadInvoiceForVerify(env, { actor, correlation }, tenant, invoiceId, {
       tool: 'st_add_invoice_line_item',
       stranded,
+      accept: (inv) => Array.isArray(inv.items) && countNewItems(inv) >= appends.length,
     });
 
-    // `items` absent entirely → the read carried no line items and nothing can
-    // be concluded. That is verify_unavailable, NOT silent_noop.
-    if (!Array.isArray(post.items)) {
+    // `items` key ABSENT → the read carried no line-item information and
+    // nothing can be concluded: verify_unavailable. `items: null` is
+    // different — that is an OBSERVED invoice with zero lines (exactly what
+    // the stray 84402274 looked like), so appends that "landed" into it were
+    // a silent no-op, not an unknown.
+    if (post.items === undefined) {
       throw new McpError(
         'verify_unavailable',
-        `st_add_invoice_line_item: the write was sent but the verify-read of invoice ${invoiceId} returned no items array (items=${JSON.stringify(post.items ?? null)}), so the monetary effect could not be confirmed. ${stranded} Check the invoice in ServiceTitan before re-running — a retry would duplicate the lines.`,
+        `st_add_invoice_line_item: the write was sent but the verify-read of invoice ${invoiceId} carried no items field, so the monetary effect could not be confirmed. ${stranded} Check the invoice in ServiceTitan before re-running — a retry would duplicate the lines.`,
         { correlation, details: { invoiceId, writtenItemIds, results } },
+      );
+    }
+    if (post.items === null) {
+      if (appends.length > 0) {
+        throw new McpError(
+          'silent_noop',
+          `st_add_invoice_line_item: ${appends.length} line item(s) were PATCHed onto invoice ${invoiceId} and ServiceTitan answered HTTP 200, but the verify-read shows the invoice still has NO line items (items: null) — the write was a silent no-op. ${stranded} Nothing landed; do not retry blindly, inspect the invoice first.`,
+          { correlation, details: { invoiceId, baselineItemIds: [...baselineIds], results } },
+        );
+      }
+      throw new McpError(
+        'silent_noop',
+        `st_add_invoice_line_item: item update(s) were PATCHed on invoice ${invoiceId} (HTTP 200) but the verify-read shows the invoice has no line items at all (items: null). ${stranded}`,
+        { correlation, details: { invoiceId, results } },
       );
     }
 
@@ -536,8 +571,10 @@ export const st_add_invoice_line_item: ToolDef<Args> = {
       }
 
       if (li.cost === undefined && before !== undefined) {
-        const beforeCost = typeof before.cost === 'number' ? before.cost : undefined;
-        const afterCost = typeof after.cost === 'number' ? after.cost : undefined;
+        // toMoney, never typeof-number: ST's read side serializes cost as a
+        // string ("0.0000000000") — a typeof check would blind this guard.
+        const beforeCost = toMoney(before.cost);
+        const afterCost = toMoney(after.cost);
         if (beforeCost !== undefined && (afterCost === undefined || !moneyEquals(beforeCost, afterCost))) {
           throw new McpError(
             'amount_mismatch',

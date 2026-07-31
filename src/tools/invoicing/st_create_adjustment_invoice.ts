@@ -122,11 +122,11 @@ const lineItemSchema = z.object({
   price: z.any().optional().refine((v) => v === undefined, {
     message:
       '`price` is NOT a field on ServiceTitan\'s adjustment items[] model — ST silently drops it and the line lands at $0.00 behind an HTTP 200. Use `unitPrice` instead.',
-  }),
+  }).describe('DO NOT SEND — ST silently drops `price` and the line lands at $0.00. Use `unitPrice`. Any value is rejected.'),
   skuId: z.any().optional().refine((v) => v === undefined, {
     message:
       '`skuId` is silently IGNORED by this endpoint (unlike the invoice-items PATCH endpoint, which accepts it) — ServiceTitan resolves an adjustment line by SKU NAME. Use `skuName` instead; a line ST cannot resolve is dropped and yields an empty $0.00 adjustment invoice that is not deletable via the API.',
-  }),
+  }).describe('DO NOT SEND — ST resolves adjustment lines by SKU NAME only and silently drops skuId. Use `skuName`. Any value is rejected.'),
 }).strict();
 
 // Explicit allow-list of the fields ST actually binds on an adjustment items[]
@@ -235,11 +235,11 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
     businessUnitId: z.any().optional().refine((v) => v === undefined, {
       message:
         'businessUnitId was removed 2026-07-31: ServiceTitan silently ignores it on POST /invoices — the adjustment inherits the parent invoice\'s business unit. Do not send it.',
-    }),
+    }).describe('DO NOT SEND — removed 2026-07-31; ST silently ignores it and the adjustment inherits the parent invoice\'s business unit. Any value is rejected.'),
     invoiceDate: z.any().optional().refine((v) => v === undefined, {
       message:
         'invoiceDate was removed 2026-07-31: ServiceTitan silently ignores it on POST /invoices — the adjustment inherits the parent invoice\'s dating and is dated by ST. Do not send it.',
-    }),
+    }).describe('DO NOT SEND — removed 2026-07-31; ST silently ignores it and dates the adjustment itself. Any value is rejected.'),
   },
   async handler(env, args, { actor, correlation }) {
     const { parentInvoiceId, lineItems, summary, offsetAmount, dryRun = true, confirmation_token } = args;
@@ -344,7 +344,15 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
       body: JSON.stringify({ endpoint: rewriteTenantPlaceholders(env, endpoint), method: 'POST', payload }),
     });
     if (!resp.ok) {
-      throw new McpError('upstream_error', `st_create_adjustment_invoice failed: ${resp.status}`, { correlation });
+      // The proxy's failure body carries the ST error message ({error: "ST
+      // API 4xx …"}) — surface it; a bare status number is useless during a
+      // money incident.
+      const text = await resp.text().catch(() => '');
+      throw new McpError(
+        'upstream_error',
+        `st_create_adjustment_invoice failed: ${resp.status}${text ? ` — ${text.slice(0, 600)}` : ''}`,
+        { correlation, details: { status: resp.status, body: text.slice(0, 600) } },
+      );
     }
     const result = await resp.json().catch(() => null);
     // A 200 carrying an {ok:false} envelope is a failure the status code does
@@ -371,9 +379,14 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
     }
 
     const stranded = `Adjustment invoice ${createdId} WAS created against parent ${parentInvoiceId} and is NOT deletable via the ST API — correct it in the ServiceTitan UI.`;
+    // accept: retry through the backoff until the created invoice's items are
+    // visible (a brand-new invoice can surface in the list before its lines
+    // finish propagating). On exhaustion the last observed row is adjudicated
+    // below rather than hidden behind verify_unavailable.
     const post = await reReadInvoiceForVerify(env, { actor, correlation }, tenant, createdId, {
       tool: 'st_create_adjustment_invoice',
       stranded,
+      accept: (inv) => Array.isArray(inv.items) && inv.items.length >= lineItems.length,
     });
 
     const items = post.items;

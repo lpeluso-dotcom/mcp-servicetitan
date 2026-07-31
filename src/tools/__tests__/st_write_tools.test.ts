@@ -261,7 +261,27 @@ describe('st_add_invoice_line_item', () => {
   // Append semantics mirror the confirmed incident: the item's read-side
   // `price` is whatever `unitPrice` was sent — and $0.00 when none was
   // (ST does not run dynamic pricing on API-appended items).
+  //
+  // FIDELITY RULES (adversarial-review findings, 2026-07-31):
+  //  - The write success envelope is the REAL /api/st/write shape:
+  //    {success:true, endpoint, method, response:{raw:""}} — the items PATCH
+  //    returns an EMPTY body, so NO item id is ever available from the write.
+  //  - The read side serializes numeric fields as STRINGS, exactly as live ST
+  //    does: price "-13674.00", quantity "1.0000000000000000000", cost
+  //    "0.0000000000". A verify layer that only accepts typeof number reads
+  //    every live value as absent — that bug shipped; these strings pin it.
   interface SimItem { id: number; skuName?: string; description?: string; quantity?: number; cost?: number; price: number }
+
+  function serializeItem(it: SimItem) {
+    return {
+      id: it.id,
+      skuName: it.skuName,
+      description: it.description,
+      quantity: it.quantity !== undefined ? it.quantity.toFixed(19) : undefined,
+      cost: it.cost !== undefined ? it.cost.toFixed(10) : undefined,
+      price: it.price.toFixed(2),
+    };
+  }
 
   function makeInvoiceEnv(opts: {
     invoice?: Record<string, unknown>;
@@ -269,7 +289,7 @@ describe('st_add_invoice_line_item', () => {
     /** Return a Response to override the write outcome for call N (1-based). */
     onWrite?: (call: number, payload: any) => Response | undefined;
     /** Return a Response to override the invoice read (used to simulate lag / dropped effects). */
-    onRead?: (state: { writeCount: number; items: SimItem[] }) => Response | undefined;
+    onRead?: (state: { writeCount: number; readCount: number; items: SimItem[] }) => Response | undefined;
     /** Model ST recomputing/zeroing the submitted price at persist time. */
     persistedPrice?: (payload: any) => number;
   } = {}) {
@@ -277,6 +297,7 @@ describe('st_add_invoice_line_item', () => {
     const items: SimItem[] = (opts.items ?? []).map((i) => ({ ...i }));
     let nextItemId = 9001;
     let writeCount = 0;
+    let readCount = 0;
     const writeCalls: any[] = [];
 
     const env: any = {
@@ -291,10 +312,8 @@ describe('st_add_invoice_line_item', () => {
             if (override) return override;
             const p = body.payload;
             const price = opts.persistedPrice ? opts.persistedPrice(p) : (p.unitPrice ?? 0);
-            let respId: number;
             if (p.id !== undefined) {
               const existing = items.find((it) => it.id === p.id);
-              respId = p.id;
               if (existing) {
                 // ST binds a whole InvoiceItemUpdateRequest — fields present
                 // in the body are applied; fields absent are left alone here
@@ -305,17 +324,20 @@ describe('st_add_invoice_line_item', () => {
                 if (p.unitPrice !== undefined || opts.persistedPrice) existing.price = price;
               }
             } else {
-              respId = nextItemId++;
               items.push({
-                id: respId, skuName: p.skuName, description: p.description,
+                id: nextItemId++, skuName: p.skuName, description: p.description,
                 quantity: p.quantity, cost: p.cost, price,
               });
             }
-            return new Response(JSON.stringify({ id: respId, status: 'ok' }), { status: 200 });
+            // REAL envelope: the items PATCH returns an empty body — no id.
+            return new Response(JSON.stringify({
+              success: true, endpoint: body.endpoint, method: body.method, response: { raw: '' },
+            }), { status: 200 });
           }
-          const override = opts.onRead?.({ writeCount, items });
+          readCount++;
+          const override = opts.onRead?.({ writeCount, readCount, items });
           if (override) return override;
-          return new Response(JSON.stringify({ data: [{ ...invoice, items }] }), { status: 200 });
+          return new Response(JSON.stringify({ data: [{ ...invoice, items: items.map(serializeItem) }] }), { status: 200 });
         }),
       },
       MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
@@ -324,7 +346,7 @@ describe('st_add_invoice_line_item', () => {
       // Test seam — production uses the real 2s/10s read-after-write backoff.
       VERIFY_BACKOFF_MS: [0, 0],
     };
-    return { env, writeCalls, items, get writeCount() { return writeCount; } };
+    return { env, writeCalls, items, get writeCount() { return writeCount; }, get readCount() { return readCount; } };
   }
 
   // Runs the full dryRun → confirm cycle against a simulator env.
@@ -587,26 +609,51 @@ describe('st_add_invoice_line_item', () => {
     });
   });
 
-  // The cleanup instruction is useless without the ids it just learned: the
-  // already-written items would have to be hunted in the ST UI. The error
-  // carries them in `details` AND in the message.
-  it('partial failure carries the ALREADY-WRITTEN item ids in the error details and message', async () => {
+  // PROD REALITY (adversarial-review finding): the real items-PATCH envelope
+  // is {success:true, response:{raw:""}} — ST returns NO item id, so
+  // writtenItemIds is ALWAYS empty in production and the error must fall back
+  // to pointing the operator at the baseline-id comparison. The previous
+  // version of this test pinned ids [9001, 9002] that only the fantasy mock
+  // envelope could produce — it validated an unreachable branch.
+  it('partial failure with the REAL empty-body envelope: no item ids available, error points at the baseline-id comparison', async () => {
     const lineItems = [
       { skuId: 501, description: 'Item A', quantity: 1, unitPrice: 10 },
       { skuId: 502, description: 'Item B', quantity: 2, unitPrice: 20 },
       { skuId: 503, description: 'Item C', quantity: 3, unitPrice: 30 },
     ];
     const sim = makeInvoiceEnv({
-      onWrite: (call) => (call >= 3 ? new Response('Bad Request', { status: 400 }) : undefined),
+      items: [{ id: 700, description: 'pre-existing', quantity: 1, price: 5 }],
+      onWrite: (call) => (call >= 3 ? new Response(JSON.stringify({ error: 'ST API 400: bad item' }), { status: 400 }) : undefined),
     });
     const err: any = await runConfirm(sim.env, { invoiceId: 111, lineItems }).catch((e) => e);
     expect(err.code).toBe('upstream_error');
-    // Items 1 and 2 were written and ST returned their ids (9001, 9002).
-    expect(err.details.writtenItemIds).toEqual([9001, 9002]);
+    expect(err.details.writtenItemIds).toEqual([]);
     expect(err.details.itemsWritten).toBe(2);
     expect(err.details.failedAtCall).toBe(3);
     expect(err.details.invoiceId).toBe(111);
-    expect(err.message).toContain('9001, 9002');
+    expect(err.details.baselineItemIds).toEqual([700]);
+    expect(err.message).toMatch(/baseline item ids \[700\]/);
+    // The proxy's error body must surface, not just the bare status number.
+    expect(err.message).toContain('ST API 400: bad item');
+  });
+
+  // Synthetic variant preserving coverage of the ids-present branch, in case
+  // ST ever starts returning item bodies from the PATCH.
+  it('partial failure carries ALREADY-WRITTEN item ids when the envelope does return them', async () => {
+    const lineItems = [
+      { skuId: 501, description: 'Item A', quantity: 1, unitPrice: 10 },
+      { skuId: 502, description: 'Item B', quantity: 2, unitPrice: 20 },
+    ];
+    const sim = makeInvoiceEnv({
+      onWrite: (call) =>
+        call === 1
+          ? new Response(JSON.stringify({ success: true, response: { id: 9001 } }), { status: 200 })
+          : new Response(JSON.stringify({ error: 'ST API 400' }), { status: 400 }),
+    });
+    const err: any = await runConfirm(sim.env, { invoiceId: 111, lineItems }).catch((e) => e);
+    expect(err.code).toBe('upstream_error');
+    expect(err.details.writtenItemIds).toEqual([9001]);
+    expect(err.message).toContain('9001');
   });
 
   // The proxy's status code is not ServiceTitan's outcome: a 200 carrying an
@@ -618,6 +665,59 @@ describe('st_add_invoice_line_item', () => {
     await expect(
       runConfirm(sim.env, { invoiceId: 111, lineItems: [{ skuName: 'HI1', description: 'x', quantity: 1, unitPrice: 10 }] })
     ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('failure envelope') });
+  });
+
+  // The REAL failure envelope shapes: {success:false} and {error:"…"} at 200.
+  it('treats an HTTP 200 with {success:false} or an {error} string as a failure', async () => {
+    for (const envelope of [{ success: false, error: 'ST API said no' }, { error: 'ST API 409: conflict' }]) {
+      const sim = makeInvoiceEnv({
+        onWrite: () => new Response(JSON.stringify(envelope), { status: 200 }),
+      });
+      await expect(
+        runConfirm(sim.env, { invoiceId: 111, lineItems: [{ skuName: 'HI1', description: 'x', quantity: 1, unitPrice: 10 }] })
+      ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('failure envelope') });
+    }
+  });
+
+  // ── Read-after-write lag: the backoff must engage at ITEM level ──
+  // For a write against an EXISTING invoice the row returns immediately on
+  // every read, so a row-level-only retry never fires and ordinary replication
+  // lag became a false silent_noop. The accept predicate retries until the new
+  // item is visible.
+  it('verified=true when the appended item only becomes visible on the SECOND verify-read (item-level lag), with ≥2 verify reads and no write re-send', async () => {
+    const sim = makeInvoiceEnv({
+      onRead: ({ writeCount, readCount, items }) => {
+        // Reads 1 (dryRun) and 2 (confirm baseline) serve normally via default.
+        // First POST-WRITE read (readCount 3) serves a STALE view without the
+        // appended item; later reads serve the real state.
+        if (writeCount > 0 && readCount === 3) {
+          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 }, items: [] }] }), { status: 200 });
+        }
+        return undefined;
+      },
+    });
+    const result: any = await runConfirm(sim.env, {
+      invoiceId: 111,
+      lineItems: [{ skuName: 'HI1', description: 'HVAC Install', quantity: 1, unitPrice: 9771 }],
+    });
+    expect(result.verified).toBe(true);
+    expect(result.result.actualAppendedAmount).toBe(9771);
+    expect(sim.writeCount).toBe(1); // the write was never re-sent
+    expect(sim.readCount).toBeGreaterThanOrEqual(4); // baseline + stale verify + retry verify
+  });
+
+  // STRING-TYPED READS are the live reality — this pins the coercion end to
+  // end with explicit amounts (the whole simulator serves strings, but this
+  // test exists to fail loudly and name the defect if someone reverts toMoney).
+  it('verified=true with ST string-typed read fields ("9771.00", "1.0000000000000000000") — the live typing that broke typeof-number verification', async () => {
+    const sim = makeInvoiceEnv();
+    const result: any = await runConfirm(sim.env, {
+      invoiceId: 111,
+      lineItems: [{ skuName: 'HI1', description: 'HVAC Install', quantity: 1, unitPrice: 9771 }],
+    });
+    expect(result.verified).toBe(true);
+    expect(result.result.expectedAppendedAmount).toBe(9771);
+    expect(result.result.actualAppendedAmount).toBe(9771);
   });
 
   it('exported invoice still warns at dryRun and still proceeds through confirm (warn-only preserved, not blocked)', async () => {
@@ -1000,14 +1100,16 @@ describe('st_create_adjustment_invoice', () => {
   // read back so the post-write verify-read has something real to assert —
   // adjustment invoice 84402274 proved that "HTTP 200 + an id" says nothing
   // about whether any line or any dollar landed.
+  // READ-side field name is `price`, and — as live ST does — every numeric
+  // field is serialized as a STRING ("-998484.00", "1.0000000000000000000").
   function defaultCreatedItems(payload: any) {
     return (payload.items ?? []).map((it: any, i: number) => ({
       id: 5001 + i,
       skuName: it.skuName,
       description: it.description,
-      quantity: it.quantity,
-      cost: it.cost,
-      price: it.unitPrice ?? 0, // READ-side field name; no price sent → $0.00
+      quantity: it.quantity !== undefined ? Number(it.quantity).toFixed(19) : undefined,
+      cost: it.cost !== undefined ? Number(it.cost).toFixed(10) : undefined,
+      price: (it.unitPrice ?? 0).toFixed(2), // no price sent → "0.00"
     }));
   }
 
@@ -1049,10 +1151,18 @@ describe('st_create_adjustment_invoice', () => {
             if (opts.writeResponse) return opts.writeResponse(body.payload);
             const items = (opts.createdItems ?? defaultCreatedItems)(body.payload);
             const subTotal = (Array.isArray(items) ? items : []).reduce(
-              (s: number, it: any) => s + (it.price ?? 0) * (it.quantity ?? 0), 0
+              (s: number, it: any) => s + Number(it.price ?? 0) * Number(it.quantity ?? 0), 0
             );
-            created = { id: createdId, adjustmentToId: parent.id, syncStatus: 'Pending', items, subTotal, total: subTotal };
-            return new Response(JSON.stringify({ id: createdId, status: 'ok' }), { status: 200 });
+            // Invoice-level money is string-typed on the read side too.
+            created = {
+              id: createdId, adjustmentToId: parent.id, syncStatus: 'Pending', items,
+              subTotal: subTotal.toFixed(2), total: subTotal.toFixed(2),
+            };
+            // REAL envelope (live-verified): ST returns the created invoice id
+            // as a BARE NUMBER under `response`.
+            return new Response(JSON.stringify({
+              success: true, endpoint: body.endpoint, method: body.method, response: createdId,
+            }), { status: 200 });
           }
 
           const ids = Number(decodeURIComponent(url).match(/ids=(\d+)/)?.[1]);
@@ -1472,5 +1582,145 @@ describe('st_create_adjustment_invoice', () => {
     await expect(
       runConfirm(sim.env, { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -9771 }] })
     ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('failure envelope') });
+  });
+
+  it('surfaces the proxy error body (not just the status number) on a non-2xx write failure', async () => {
+    const sim = makeAdjustEnv({
+      writeResponse: () => new Response(JSON.stringify({ error: 'ST API 400: AdjustmentToId invalid' }), { status: 400 }),
+    });
+    const err: any = await runConfirm(sim.env, {
+      parentInvoiceId: 222,
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -9771 }],
+    }).catch((e) => e);
+    expect(err.code).toBe('upstream_error');
+    expect(err.message).toContain('AdjustmentToId invalid');
+  });
+});
+
+// ── Production pipeline: zod-parse → handler (the seam no other test crosses) ──
+// schemas.test.ts parses standalone; the handler tests call handler() with raw
+// literals. Production runs parse THEN handler — these prove the parsed shape
+// drives the same wire bytes, including tombstone-key removal and the dryRun
+// default injection.
+describe('zod-parse → handler pipeline', () => {
+  it('st_add_invoice_line_item: parsed args produce the same wire payload the raw-args tests approve', async () => {
+    const { z } = await import('zod');
+    const schema = z.object(st_add_invoice_line_item.zodSchema as any);
+    const parsed: any = schema.parse({
+      invoiceId: 111,
+      lineItems: [{ skuName: 'HI1', description: 'HVAC Install', quantity: 1, unitPrice: 9771 }],
+    });
+    expect(parsed.dryRun).toBe(true); // default injected by the schema
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 } }] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'k', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '', VERIFY_BACKOFF_MS: [0, 0],
+    };
+    const dr: any = await st_add_invoice_line_item.handler(env, parsed, CTX);
+    expect(dr.payload.steps[0].payload).toEqual({ skuName: 'HI1', description: 'HVAC Install', quantity: 1, unitPrice: 9771 });
+  });
+
+  it('st_add_invoice_line_item: the price tombstone rejects AT THE PARSE LAYER with unitPrice guidance', async () => {
+    const { z } = await import('zod');
+    const schema = z.object(st_add_invoice_line_item.zodSchema as any);
+    const r: any = schema.safeParse({
+      invoiceId: 111,
+      lineItems: [{ skuName: 'HI1', description: 'x', quantity: 1, price: 9771 }],
+    });
+    expect(r.success).toBe(false);
+    expect(r.error.issues.map((i: any) => i.message).join(' ')).toMatch(/unitPrice/);
+  });
+
+  it('st_create_adjustment_invoice: parsed args produce the confirmed {adjustmentToId, items[]} wire body', async () => {
+    const { z } = await import('zod');
+    const schema = z.object(st_create_adjustment_invoice.zodSchema as any);
+    const parsed: any = schema.parse({
+      parentInvoiceId: 222,
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -9771 }],
+    });
+    expect(parsed.dryRun).toBe(true);
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.endsWith('/api/sql/read')) {
+            const sql = String(JSON.parse(init!.body as string).sql ?? '');
+            const results = /COUNT/i.test(sql) ? [{ n: 100 }] : [{ kind: 'service', code: 'HI1', name: 'HI1' }];
+            return new Response(JSON.stringify({ success: true, results }), { status: 200 });
+          }
+          return new Response(JSON.stringify({ data: [{ id: 222, syncStatus: 'Exported', adjustmentToId: null }] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'k', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '', VERIFY_BACKOFF_MS: [0, 0],
+    };
+    const dr: any = await st_create_adjustment_invoice.handler(env, parsed, CTX);
+    expect(dr.payload).toMatchObject({
+      adjustmentToId: 222,
+      items: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -9771 }],
+    });
+    expect(dr.payload).not.toHaveProperty('lineItems');
+  });
+});
+
+// ── wireContract tripwire (cross-deploy token replay) ──
+// hashArgs drops undefined values, so an arg-shape change across a deploy is
+// hash-invisible unless a constant contract marker is folded into the hashed
+// businessArgs — without it, a token minted by the OLD deployed code verifies
+// under the NEW code and executes a wire body the human never previewed.
+// Pinned behaviorally: spy on WriteGate.dryRun and assert the hashed
+// businessArgs actually carry the marker.
+describe('wireContract markers are folded into the hashed businessArgs', () => {
+  it('st_add_invoice_line_item and st_create_adjustment_invoice both pass a wireContract version to WriteGate', async () => {
+    const { WriteGate } = await import('../../write-gate');
+    const spy = vi.spyOn(WriteGate.prototype, 'dryRun');
+    try {
+      const addEnv: any = {
+        ST_PROXY: {
+          fetch: vi.fn(async (url: string) => {
+            if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+            return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 } }] }), { status: 200 });
+          }),
+        },
+        MCP_SYNC_KEY: 'k', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+        DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '', VERIFY_BACKOFF_MS: [0, 0],
+      };
+      await st_add_invoice_line_item.handler(addEnv, {
+        invoiceId: 111,
+        lineItems: [{ skuName: 'HI1', description: 'x', quantity: 1, unitPrice: 1 }],
+      }, CTX);
+
+      const adjEnv: any = {
+        ST_PROXY: {
+          fetch: vi.fn(async (url: string, init?: RequestInit) => {
+            if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+            if (url.endsWith('/api/sql/read')) {
+              const sql = String(JSON.parse(init!.body as string).sql ?? '');
+              const results = /COUNT/i.test(sql) ? [{ n: 100 }] : [{ kind: 'service', code: 'HI1', name: 'HI1' }];
+              return new Response(JSON.stringify({ success: true, results }), { status: 200 });
+            }
+            return new Response(JSON.stringify({ data: [{ id: 222, syncStatus: 'Exported', adjustmentToId: null }] }), { status: 200 });
+          }),
+        },
+        MCP_SYNC_KEY: 'k', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+        DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '', VERIFY_BACKOFF_MS: [0, 0],
+      };
+      await st_create_adjustment_invoice.handler(adjEnv, {
+        parentInvoiceId: 222,
+        lineItems: [{ skuName: 'HI1', description: 'x', quantity: 1, unitPrice: -1 }],
+      }, CTX);
+
+      const addArgs: any = spy.mock.calls.find((c) => c[0] === 'st_add_invoice_line_item')?.[1];
+      const adjArgs: any = spy.mock.calls.find((c) => c[0] === 'st_create_adjustment_invoice')?.[1];
+      expect(addArgs?.wireContract).toMatch(/^items-patch-unitprice-v2/);
+      expect(adjArgs?.wireContract).toMatch(/^adjustment-items-v2/);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
