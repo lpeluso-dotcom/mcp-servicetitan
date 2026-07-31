@@ -329,14 +329,23 @@ describe('st_add_invoice_line_item schema', () => {
     }).success).toBe(true);
   });
 
-  it('accepts the full confirmed field set', () => {
+  it('accepts the full confirmed field set (including unitPrice — the real monetary field)', () => {
     expect(s.safeParse({
       invoiceId: 111,
       lineItems: [{
         id: 55, skuId: 1, skuName: 'Diagnostic Fee', description: 'Diagnostic Fee',
-        quantity: 1, cost: 45, technicianId: 9,
+        quantity: 1, cost: 45, technicianId: 9, unitPrice: 89,
       }],
     }).success).toBe(true);
+  });
+
+  it('accepts a NEGATIVE unitPrice (offsetting lines are expressed as negative unitPrice)', () => {
+    const r: any = s.safeParse({
+      invoiceId: 111,
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -13674 }],
+    });
+    expect(r.success).toBe(true);
+    expect(r.data.lineItems[0].unitPrice).toBe(-13674);
   });
 
   it('rejects missing invoiceId', () => {
@@ -355,6 +364,9 @@ describe('st_add_invoice_line_item schema', () => {
     expect(s.safeParse({ invoiceId: 111, lineItems: [] }).success).toBe(false);
   });
 
+  // REGRESSION GUARD: `price` is silently dropped by ST on this endpoint —
+  // sending it produced $0.00 line items behind an HTTP 200. `unitPrice` is
+  // the real field. If someone reintroduces `price` to the schema, this fails.
   it('strips fields that do not exist on the confirmed ST model (price, type, generalLedgerAccountId, businessUnitId) instead of preserving them', () => {
     const r: any = s.safeParse({
       invoiceId: 111,
@@ -384,26 +396,79 @@ describe('st_add_invoice_line_item schema', () => {
 
 // ── st_create_adjustment_invoice ─────────────────────────────
 
+// Schema rewritten 2026-07-31 to the CONFIRMED POST /invoices body shape
+// (live-probed). items[] accepts ONLY skuName / description / quantity / cost /
+// unitPrice. skuId, price, type, generalLedgerAccountId and businessUnitId are
+// silently dropped by ST on this endpoint and are gone from the schema.
+
 describe('st_create_adjustment_invoice schema', () => {
   const s = schemaOf('st_create_adjustment_invoice');
 
-  it('accepts a minimal valid negative-offset line item', () => {
+  it('accepts a minimal valid negative-offset line item (skuName + quantity + unitPrice)', () => {
     expect(s.safeParse({
       parentInvoiceId: 222,
-      lineItems: [{ quantity: 1, price: -998484, type: 'Service' }],
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -998484 }],
     }).success).toBe(true);
   });
 
+  it('rejects a line item missing skuName — ST resolves adjustment lines by SKU NAME only (skuId is ignored here)', () => {
+    expect(s.safeParse({
+      parentInvoiceId: 222,
+      lineItems: [{ description: 'Offset', quantity: 1, unitPrice: -100 }],
+    }).success).toBe(false);
+  });
+
   it('rejects missing parentInvoiceId', () => {
-    expect(s.safeParse({ lineItems: [{ quantity: 1, price: -100 }] }).success).toBe(false);
+    expect(s.safeParse({ lineItems: [{ skuName: 'HI1', quantity: 1, unitPrice: -100 }] }).success).toBe(false);
   });
 
   it('rejects an empty lineItems array', () => {
     expect(s.safeParse({ parentInvoiceId: 222, lineItems: [] }).success).toBe(false);
   });
 
+  // REGRESSION GUARD: reintroducing `price` (or skuId/type/GL/BU) to this
+  // schema would silently resurrect the $0.00-adjustment bug.
+  it('strips fields ST silently ignores on this endpoint (skuId, price, type, generalLedgerAccountId, businessUnitId)', () => {
+    const r: any = s.safeParse({
+      parentInvoiceId: 222,
+      lineItems: [{
+        skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100,
+        skuId: 1, price: -999, type: 'Service', generalLedgerAccountId: 3, businessUnitId: 4,
+      }],
+    });
+    expect(r.success).toBe(true); // zod strips unknown keys rather than rejecting
+    expect(r.data.lineItems[0]).not.toHaveProperty('skuId');
+    expect(r.data.lineItems[0]).not.toHaveProperty('price');
+    expect(r.data.lineItems[0]).not.toHaveProperty('type');
+    expect(r.data.lineItems[0]).not.toHaveProperty('generalLedgerAccountId');
+    expect(r.data.lineItems[0]).not.toHaveProperty('businessUnitId');
+    expect(r.data.lineItems[0].unitPrice).toBe(-100);
+  });
+
+  it('no longer has top-level businessUnitId / invoiceDate args — ST ignores both, so they are stripped rather than honored', () => {
+    const r: any = s.safeParse({
+      parentInvoiceId: 222,
+      businessUnitId: 257,
+      invoiceDate: '2026-07-31',
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100 }],
+    });
+    expect(r.success).toBe(true);
+    expect(r.data).not.toHaveProperty('businessUnitId');
+    expect(r.data).not.toHaveProperty('invoiceDate');
+  });
+
+  it('keeps summary — it IS accepted at the top level by ST', () => {
+    const r: any = s.safeParse({
+      parentInvoiceId: 222,
+      summary: 'Offset HVAC install misbooked to project invoice',
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100 }],
+    });
+    expect(r.success).toBe(true);
+    expect(r.data.summary).toBe('Offset HVAC install misbooked to project invoice');
+  });
+
   it('defaults dryRun to true', () => {
-    const parsed = s.parse({ parentInvoiceId: 222, lineItems: [{ quantity: 1, price: -100 }] });
+    const parsed = s.parse({ parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', quantity: 1, unitPrice: -100 }] });
     expect(parsed.dryRun).toBe(true);
   });
 });

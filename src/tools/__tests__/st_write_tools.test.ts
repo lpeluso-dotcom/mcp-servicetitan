@@ -405,6 +405,99 @@ describe('st_add_invoice_line_item', () => {
     });
   });
 
+  // ── unitPrice is THE monetary field (live-probed 2026-07-31) ──
+  // ST's InvoiceItemUpdateRequest binds `unitPrice`, NOT `price`. Sending
+  // `price` was silently dropped and produced $0.00 line items behind an
+  // HTTP 200 (real damage: item 84402146 on invoice 83052705). These tests
+  // pin the exact wire field name on both the preview and the live payload.
+  it('unitPrice survives into the dryRun preview and the outbound /api/st/write payload', async () => {
+    const writeCalls: any[] = [];
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            writeCalls.push(JSON.parse(init!.body as string));
+            return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+          }
+          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 } }] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+
+    const args = {
+      invoiceId: 111,
+      lineItems: [{ skuName: 'HI1', description: 'HVAC Install', quantity: 1, unitPrice: 13674 }],
+    };
+    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    expect(dr.payload.steps[0].payload.unitPrice).toBe(13674);
+
+    const result: any = await st_add_invoice_line_item.handler(
+      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+    );
+    expect(result.dryRun).toBe(false);
+    expect(writeCalls[0].payload.unitPrice).toBe(13674);
+  });
+
+  it('preserves a NEGATIVE unitPrice (the offsetting-line case) — sign is not coerced or dropped', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
+    const result: any = await st_add_invoice_line_item.handler(
+      env as any,
+      { invoiceId: 111, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -13674 }] },
+      CTX
+    );
+    expect(result.payload.steps[0].payload.unitPrice).toBe(-13674);
+  });
+
+  // REGRESSION GUARD: `price` is silently ignored by ST on this endpoint. If
+  // someone reintroduces it (schema or payload builder), this fails.
+  it('never emits `price` on the outbound payload — ST silently drops it and the line lands at $0.00', async () => {
+    const writeCalls: any[] = [];
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            writeCalls.push(JSON.parse(init!.body as string));
+            return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+          }
+          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 } }] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+
+    // A caller (or a future regression) shoves `price` in alongside unitPrice.
+    const args: any = {
+      invoiceId: 111,
+      lineItems: [{ skuName: 'HI1', description: 'HVAC Install', quantity: 1, unitPrice: 100, price: 999 }],
+    };
+    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    expect(dr.payload.steps[0].payload).not.toHaveProperty('price');
+
+    await st_add_invoice_line_item.handler(
+      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+    );
+    expect(writeCalls[0].payload).not.toHaveProperty('price');
+    expect(writeCalls[0].payload.unitPrice).toBe(100);
+  });
+
+  // skuId IS valid on THIS endpoint (asymmetry vs. the adjustment endpoint,
+  // whose items[] silently drops it). Keep it on the wire here.
+  it('keeps skuId on the outbound payload — it is accepted by the items PATCH endpoint', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
+    const result: any = await st_add_invoice_line_item.handler(
+      env as any,
+      { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1, unitPrice: 89 }] },
+      CTX
+    );
+    expect(result.payload.steps[0].payload.skuId).toBe(501);
+    expect(result.payload.steps[0].payload.unitPrice).toBe(89);
+  });
+
   it('partial failure: 3 items, call 2 fails — error states 1 item already succeeded and is already written, and mentions DELETE for cleanup', async () => {
     let writeCallCount = 0;
     const lineItems = [
@@ -742,21 +835,21 @@ describe('st_create_adjustment_invoice', () => {
       DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '',
     };
     await expect(
-      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 999999, lineItems: [{ skuId: 1, quantity: 1, price: -200 }] }, CTX)
+      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 999999, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -200 }] }, CTX)
     ).rejects.toMatchObject({ code: 'not_found' });
   });
 
   it('rejects a parent invoice not in Posted or Exported status', async () => {
     const env = makeParentEnv({ id: 222, syncStatus: 'Pending', adjustmentToId: null });
     await expect(
-      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200 }] }, CTX)
+      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -200 }] }, CTX)
     ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('Posted') });
   });
 
   it('rejects a parent invoice that is itself an adjustment invoice', async () => {
     const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: 111 });
     await expect(
-      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200 }] }, CTX)
+      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -200 }] }, CTX)
     ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('adjustment') });
   });
 
@@ -764,7 +857,7 @@ describe('st_create_adjustment_invoice', () => {
     const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
     const result: any = await st_create_adjustment_invoice.handler(
       env as any,
-      { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -998484, type: 'Service' }] },
+      { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -998484 }] },
       CTX
     );
     expect(result.dryRun).toBe(true);
@@ -776,14 +869,14 @@ describe('st_create_adjustment_invoice', () => {
     const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
     const netted: any = await st_create_adjustment_invoice.handler(
       env as any,
-      { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -100 }], offsetAmount: 100 },
+      { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100 }], offsetAmount: 100 },
       CTX
     );
     expect(netted.warnings).toEqual([]);
 
     const unnetted: any = await st_create_adjustment_invoice.handler(
       env as any,
-      { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -50 }], offsetAmount: 100 },
+      { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -50 }], offsetAmount: 100 },
       CTX
     );
     expect(unnetted.warnings.some((w: string) => w.includes('does not net'))).toBe(true);
@@ -806,7 +899,7 @@ describe('st_create_adjustment_invoice', () => {
       DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
     };
 
-    const args = { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -998484, type: 'Service' as const }] };
+    const args = { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -998484 }] };
     const dr: any = await st_create_adjustment_invoice.handler(env, args, CTX);
     const result: any = await st_create_adjustment_invoice.handler(
       env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
@@ -818,11 +911,90 @@ describe('st_create_adjustment_invoice', () => {
     expect(writeCall!.url).toBe('https://servicetitan-proxy/api/st/write');
     expect(writeCall!.body.endpoint).toBe('/accounting/v2/tenant/000000000/invoices');
     expect(writeCall!.body.method).toBe('POST');
+    // CONFIRMED shape (live probe 2026-07-31): the line array is `items`, NOT
+    // `lineItems`. Sending `lineItems` was silently dropped and produced a
+    // ZERO-ITEM $0.00 adjustment invoice behind an HTTP 200 (real damage:
+    // adjustment invoice 84402274 against parent 83058736, undeletable via API).
     expect(writeCall!.body.payload).toMatchObject({
       adjustmentToId: 222,
-      lineItems: args.lineItems,
-      businessUnitId: 257,
+      items: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -998484 }],
     });
+    expect(writeCall!.body.payload).not.toHaveProperty('lineItems');
+    // Top-level businessUnitId / invoiceDate are silently ignored by ST — the
+    // tool must not send them and must not pretend they take effect.
+    expect(writeCall!.body.payload).not.toHaveProperty('businessUnitId');
+    expect(writeCall!.body.payload).not.toHaveProperty('invoiceDate');
+  });
+
+  // ── Wire-shape guards for the adjustment endpoint (endpoint B) ──
+  it('dryRun preview payload uses `items`, never `lineItems`', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    const dr: any = await st_create_adjustment_invoice.handler(
+      env as any,
+      { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -13674 }] },
+      CTX
+    );
+    expect(dr.payload).toHaveProperty('items');
+    expect(dr.payload).not.toHaveProperty('lineItems');
+    expect(dr.payload.items).toHaveLength(1);
+  });
+
+  it('preserves a NEGATIVE unitPrice on the adjustment line (the offsetting-line case)', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    const dr: any = await st_create_adjustment_invoice.handler(
+      env as any,
+      { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -13674 }] },
+      CTX
+    );
+    expect(dr.payload.items[0].unitPrice).toBe(-13674);
+  });
+
+  // REGRESSION GUARD: `price` on an adjustment item is silently ignored by ST.
+  it('never emits `price` on an adjustment item — ST drops it and the adjustment lands at $0.00', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    const dr: any = await st_create_adjustment_invoice.handler(
+      env as any,
+      { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100, price: -999 } as any] },
+      CTX
+    );
+    expect(dr.payload.items[0]).not.toHaveProperty('price');
+    expect(dr.payload.items[0].unitPrice).toBe(-100);
+  });
+
+  // ASYMMETRY: endpoint A (.../items PATCH) ACCEPTS skuId; endpoint B's items[]
+  // does NOT — ST resolves the adjustment line by skuName only.
+  it('requires skuName on every adjustment line item', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    await expect(
+      st_create_adjustment_invoice.handler(
+        env as any,
+        { parentInvoiceId: 222, lineItems: [{ description: 'Offset', quantity: 1, unitPrice: -100 } as any] },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('skuName') });
+  });
+
+  it('omits skuId from the outbound adjustment item — ST ignores it on this endpoint', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    const dr: any = await st_create_adjustment_invoice.handler(
+      env as any,
+      { parentInvoiceId: 222, lineItems: [{ skuId: 1, skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100 } as any] },
+      CTX
+    );
+    expect(dr.payload.items[0]).not.toHaveProperty('skuId');
+    expect(dr.payload.items[0].skuName).toBe('HI1');
+  });
+
+  it('emits exactly the ST-accepted adjustment item field set and nothing else', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    const dr: any = await st_create_adjustment_invoice.handler(
+      env as any,
+      { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 2, cost: 10, unitPrice: -100 }] },
+      CTX
+    );
+    expect(Object.keys(dr.payload.items[0]).sort()).toEqual(
+      ['cost', 'description', 'quantity', 'skuName', 'unitPrice']
+    );
   });
 
   // ── Fix 1: ids filter not honored guard ────────────────────
@@ -833,7 +1005,7 @@ describe('st_create_adjustment_invoice', () => {
     await expect(
       st_create_adjustment_invoice.handler(
         env as any,
-        { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200, type: 'Service' }] },
+        { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -200 }] },
         CTX
       )
     ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('ids filter not honored') });
@@ -866,7 +1038,7 @@ describe('st_create_adjustment_invoice', () => {
     };
 
     // dryRun call reads parent with syncStatus=Posted (parentStates[0]).
-    const args = { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200, type: 'Service' as const }] };
+    const args = { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -200 }] };
     const dr: any = await st_create_adjustment_invoice.handler(env, args, CTX);
     expect(dr.dryRun).toBe(true);
 
@@ -891,7 +1063,7 @@ describe('st_create_adjustment_invoice', () => {
     const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
     const result: any = await st_create_adjustment_invoice.handler(
       env as any,
-      { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200, type: 'Service' }] },
+      { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -200 }] },
       CTX
     );
     expect(result.dryRun).toBe(true);

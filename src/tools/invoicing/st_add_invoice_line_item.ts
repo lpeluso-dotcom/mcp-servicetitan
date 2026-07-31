@@ -11,24 +11,37 @@
 // NOT `{ items: [...] }` and NOT an array. ONE item per HTTP call. Adding N
 // line items means N sequential PATCH calls to the same endpoint.
 //
-// Confirmed real fields on InvoiceItemUpdateRequest (each bind-errors when
-// given a wrong-typed value during probing):
-//   id            nullable number  — see below re: append vs update
-//   skuId         nullable number
-//   skuName       string
-//   description   string, REQUIRED
-//   quantity      number, REQUIRED
-//   cost          number
-//   technicianId  nullable number
+// ┌──────────────────────────────────────────────────────────────────────┐
+// │ WIRE CONTRACT — PATCH /accounting/v2/tenant/{tid}/invoices/{id}/items │
+// │ ACCEPTED FIELDS (the ONLY ones ST binds):                            │
+// │   id, skuId, skuName, description (REQUIRED), quantity (REQUIRED),   │
+// │   cost, technicianId, unitPrice                                      │
+// │                                                                      │
+// │ DANGER: ASP.NET model binding SILENTLY DROPS any field not on that   │
+// │ list and still returns HTTP 200. A misspelled or renamed field does  │
+// │ not fail — it just doesn't happen. Do NOT add a field here without   │
+// │ live-probing it first, and do NOT spread caller input onto the wire; │
+// │ the outbound body is built from the explicit allow-list below.       │
+// └──────────────────────────────────────────────────────────────────────┘
+//
+// THE MONETARY FIELD IS `unitPrice`, NOT `price`. Live-probed 2026-07-31.
+// `price` is one of the silently-dropped fields: sending it produced a line
+// item at $0.00 behind an HTTP 200 that looked like success (real damage:
+// item 84402146 on invoice 83052705, since deleted). A prior rebuild of this
+// file concluded from an incomplete probe that sell price was simply not
+// settable here and removed the field entirely — that was wrong. `unitPrice`
+// sets it, and it ACCEPTS NEGATIVE VALUES (that is how an offsetting line is
+// expressed; cf. real invoice 84399973, unit price -13674.00 on sku HI1).
 //
 // Confirmed NOT to exist on this model (silently ignored by ASP.NET model
 // binding — no bind error even with an object/array value): price,
 // generalLedgerAccountId, businessUnitId, type, itemType, taxable, inventory,
 // isChargeable, order, serviceDate, installedEquipmentId, total, memberPrice,
-// invoiceId. In particular: `price` is NOT settable on an invoice item via
-// this endpoint. That is consistent with QSC's dynamic pricing (ServiceTitan
-// computes the sell price at invoice time) — any validation that assumed a
-// caller-supplied price was meaningful here was wrong and has been removed.
+// invoiceId.
+//
+// NOTE THE ASYMMETRY vs. st_create_adjustment_invoice: THIS endpoint accepts
+// `skuId`. The adjustment endpoint's items[] does NOT — it resolves lines by
+// `skuName` only. The two item shapes are deliberately not shared.
 //
 // JOB-LINK REASSIGNMENT VIA THE API IS CONFIRMED IMPOSSIBLE. The parent
 // invoice update endpoint, PATCH /accounting/v2/tenant/{tid}/invoices/{id},
@@ -74,6 +87,28 @@ export interface InvoiceLineItemInput {
   quantity: number;
   cost?: number;
   technicianId?: number;
+  unitPrice?: number;
+}
+
+// Explicit allow-list of the fields ST actually binds on InvoiceItemUpdateRequest.
+// The outbound body is BUILT from this list rather than spread from caller
+// input, so a renamed/misspelled/extra field can never ride onto the wire and
+// get silently dropped behind an HTTP 200. Adding a name here is a claim that
+// it was live-probed.
+// The `keyof` annotation is the cheap fail-loudly mechanism: renaming a field
+// on InvoiceLineItemInput without updating this list is a COMPILE error, not a
+// silent HTTP 200 that writes nothing.
+const ST_INVOICE_ITEM_FIELDS: readonly (keyof InvoiceLineItemInput)[] = [
+  'id', 'skuId', 'skuName', 'description', 'quantity', 'cost', 'technicianId', 'unitPrice',
+];
+
+function toStInvoiceItemPayload(item: InvoiceLineItemInput): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const field of ST_INVOICE_ITEM_FIELDS) {
+    const value = item[field];
+    if (value !== undefined) out[field] = value;
+  }
+  return out;
 }
 
 interface Args {
@@ -92,8 +127,15 @@ const lineItemSchema = z.object({
   skuName: z.string().optional().describe('SKU display name'),
   description: z.string().min(1).describe('Line item description (required by the ST update model)'),
   quantity: z.number().positive().describe('Line item quantity (required by the ST update model)'),
-  cost: z.number().optional().describe('Line item cost. Sell price is NOT settable here — QSC uses dynamic pricing and ST computes price at invoice time.'),
+  cost: z.number().optional().describe('Line item cost basis (not the sell price — see unitPrice)'),
   technicianId: z.number().int().positive().optional().describe('Technician ID to attribute this line item to'),
+  unitPrice: z.number().optional().describe(
+    'Sell price per unit — THE monetary field on this endpoint. ServiceTitan silently IGNORES a field named ' +
+    '`price` (it returns HTTP 200 and writes a $0.00 line), so unitPrice is the only way to set the amount. ' +
+    'NEGATIVE values are allowed and are how an offsetting/credit line is expressed. Omit it to let ST apply ' +
+    'dynamic pricing (QSC Pricebook Pro computes the price from rules/BU/membership at invoice time) — omitting ' +
+    'is NOT the same as sending 0.'
+  ),
 });
 
 interface RawInvoice {
@@ -155,8 +197,9 @@ export const st_add_invoice_line_item: ToolDef<Args> = {
     'line item (the confirmed ST update model takes a single flat item per call, not an array or {items:[...]}). All N ' +
     'calls are shown in the dryRun preview. Job-link reassignment is NOT possible via this or any ST API — the invoice ' +
     'update model only has summary/dueDate/reviewStatus — so this tool requires an invoice that is already linked to the ' +
-    'target job; there is no jobId argument. Price is NOT settable on a line item (QSC dynamic pricing — ST computes ' +
-    'sell price at invoice time); use `cost` for cost basis only. Exported invoices are NOT blocked (warn only) — no ' +
+    'target job; there is no jobId argument. Set the dollar amount with `unitPrice` — ServiceTitan silently ignores a ' +
+    'field named `price` and would write a $0.00 line behind an HTTP 200; negative unitPrice is allowed for offsetting ' +
+    'lines, and omitting unitPrice lets ST apply dynamic pricing. Exported invoices are NOT blocked (warn only) — no ' +
     'accounting sign-off exists yet for a hard block; review the dryRun warning before confirming. If item k of N fails ' +
     'mid-sequence, prior items are already written and NOT rolled back — see the error message for cleanup guidance.',
   isWrite: true,
@@ -193,14 +236,20 @@ export const st_add_invoice_line_item: ToolDef<Args> = {
 
     const itemsEndpoint = `/accounting/v2/tenant/000000000/invoices/${invoiceId}/items`;
 
+    // Build the outbound bodies ONCE, from the allow-list, and reuse the exact
+    // same objects for both the preview and the live calls — what's approved is
+    // literally what runs, and nothing outside the confirmed field set can leak
+    // onto the wire to be silently dropped by ST.
+    const itemPayloads = lineItems.map(toStInvoiceItemPayload);
+
     // dryRun preview lists ALL N calls as a compound payload, mirroring
     // assign_technicians — what's approved must match what runs.
     const compoundPayload = {
-      steps: lineItems.map((item, i) => ({
+      steps: itemPayloads.map((payload, i) => ({
         call: i + 1,
         endpoint: itemsEndpoint,
         method: 'PATCH',
-        payload: item,
+        payload,
       })),
     };
 
@@ -230,8 +279,8 @@ export const st_add_invoice_line_item: ToolDef<Args> = {
     // is no rollback.
     const resolvedEndpoint = rewriteTenantPlaceholders(env, itemsEndpoint);
     const results: unknown[] = [];
-    for (let i = 0; i < lineItems.length; i++) {
-      const resp = await stWrite(env, { actor, correlation }, resolvedEndpoint, 'PATCH', lineItems[i]);
+    for (let i = 0; i < itemPayloads.length; i++) {
+      const resp = await stWrite(env, { actor, correlation }, resolvedEndpoint, 'PATCH', itemPayloads[i]);
       if (!resp.ok) {
         const succeeded = i;
         throw new McpError(
