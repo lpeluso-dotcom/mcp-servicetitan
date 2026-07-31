@@ -107,6 +107,21 @@ function validateLineItems(lineItems: InvoiceLineItemInput[], correlation: strin
   if (!lineItems || lineItems.length === 0) {
     throw new McpError('validation_error', 'st_add_invoice_line_item requires at least one line item', { correlation });
   }
+  // CONFIRMED by live probe 2026-07-31 (invoice 82555119): omitting `id` routes
+  // to ST's UpdateInvoiceItemHandler.CreateInvoiceItemAsync — the append path —
+  // which requires a SKU to resolve the item. Without skuId/skuName ST returns
+  // HTTP 500 "Sku (Name:) is not found." Reject locally rather than let a 500
+  // through; an item WITH `id` is an update and needs no sku.
+  for (const [i, item] of lineItems.entries()) {
+    const isAppend = item.id === undefined;
+    if (isAppend && item.skuId === undefined && item.skuName === undefined) {
+      throw new McpError(
+        'validation_error',
+        `lineItems[${i}]: appending a new invoice item (no \`id\`) requires skuId or skuName — ST resolves the item by SKU and returns 500 "Sku (Name:) is not found." otherwise. Pass \`id\` instead to update an existing item.`,
+        { correlation }
+      );
+    }
+  }
 }
 
 // Sends a single ST write call via the servicetitan-proxy /api/st/write path

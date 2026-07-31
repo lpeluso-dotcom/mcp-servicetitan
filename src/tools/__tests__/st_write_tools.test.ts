@@ -280,6 +280,31 @@ describe('st_add_invoice_line_item', () => {
     ).rejects.toMatchObject({ code: 'validation_error' });
   });
 
+  // Live-probed 2026-07-31 against invoice 82555119: omitting `id` routes to
+  // ST's UpdateInvoiceItemHandler.CreateInvoiceItemAsync (append path), which
+  // fails with 500 "Sku (Name:) is not found." when neither skuId nor skuName
+  // is supplied. Reject that combination locally instead of shipping a 500.
+  it('throws validation_error when appending (no id) without skuId or skuName', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
+    await expect(
+      st_add_invoice_line_item.handler(
+        env as any,
+        { invoiceId: 111, lineItems: [{ description: 'no sku', quantity: 1 }] },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('skuId') });
+  });
+
+  it('allows an update (id present) without skuId or skuName', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
+    const result: any = await st_add_invoice_line_item.handler(
+      env as any,
+      { invoiceId: 111, lineItems: [{ id: 999, description: 'update existing', quantity: 2 }] },
+      CTX
+    );
+    expect(result.dryRun).toBe(true);
+  });
+
   it('throws not_found when the invoice does not exist', async () => {
     const env = {
       ST_PROXY: { fetch: vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) },
@@ -289,7 +314,7 @@ describe('st_add_invoice_line_item', () => {
     await expect(
       st_add_invoice_line_item.handler(
         env as any,
-        { invoiceId: 999999, lineItems: [{ description: 'Diagnostic', quantity: 1 }] },
+        { invoiceId: 999999, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] },
         CTX
       )
     ).rejects.toMatchObject({ code: 'not_found' });
@@ -299,7 +324,7 @@ describe('st_add_invoice_line_item', () => {
     const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
     const result: any = await st_add_invoice_line_item.handler(
       env as any,
-      { invoiceId: 111, lineItems: [{ description: 'Diagnostic', quantity: 1 }] },
+      { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] },
       CTX
     );
     expect(result.dryRun).toBe(true);
@@ -312,7 +337,7 @@ describe('st_add_invoice_line_item', () => {
     const env = makeReadEnv({ id: 111, syncStatus: 'Exported', customer: { id: 5 } });
     const result: any = await st_add_invoice_line_item.handler(
       env as any,
-      { invoiceId: 111, lineItems: [{ description: 'Diagnostic', quantity: 1 }] },
+      { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] },
       CTX
     );
     expect(result.dryRun).toBe(true);
@@ -322,9 +347,9 @@ describe('st_add_invoice_line_item', () => {
   it('dryRun preview lists N steps for N line items, each with the items endpoint and a flat single-item payload', async () => {
     const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
     const lineItems = [
-      { description: 'Item A', quantity: 1 },
-      { description: 'Item B', quantity: 2, cost: 10 },
-      { description: 'Item C', quantity: 3, technicianId: 9 },
+      { skuId: 501, description: 'Item A', quantity: 1 },
+      { skuId: 502, description: 'Item B', quantity: 2, cost: 10 },
+      { skuId: 503, description: 'Item C', quantity: 3, technicianId: 9 },
     ];
     const result: any = await st_add_invoice_line_item.handler(env as any, { invoiceId: 111, lineItems }, CTX);
 
@@ -342,9 +367,9 @@ describe('st_add_invoice_line_item', () => {
   it('live path issues exactly N /api/st/write calls, one flat body per line item (not wrapped in items[]/array)', async () => {
     const writeCalls: { url: string; body: any }[] = [];
     const lineItems = [
-      { description: 'Item A', quantity: 1 },
-      { description: 'Item B', quantity: 2, cost: 10 },
-      { description: 'Item C', quantity: 3, technicianId: 9 },
+      { skuId: 501, description: 'Item A', quantity: 1 },
+      { skuId: 502, description: 'Item B', quantity: 2, cost: 10 },
+      { skuId: 503, description: 'Item C', quantity: 3, technicianId: 9 },
     ];
     const env: any = {
       ST_PROXY: {
@@ -383,9 +408,9 @@ describe('st_add_invoice_line_item', () => {
   it('partial failure: 3 items, call 2 fails — error states 1 item already succeeded and is already written, and mentions DELETE for cleanup', async () => {
     let writeCallCount = 0;
     const lineItems = [
-      { description: 'Item A', quantity: 1 },
-      { description: 'Item B', quantity: 2 },
-      { description: 'Item C', quantity: 3 },
+      { skuId: 501, description: 'Item A', quantity: 1 },
+      { skuId: 502, description: 'Item B', quantity: 2 },
+      { skuId: 503, description: 'Item C', quantity: 3 },
     ];
     const env: any = {
       ST_PROXY: {
@@ -418,8 +443,8 @@ describe('st_add_invoice_line_item', () => {
   it('partial-failure error message names the DELETE endpoint for manual cleanup of the already-written item', async () => {
     let writeCallCount = 0;
     const lineItems = [
-      { description: 'Item A', quantity: 1 },
-      { description: 'Item B', quantity: 2 },
+      { skuId: 501, description: 'Item A', quantity: 1 },
+      { skuId: 502, description: 'Item B', quantity: 2 },
     ];
     const env: any = {
       ST_PROXY: {
@@ -464,7 +489,7 @@ describe('st_add_invoice_line_item', () => {
       DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
     };
 
-    const args = { invoiceId: 111, lineItems: [{ description: 'Diagnostic', quantity: 1 }] };
+    const args = { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] };
     const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
     expect(dr.warnings.some((w: string) => w.includes('Exported'))).toBe(true);
 
@@ -483,7 +508,7 @@ describe('st_add_invoice_line_item', () => {
     await expect(
       st_add_invoice_line_item.handler(
         env as any,
-        { invoiceId: 111, lineItems: [{ description: 'Diagnostic', quantity: 1 }] },
+        { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] },
         CTX
       )
     ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('ids filter not honored') });
@@ -513,7 +538,7 @@ describe('st_add_invoice_line_item', () => {
       SIRO_API_TOKEN: '',
     };
 
-    const args = { invoiceId: 111, lineItems: [{ description: 'Diagnostic', quantity: 1 }] };
+    const args = { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] };
     const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
     expect(dr.dryRun).toBe(true);
 
