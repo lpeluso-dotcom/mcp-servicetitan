@@ -251,7 +251,8 @@ describe('st_add_invoice_line_item', () => {
       ST_PROXY: {
         fetch: vi.fn(async (url: string) => {
           if (fetchImpl) return fetchImpl(url);
-          if (url.includes('/jobs/')) {
+          // Check for job endpoint (both unencoded and URL-encoded paths)
+          if (url.includes('/jobs/') || url.includes('%2Fjobs%2F')) {
             return new Response(JSON.stringify(jobBody), { status: 200 });
           }
           if (url.includes('dryRun=1')) {
@@ -286,6 +287,75 @@ describe('st_add_invoice_line_item', () => {
         CTX
       )
     ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('cost') });
+  });
+
+  it('dryRun=true returns DryRunResult with token and no warnings for a non-exported invoice with no job link', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 }, job: null });
+    const result: any = await st_add_invoice_line_item.handler(
+      env as any,
+      { invoiceId: 111, lineItems: [{ skuId: 1, quantity: 1, price: 200, type: 'Service' }] },
+      CTX
+    );
+    expect(result.dryRun).toBe(true);
+    expect(result.tool).toBe('st_add_invoice_line_item');
+    expect(result.confirmation_token).toBeTypeOf('string');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('dryRun=true includes an export warning for syncStatus=Exported (warn-only, not blocked)', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Exported', customer: { id: 5 }, job: null });
+    const result: any = await st_add_invoice_line_item.handler(
+      env as any,
+      { invoiceId: 111, lineItems: [{ skuId: 1, quantity: 1, price: 200, type: 'Service' }] },
+      CTX
+    );
+    expect(result.dryRun).toBe(true);
+    expect(result.warnings.some((w: string) => w.includes('Exported'))).toBe(true);
+  });
+
+  it('rejects a jobId belonging to a different customer than the invoice', async () => {
+    const env = makeReadEnv(
+      { id: 111, syncStatus: 'Pending', customer: { id: 5 }, job: null },
+      { id: 999, customerId: 999 },
+    );
+    await expect(
+      st_add_invoice_line_item.handler(
+        env as any,
+        { invoiceId: 111, jobId: 999, lineItems: [{ skuId: 1, quantity: 1, price: 200, type: 'Service' }] },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('cross-customer') });
+  });
+
+  it('throws not_found when the invoice does not exist', async () => {
+    const env = {
+      ST_PROXY: { fetch: vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+    await expect(
+      st_add_invoice_line_item.handler(
+        env as any,
+        { invoiceId: 999999, lineItems: [{ skuId: 1, quantity: 1, price: 200 }] },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('durableWrite submits operation invoice.add_line_item with correct target and payload', async () => {
+    const output = { status: 'ok' };
+    const env = makeEnv(happyFetch(output));
+    const result = await durableWrite(env, {
+      actor: CTX.actor, operation: 'invoice.add_line_item',
+      target: { id: '111', type: 'invoice' },
+      payload: { lineItems: [{ skuId: 1, quantity: 1, price: 200 }] },
+      correlation: CORRELATION,
+    });
+    expect(result).toEqual(output);
+    const [, init] = env.ST_PROXY.fetch.mock.calls[0];
+    const body = JSON.parse(init.body);
+    expect(body.operation).toBe('invoice.add_line_item');
+    expect(body.target).toEqual({ id: '111', type: 'invoice' });
   });
 });
 
