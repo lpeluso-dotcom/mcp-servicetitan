@@ -145,7 +145,30 @@ fifth correction that should be central.
   show `/task-management/` in some places, which 404s. The path-builder
   rewrites the hyphenated form so callers can use either.
 
+### Warehouse / gold-grain revenue
+
+- **A job with `$0` revenue is usually correct — do NOT file it as a
+  pipeline defect.** This has now been raised twice against
+  `gold_margin_by_bu` and closed twice. Roughly half of completed jobs in a
+  month legitimately carry `$0`, for three independent reasons:
+  1. **Sales / lead business units book one job per lead.** An unsold lead
+     is genuinely `$0`. Whole BUs can therefore read `$0` revenue and still
+     be perfectly healthy — check whether the BU is a *Sales* unit before
+     concluding anything.
+  2. **Test jobs** (obvious once you look at the booking contact).
+  3. **Manual bypass invoice batches.** Revenue invoiced through a bypass
+     batch never touches the ST *job-invoice* grain, so it can never appear
+     in a job-grain fact table no matter how correct the pipeline is. This
+     is the one that looks most like a bug and is not.
+- Before reporting missing revenue, **pull the linked ST invoice**. If the
+  invoice itself reads `total: "0.00"`, the warehouse is mirroring ST
+  faithfully and there is nothing to fix at the pipeline layer.
+- Both `gold_margin_by_bu` caveats travel with the payload
+  (`_margin_basis`, `_revenue_basis`), not just in the tool description —
+  the caller holding the numbers is exactly who is about to quote them.
+  (2026-07-28)
+
 ---
 
-*Last updated: 2026-04-28 — v1.2 ST API expansion (capacity-slots,
+*Last updated: 2026-07-28 — gold-grain revenue semantics; v1.2 ST API expansion (capacity-slots,
 run-report, marketing-attribution).*

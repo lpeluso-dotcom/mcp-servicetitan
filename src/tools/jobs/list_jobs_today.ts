@@ -9,6 +9,17 @@ import { defaultShaper } from '../../response-shape';
 const TENANT_ID = '000000000';
 const TZ = 'America/New_York';
 
+/**
+ * Cap on a simple-IDs lookup (`?ids=a,b,c`). Over the cap ST returns HTTP 400
+ * `{"errors":{"Ids":["Simple IDs lookup should n…"]}}` (ST truncates there).
+ *
+ * Verified live 2026-07-27/28 against tenant 431848990: a 200-id chunk 400s,
+ * a 50-id chunk succeeds. The exact ceiling is somewhere in (50, 200); 50 is
+ * the documented-safe batch size, so this stays at 50 rather than probing for
+ * the true edge.
+ */
+const ST_IDS_BATCH_MAX = 50;
+
 interface Args {
   status?: string;
   businessUnitId?: number;
@@ -139,11 +150,13 @@ export const list_jobs_today: ToolDef<Args> = {
         return { jobs: [] as Array<Record<string, unknown>>, date: today, _source: 'live' as const };
       }
 
-      // Step 2: batch-fetch parent jobs by id, chunked <=200 ids per call
+      // Step 2: batch-fetch parent jobs by id, chunked <=50 ids per call
       // (the ids-batch jobs call cannot paginate, so chunk instead of truncating).
+      // 50 is ST's hard cap on a simple-IDs lookup — over it the call 400s with
+      // "Simple IDs lookup should not exceed 50 ids".
       const jobs: Array<Record<string, unknown>> = [];
-      for (let i = 0; i < jobIds.length; i += 200) {
-        const chunk = jobIds.slice(i, i + 200);
+      for (let i = 0; i < jobIds.length; i += ST_IDS_BATCH_MAX) {
+        const chunk = jobIds.slice(i, i + ST_IDS_BATCH_MAX);
         const resp = await readST<{ data?: Array<Record<string, unknown>> }>(
           env,
           { actor, correlation },

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-  EMBED_MODEL_ID, embedInputFor, embedQuery, sbRpc, sbSelect, sbWriteEmbedding, shapePriceRow,
+  EMBED_MODEL_ID, embedInputFor, embedQuery, sbCount, sbRpc, sbSelect, sbWriteEmbedding, shapePriceRow,
 } from './supabase';
 
 type FetchMock = (url: string | URL, init: RequestInit & { headers: Record<string, string>; body?: string }) => Promise<Response>;
@@ -109,6 +109,38 @@ describe('supabase helpers', () => {
     const env = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_PB_KEY: 'k' } as any;
     await sbSelect(env, 'pricebook_items?select=code');
     expect(seen['accept-profile']).toBeUndefined();
+  });
+
+  it('sbCount asks PostgREST for an exact count and reads it out of content-range', async () => {
+    const seen: Record<string, string> = {};
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      for (const [k, v] of Object.entries(init.headers as Record<string, string>)) seen[k.toLowerCase()] = v;
+      return new Response('[]', { status: 206, headers: { 'content-range': '0-0/349036' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const n = await sbCount(env(), 'entity_chunks?select=chunk_id', 'vec');
+
+    expect(n).toBe(349036);
+    expect(seen['prefer']).toContain('count=exact');
+    expect(seen['accept-profile']).toBe('vec');
+    // Ask for no rows back — only the count header matters, so never ship 349k rows.
+    expect(fetchMock.mock.calls[0][0]).toContain('limit=1');
+  });
+
+  it('sbCount reads a zero count from the `*/0` form PostgREST returns for an empty set', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('[]', { status: 200, headers: { 'content-range': '*/0' } })));
+    await expect(sbCount(env(), 'entity_chunks?select=chunk_id&entity_key=eq.job', 'vec')).resolves.toBe(0);
+  });
+
+  it('sbCount throws when the count is missing or only a planner estimate placeholder', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('[]', { status: 200, headers: { 'content-range': '0-0/*' } })));
+    await expect(sbCount(env(), 'entity_chunks?select=chunk_id', 'vec')).rejects.toThrow(/exact count/i);
+  });
+
+  it('sbCount throws on non-2xx', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 500 })));
+    await expect(sbCount(env(), 'entity_chunks?select=chunk_id', 'vec')).rejects.toThrow(/supabase count/i);
   });
 
   it('sbWriteEmbedding PATCHes by (code,item_type) with a bracketed vector literal', async () => {

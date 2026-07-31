@@ -37,6 +37,11 @@ export const gold_margin_by_bu: ToolDef<Args> = {
     'dynamically-priced pricebook items, because ServiceTitan does not return a cost for them via API — ' +
     'QSC prices dynamically by default, so cost_$ reads 0 for whole business units. Treat GP% as a ' +
     'relative signal between BUs over the same window, never as a reportable margin. ' +
+    'ALSO IMPORTANT — a BU showing $0 revenue is usually CORRECT, not missing data. Roughly half of ' +
+    'completed jobs in a month legitimately carry $0 for three reasons: (1) sales/lead BUs book a job ' +
+    'per lead, and an unsold lead is genuinely $0; (2) test jobs; (3) revenue invoiced through manual ' +
+    'bypass batches, which never touches the ST job-invoice grain and therefore can never appear here. ' +
+    'Confirm against the linked ST invoice before reporting a gap in the pipeline. ' +
     'For one job with real labor burden, use job_cost_actuals. Source: Supabase gold.margin_by_bu RPC.',
   stEndpoint: { method: 'GET', path: 'supabase://gold/margin_by_bu', source: 'computed' },
   zodSchema: {
@@ -69,6 +74,14 @@ export const gold_margin_by_bu: ToolDef<Args> = {
         'NOT a true margin — two costs are missing, not zero: labor burden (no gold timesheet grain) ' +
         'and item cost for dynamically-priced pricebook items (ServiceTitan returns no cost for them, ' +
         'and QSC prices dynamically by default). Relative signal between BUs only.',
+      // Also travels WITH the rows: a $0 BU is the single most re-filed false
+      // positive against this tool. gold mirrors ST faithfully — when a job
+      // reads $0 here, the linked ST invoice reads 0.00 too.
+      _revenue_basis:
+        '$0 revenue is usually CORRECT, not missing data. Sales/lead BUs book a job per lead and an ' +
+        'unsold lead is genuinely $0; test jobs are $0; and revenue invoiced via manual bypass batches ' +
+        'never touches the ST job-invoice grain, so it can never appear at this grain. Verify against ' +
+        'the linked ST invoice before reporting a pipeline gap.',
     };
   },
   transformResult: defaultShaper,

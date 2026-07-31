@@ -17,7 +17,9 @@ describe('semantic_search_gold (Supabase vec.match_entities)', () => {
       {
         entity_key: 'job', source_key: '56047989',
         content_text: 'No Heat · HVAC Install Residential · Completed',
-        grain: 'job', trade_bu: 'HVAC Install Residential', similarity: 0.71,
+        // Above the 0.75 relevance floor — a 0.71 row is now correctly withheld
+        // as nearest-available noise (see semantic_search_gold_postretrieval).
+        grain: 'job', trade_bu: 'HVAC Install Residential', similarity: 0.86,
       },
     ]), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock as any);
@@ -44,13 +46,17 @@ describe('semantic_search_gold (Supabase vec.match_entities)', () => {
     expect(body.p_entity_key).toBeNull();
     expect(body.p_grain).toBeNull();
     expect(body.p_trade).toBeNull();
-    expect(body.p_k).toBe(10);
+    // p_k is the OVER-FETCH, not the caller's k: rows are deduped on
+    // content_text afterwards (one string recurs up to 71x in this index), so
+    // the RPC must return far more than k for k results to survive.
+    expect(body.p_k).toBe(250);
 
     expect(out.matches).toHaveLength(1);
     expect(out.matches[0]).toEqual({
       entity_key: 'job', source_key: '56047989',
       content_text: 'No Heat · HVAC Install Residential · Completed',
-      grain: 'job', trade_bu: 'HVAC Install Residential', similarity: 0.71,
+      grain: 'job', trade_bu: 'HVAC Install Residential', similarity: 0.86,
+      occurrence_count: 1, source_keys: ['56047989'],
     });
     expect(out.query).toBe('tankless water heater install');
     expect(out._source).toBe('supabase-vec-gold');
@@ -71,7 +77,8 @@ describe('semantic_search_gold (Supabase vec.match_entities)', () => {
     expect(body.p_entity_key).toBe('pricebook');
     expect(body.p_trade).toBe('Plumbing Service Residential');
     expect(body.p_grain).toBeNull();
-    expect(body.p_k).toBe(5);
+    // k=5 over-fetched to 5*25 = 125 before dedup.
+    expect(body.p_k).toBe(125);
   });
 
   it('caps k at 20 (defense-in-depth; Zod already rejects >20 at the MCP layer)', async () => {
@@ -79,7 +86,8 @@ describe('semantic_search_gold (Supabase vec.match_entities)', () => {
     const fetchMock = vi.fn(async () => new Response('[]', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock as any);
     await semantic_search_gold.handler(env(aiRun), { query: 'x', k: 999 }, ctx);
-    expect(JSON.parse(((fetchMock.mock.calls as any[])[0][1] as any).body).p_k).toBe(20);
+    // k clamps to 20, then over-fetches 20*25 = 500 (the MAX_OVERFETCH ceiling).
+    expect(JSON.parse(((fetchMock.mock.calls as any[])[0][1] as any).body).p_k).toBe(500);
   });
 
   it('defaults k to 10 when omitted', async () => {
@@ -87,7 +95,8 @@ describe('semantic_search_gold (Supabase vec.match_entities)', () => {
     const fetchMock = vi.fn(async () => new Response('[]', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock as any);
     await semantic_search_gold.handler(env(aiRun), { query: 'x' }, ctx);
-    expect(JSON.parse(((fetchMock.mock.calls as any[])[0][1] as any).body).p_k).toBe(10);
+    // Default k=10 over-fetched to 250.
+    expect(JSON.parse(((fetchMock.mock.calls as any[])[0][1] as any).body).p_k).toBe(250);
   });
 
   it('throws — no silent lexical fallback — when embedding fails; match_entities is pure-vector, unlike search_pricebook_hybrid', async () => {

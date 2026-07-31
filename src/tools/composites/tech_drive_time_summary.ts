@@ -72,7 +72,9 @@ export const tech_drive_time_summary: ToolDef<Args> = {
 
     const { rows: techRows } = await readD1<TechRow>(
       env,
-      `SELECT technician_id, name, business_unit FROM technicians WHERE technician_id = ? LIMIT 1`,
+      // `technicians` is keyed on tech_id — alias it back to technician_id so
+      // TechRow and the returned `technician` object keep their shape.
+      `SELECT tech_id AS technician_id, name, business_unit FROM technicians WHERE tech_id = ? LIMIT 1`,
       [args.technicianId],
     );
     const technician = techRows[0] ?? null;
