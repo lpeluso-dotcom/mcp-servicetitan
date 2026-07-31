@@ -17,8 +17,8 @@ function schemaOf(name: string) {
 // ── Registry sanity ──────────────────────────────────────────
 
 describe('tool registry', () => {
-  it('exports 107 tools (QUA-739 pricebook margin-discipline composites + Supabase-backed pricebook search tools; find_technician_by_name — name-based technician lookup wrapping name-resolver; semantic_search_gold — TAI-STV2 Woz gold vector search; gold_margin_by_bu + tech_scorecard — TAI-STV2 guided-surface backing tools)', () => {
-    expect(TOOLS.length).toBe(107);
+  it('exports 109 tools (adds st_add_invoice_line_item + st_create_adjustment_invoice — invoice-write tools for the project-invoice/job-invoice misattribution fix)', () => {
+    expect(TOOLS.length).toBe(109);
   });
 
   it('every tool has name + description + zodSchema', () => {
@@ -49,7 +49,9 @@ describe('tool registry', () => {
       'reschedule_appointment',
       'save_tech_debrief',
       'sell_estimate',
+      'st_add_invoice_line_item',
       'st_call',
+      'st_create_adjustment_invoice',
       'st_create_material',
       'st_create_service',
       'st_patch_material',
@@ -66,8 +68,8 @@ describe('tool registry', () => {
   });
 
   it('toolsForRole("default") excludes st_call; admin includes it', () => {
-    expect(toolsForRole('default').length).toBe(106);
-    expect(toolsForRole('admin').length).toBe(107);
+    expect(toolsForRole('default').length).toBe(108);
+    expect(toolsForRole('admin').length).toBe(109);
     expect(toolsForRole('default').find((t) => t.name === 'st_call')).toBeUndefined();
     expect(toolsForRole('admin').find((t) => t.name === 'st_call')).toBeDefined();
   });
@@ -308,5 +310,57 @@ describe('siro_get_engagement schema', () => {
 
   it('accepts a non-empty string', () => {
     expect(s.safeParse({ engagementId: 'eng-xyz' }).success).toBe(true);
+  });
+});
+
+// ── st_add_invoice_line_item ─────────────────────────────────
+
+describe('st_add_invoice_line_item schema', () => {
+  const s = schemaOf('st_add_invoice_line_item');
+
+  it('accepts a minimal valid Service line item', () => {
+    expect(s.safeParse({
+      invoiceId: 111,
+      lineItems: [{ quantity: 1, price: 200, type: 'Service' }],
+    }).success).toBe(true);
+  });
+
+  it('rejects missing invoiceId', () => {
+    expect(s.safeParse({ lineItems: [{ quantity: 1 }] }).success).toBe(false);
+  });
+
+  it('rejects an empty lineItems array', () => {
+    expect(s.safeParse({ invoiceId: 111, lineItems: [] }).success).toBe(false);
+  });
+
+  it('defaults dryRun to true', () => {
+    const parsed = s.parse({ invoiceId: 111, lineItems: [{ quantity: 1 }] });
+    expect(parsed.dryRun).toBe(true);
+  });
+});
+
+// ── st_create_adjustment_invoice ─────────────────────────────
+
+describe('st_create_adjustment_invoice schema', () => {
+  const s = schemaOf('st_create_adjustment_invoice');
+
+  it('accepts a minimal valid negative-offset line item', () => {
+    expect(s.safeParse({
+      parentInvoiceId: 222,
+      lineItems: [{ quantity: 1, price: -998484, type: 'Service' }],
+    }).success).toBe(true);
+  });
+
+  it('rejects missing parentInvoiceId', () => {
+    expect(s.safeParse({ lineItems: [{ quantity: 1, price: -100 }] }).success).toBe(false);
+  });
+
+  it('rejects an empty lineItems array', () => {
+    expect(s.safeParse({ parentInvoiceId: 222, lineItems: [] }).success).toBe(false);
+  });
+
+  it('defaults dryRun to true', () => {
+    const parsed = s.parse({ parentInvoiceId: 222, lineItems: [{ quantity: 1, price: -100 }] });
+    expect(parsed.dryRun).toBe(true);
   });
 });

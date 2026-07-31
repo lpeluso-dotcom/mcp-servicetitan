@@ -98,6 +98,8 @@ import { get_invoice } from './invoicing/get_invoice';
 import { list_invoices_job } from './invoicing/list_invoices_job';
 import { get_invoice_balance } from './invoicing/get_invoice_balance';
 import { list_unpaid_invoices } from './invoicing/list_unpaid_invoices';
+import { st_add_invoice_line_item } from './invoicing/st_add_invoice_line_item';
+import { st_create_adjustment_invoice } from './invoicing/st_create_adjustment_invoice';
 // T5 — Jobs & Appointments
 import { get_job } from './jobs/get_job';
 import { list_jobs_today } from './jobs/list_jobs_today';
@@ -220,6 +222,7 @@ export const TOOLS: readonly ToolDef<any>[] = [
   search_pricebook_all, search_pricebook_semantic, search_pricebook_templates, get_proposal_tiers, find_packages_with_item, get_service_breakout,
   // T6 Invoicing
   get_invoice, list_invoices_job, get_invoice_balance, list_unpaid_invoices,
+  st_add_invoice_line_item, st_create_adjustment_invoice,
   // T7 Estimates
   list_estimates_job, get_estimate, dismiss_estimate, sell_estimate, unsell_estimate,
   // Phase 4 Estimate templates
