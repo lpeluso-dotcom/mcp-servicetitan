@@ -241,6 +241,54 @@ describe('st_create_material', () => {
   });
 });
 
+// ── st_add_invoice_line_item ─────────────────────────────────
+
+import { st_add_invoice_line_item } from '../invoicing/st_add_invoice_line_item';
+
+describe('st_add_invoice_line_item', () => {
+  function makeReadEnv(invoiceBody: unknown, jobBody: unknown = null, fetchImpl?: (url: string) => Promise<Response>) {
+    return {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string) => {
+          if (fetchImpl) return fetchImpl(url);
+          if (url.includes('/jobs/')) {
+            return new Response(JSON.stringify(jobBody), { status: 200 });
+          }
+          if (url.includes('dryRun=1')) {
+            return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          }
+          // invoices read endpoint returns a list envelope { data: [...] }
+          return new Response(JSON.stringify({ data: [invoiceBody] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key',
+      MCP_SERVICE_VERSION: '0.0.0-test',
+      ST_TENANT_ID: '000000000',
+      DB: makeDB(),
+      PROXY_STATE: {},
+      SIRO_API_TOKEN: '',
+    };
+  }
+
+  it('throws validation_error when lineItems is empty', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
+    await expect(
+      st_add_invoice_line_item.handler(env as any, { invoiceId: 111, lineItems: [] }, CTX)
+    ).rejects.toMatchObject({ code: 'validation_error' });
+  });
+
+  it('throws validation_error when an Equipment line item is missing cost', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
+    await expect(
+      st_add_invoice_line_item.handler(
+        env as any,
+        { invoiceId: 111, lineItems: [{ skuId: 1, quantity: 1, price: 500, type: 'Equipment' }] },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('cost') });
+  });
+});
+
 // ── Pricebook payload transform (Bugs 2 + 3) ─────────────────
 // ST silently drops `name` and `categoryId` on POST/PATCH. The 4 pricebook
 // tools rewrite them to `displayName` and `categories: [N]` before submit,
