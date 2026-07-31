@@ -314,27 +314,70 @@ describe('siro_get_engagement schema', () => {
 });
 
 // ── st_add_invoice_line_item ─────────────────────────────────
+// Schema rewritten 2026-07-31 to the CONFIRMED InvoiceItemUpdateRequest
+// field set (live-probed). description + quantity are required; price,
+// generalLedgerAccountId, businessUnitId, and type no longer exist on the
+// real ST model and are gone from this schema too.
 
 describe('st_add_invoice_line_item schema', () => {
   const s = schemaOf('st_add_invoice_line_item');
 
-  it('accepts a minimal valid Service line item', () => {
+  it('accepts a minimal valid line item (description + quantity only)', () => {
     expect(s.safeParse({
       invoiceId: 111,
-      lineItems: [{ quantity: 1, price: 200, type: 'Service' }],
+      lineItems: [{ description: 'Service call diagnostic', quantity: 1 }],
+    }).success).toBe(true);
+  });
+
+  it('accepts the full confirmed field set', () => {
+    expect(s.safeParse({
+      invoiceId: 111,
+      lineItems: [{
+        id: 55, skuId: 1, skuName: 'Diagnostic Fee', description: 'Diagnostic Fee',
+        quantity: 1, cost: 45, technicianId: 9,
+      }],
     }).success).toBe(true);
   });
 
   it('rejects missing invoiceId', () => {
-    expect(s.safeParse({ lineItems: [{ quantity: 1 }] }).success).toBe(false);
+    expect(s.safeParse({ lineItems: [{ description: 'x', quantity: 1 }] }).success).toBe(false);
+  });
+
+  it('rejects a line item missing description', () => {
+    expect(s.safeParse({ invoiceId: 111, lineItems: [{ quantity: 1 }] }).success).toBe(false);
+  });
+
+  it('rejects a line item missing quantity', () => {
+    expect(s.safeParse({ invoiceId: 111, lineItems: [{ description: 'x' }] }).success).toBe(false);
   });
 
   it('rejects an empty lineItems array', () => {
     expect(s.safeParse({ invoiceId: 111, lineItems: [] }).success).toBe(false);
   });
 
+  it('strips fields that do not exist on the confirmed ST model (price, type, generalLedgerAccountId, businessUnitId) instead of preserving them', () => {
+    const r: any = s.safeParse({
+      invoiceId: 111,
+      lineItems: [{
+        description: 'x', quantity: 1,
+        price: 200, type: 'Service', generalLedgerAccountId: 1, businessUnitId: 2,
+      }],
+    });
+    expect(r.success).toBe(true); // zod strips unknown keys by default rather than rejecting them
+    expect(r.data.lineItems[0]).not.toHaveProperty('price');
+    expect(r.data.lineItems[0]).not.toHaveProperty('type');
+    expect(r.data.lineItems[0]).not.toHaveProperty('generalLedgerAccountId');
+    expect(r.data.lineItems[0]).not.toHaveProperty('businessUnitId');
+  });
+
+  it('no longer has a jobId argument — job-link reassignment is not an API capability, so a stray jobId is stripped, not honored', () => {
+    const r: any = s.safeParse({ invoiceId: 111, jobId: 42, lineItems: [{ description: 'x', quantity: 1 }] });
+    expect(r.success).toBe(true);
+    expect(r.data).not.toHaveProperty('jobId');
+  });
+
   it('defaults dryRun to true', () => {
-    const parsed = s.parse({ invoiceId: 111, lineItems: [{ quantity: 1 }] });
+    const parsed = s.parse({ invoiceId: 111, lineItems: [{ description: 'x', quantity: 1 }] });
     expect(parsed.dryRun).toBe(true);
   });
 });

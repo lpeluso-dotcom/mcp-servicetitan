@@ -23,11 +23,33 @@ import { WriteGate } from '../../write-gate';
 import { readST } from '../../st';
 import { rewriteTenantPlaceholders } from '../../tenant';
 import type { ToolDef } from '../index';
-import type { InvoiceLineItemInput } from './st_add_invoice_line_item';
+
+// NOTE: this tool's line-item shape is intentionally NOT shared with
+// st_add_invoice_line_item's InvoiceLineItemInput. That type was rewritten
+// 2026-07-31 to the CONFIRMED schema for PATCH .../invoices/{id}/items
+// (proven by live probing — see that file's header). This tool targets a
+// different, still-UNCONFIRMED endpoint (POST /accounting/v2/tenant/{tid}/invoices
+// for adjustment-invoice creation), whose request body shape has not been
+// probed. Reusing the confirmed items-PATCH shape here would be wrong — it
+// would either wrongly forbid fields this endpoint might accept (price,
+// generalLedgerAccountId, businessUnitId, type) or wrongly imply they're
+// confirmed present. Keep this local and speculative until this endpoint
+// gets its own live-probe pass.
+interface AdjustmentLineItemInput {
+  skuId?: number;
+  skuName?: string;
+  description?: string;
+  quantity: number;
+  price?: number;
+  cost?: number;
+  generalLedgerAccountId?: number;
+  businessUnitId?: number;
+  type?: 'Service' | 'Material' | 'Equipment';
+}
 
 interface Args {
   parentInvoiceId: number;
-  lineItems: InvoiceLineItemInput[];
+  lineItems: AdjustmentLineItemInput[];
   businessUnitId?: number;
   invoiceDate?: string;
   offsetAmount?: number;
@@ -55,7 +77,7 @@ interface RawInvoice {
   [key: string]: unknown;
 }
 
-function validateLineItems(lineItems: InvoiceLineItemInput[], correlation: string): void {
+function validateLineItems(lineItems: AdjustmentLineItemInput[], correlation: string): void {
   if (!lineItems || lineItems.length === 0) {
     throw new McpError('validation_error', 'st_create_adjustment_invoice requires at least one line item', { correlation });
   }
