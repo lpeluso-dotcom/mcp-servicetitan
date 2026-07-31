@@ -241,6 +241,317 @@ describe('st_create_material', () => {
   });
 });
 
+// ── st_add_invoice_line_item ─────────────────────────────────
+// Rewritten 2026-07-31 against the CONFIRMED InvoiceItemUpdateRequest
+// schema (live-probed on prod tenant 431848990 — see file header). Job-link
+// reassignment is gone entirely (confirmed impossible via the ST API), and
+// the write path is now N sequential flat-body PATCH calls, one per line
+// item, instead of a single {items:[...]} call plus an optional job-link
+// second call.
+
+import { st_add_invoice_line_item } from '../invoicing/st_add_invoice_line_item';
+
+describe('st_add_invoice_line_item', () => {
+  function makeReadEnv(invoiceBody: unknown, fetchImpl?: (url: string) => Promise<Response>) {
+    return {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string) => {
+          if (fetchImpl) return fetchImpl(url);
+          if (url.includes('dryRun=1')) {
+            return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          }
+          // invoices read endpoint returns a list envelope { data: [...] }
+          return new Response(JSON.stringify({ data: [invoiceBody] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key',
+      MCP_SERVICE_VERSION: '0.0.0-test',
+      ST_TENANT_ID: '000000000',
+      DB: makeDB(),
+      PROXY_STATE: {},
+      SIRO_API_TOKEN: '',
+    };
+  }
+
+  it('throws validation_error when lineItems is empty', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
+    await expect(
+      st_add_invoice_line_item.handler(env as any, { invoiceId: 111, lineItems: [] }, CTX)
+    ).rejects.toMatchObject({ code: 'validation_error' });
+  });
+
+  // Live-probed 2026-07-31 against invoice 82555119: omitting `id` routes to
+  // ST's UpdateInvoiceItemHandler.CreateInvoiceItemAsync (append path), which
+  // fails with 500 "Sku (Name:) is not found." when neither skuId nor skuName
+  // is supplied. Reject that combination locally instead of shipping a 500.
+  it('throws validation_error when appending (no id) without skuId or skuName', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
+    await expect(
+      st_add_invoice_line_item.handler(
+        env as any,
+        { invoiceId: 111, lineItems: [{ description: 'no sku', quantity: 1 }] },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('skuId') });
+  });
+
+  it('allows an update (id present) without skuId or skuName', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
+    const result: any = await st_add_invoice_line_item.handler(
+      env as any,
+      { invoiceId: 111, lineItems: [{ id: 999, description: 'update existing', quantity: 2 }] },
+      CTX
+    );
+    expect(result.dryRun).toBe(true);
+  });
+
+  it('throws not_found when the invoice does not exist', async () => {
+    const env = {
+      ST_PROXY: { fetch: vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+    await expect(
+      st_add_invoice_line_item.handler(
+        env as any,
+        { invoiceId: 999999, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('dryRun=true returns DryRunResult with token and no warnings for a non-exported invoice', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
+    const result: any = await st_add_invoice_line_item.handler(
+      env as any,
+      { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] },
+      CTX
+    );
+    expect(result.dryRun).toBe(true);
+    expect(result.tool).toBe('st_add_invoice_line_item');
+    expect(result.confirmation_token).toBeTypeOf('string');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('dryRun=true includes an export warning for syncStatus=Exported (warn-only, not blocked)', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Exported', customer: { id: 5 } });
+    const result: any = await st_add_invoice_line_item.handler(
+      env as any,
+      { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] },
+      CTX
+    );
+    expect(result.dryRun).toBe(true);
+    expect(result.warnings.some((w: string) => w.includes('Exported'))).toBe(true);
+  });
+
+  it('dryRun preview lists N steps for N line items, each with the items endpoint and a flat single-item payload', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
+    const lineItems = [
+      { skuId: 501, description: 'Item A', quantity: 1 },
+      { skuId: 502, description: 'Item B', quantity: 2, cost: 10 },
+      { skuId: 503, description: 'Item C', quantity: 3, technicianId: 9 },
+    ];
+    const result: any = await st_add_invoice_line_item.handler(env as any, { invoiceId: 111, lineItems }, CTX);
+
+    expect(result.dryRun).toBe(true);
+    expect(result.payload.steps).toHaveLength(3);
+    result.payload.steps.forEach((step: any, i: number) => {
+      expect(step.call).toBe(i + 1);
+      expect(step.endpoint).toBe('/accounting/v2/tenant/000000000/invoices/111/items');
+      expect(step.method).toBe('PATCH');
+      expect(step.payload).toEqual(lineItems[i]); // flat single-item object, not wrapped in items[]/array
+    });
+  });
+
+  // ── Confirm path executes via /api/st/write (NOT durableWrite) ──
+  it('live path issues exactly N /api/st/write calls, one flat body per line item (not wrapped in items[]/array)', async () => {
+    const writeCalls: { url: string; body: any }[] = [];
+    const lineItems = [
+      { skuId: 501, description: 'Item A', quantity: 1 },
+      { skuId: 502, description: 'Item B', quantity: 2, cost: 10 },
+      { skuId: 503, description: 'Item C', quantity: 3, technicianId: 9 },
+    ];
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            writeCalls.push({ url, body: JSON.parse(init!.body as string) });
+            return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+          }
+          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 } }] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+
+    const args = { invoiceId: 111, lineItems };
+    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    const result: any = await st_add_invoice_line_item.handler(
+      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+    );
+
+    expect(result.dryRun).toBe(false);
+    expect(result.result.itemsWritten).toBe(3);
+    expect(writeCalls.length).toBe(3);
+    writeCalls.forEach((c, i) => {
+      expect(c.url).toBe('https://servicetitan-proxy/api/st/write');
+      expect(c.body.endpoint).toBe('/accounting/v2/tenant/000000000/invoices/111/items');
+      expect(c.body.method).toBe('PATCH');
+      expect(c.body.payload).toEqual(lineItems[i]); // flat — NOT wrapped in items[]/array
+      expect(Array.isArray(c.body.payload)).toBe(false);
+      expect(c.body.payload).not.toHaveProperty('items');
+    });
+  });
+
+  it('partial failure: 3 items, call 2 fails — error states 1 item already succeeded and is already written, and mentions DELETE for cleanup', async () => {
+    let writeCallCount = 0;
+    const lineItems = [
+      { skuId: 501, description: 'Item A', quantity: 1 },
+      { skuId: 502, description: 'Item B', quantity: 2 },
+      { skuId: 503, description: 'Item C', quantity: 3 },
+    ];
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            writeCallCount++;
+            if (writeCallCount === 1) return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+            return new Response('Bad Request', { status: 400 });
+          }
+          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 } }] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+
+    const args = { invoiceId: 111, lineItems };
+    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    await expect(
+      st_add_invoice_line_item.handler(env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX)
+    ).rejects.toMatchObject({
+      code: 'upstream_error',
+      message: expect.stringMatching(/1 item.*succeeded.*already written/i),
+    });
+    // Only 2 write calls attempted: item 1 (succeeded) + item 2 (failed). Item 3 is never attempted.
+    expect(writeCallCount).toBe(2);
+  });
+
+  it('partial-failure error message names the DELETE endpoint for manual cleanup of the already-written item', async () => {
+    let writeCallCount = 0;
+    const lineItems = [
+      { skuId: 501, description: 'Item A', quantity: 1 },
+      { skuId: 502, description: 'Item B', quantity: 2 },
+    ];
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            writeCallCount++;
+            if (writeCallCount === 1) return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+            return new Response('Bad Request', { status: 400 });
+          }
+          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 } }] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+
+    const args = { invoiceId: 111, lineItems };
+    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    await expect(
+      st_add_invoice_line_item.handler(env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX)
+    ).rejects.toMatchObject({
+      code: 'upstream_error',
+      message: expect.stringContaining('DELETE /accounting/v2/tenant/000000000/invoices/111/items/{itemId}'),
+    });
+  });
+
+  it('exported invoice still warns at dryRun and still proceeds through confirm (warn-only preserved, not blocked)', async () => {
+    const writeCalls: any[] = [];
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            writeCalls.push(JSON.parse(init!.body as string));
+            return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+          }
+          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Exported', customer: { id: 5 } }] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+
+    const args = { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] };
+    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    expect(dr.warnings.some((w: string) => w.includes('Exported'))).toBe(true);
+
+    const result: any = await st_add_invoice_line_item.handler(
+      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+    );
+    expect(result.dryRun).toBe(false);
+    expect(writeCalls.length).toBe(1);
+  });
+
+  // ── Fix 1: ids filter not honored guard ────────────────────
+  it('throws upstream_error when the invoices list endpoint returns a different id than requested (ids filter not honored)', async () => {
+    // Invoice read returns id 222 even though invoiceId 111 was requested —
+    // simulates ST silently ignoring the `ids` param.
+    const env = makeReadEnv({ id: 222, syncStatus: 'Pending', customer: { id: 5 } });
+    await expect(
+      st_add_invoice_line_item.handler(
+        env as any,
+        { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('ids filter not honored') });
+  });
+
+  // ── Fix 2: TOCTOU — confirm-phase re-reads and re-hashes state ──
+  it('rejects the confirm call when the invoice syncStatus changed between dryRun and confirm (TOCTOU)', async () => {
+    let call = 0;
+    const invoiceStates = [
+      { id: 111, syncStatus: 'Pending', customer: { id: 5 } },
+      { id: 111, syncStatus: 'Exported', customer: { id: 5 } },
+    ];
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          const state = invoiceStates[Math.min(call, invoiceStates.length - 1)];
+          call++;
+          return new Response(JSON.stringify({ data: [state] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key',
+      MCP_SERVICE_VERSION: '0.0.0-test',
+      ST_TENANT_ID: '000000000',
+      DB: makeDB(),
+      PROXY_STATE: {},
+      SIRO_API_TOKEN: '',
+    };
+
+    const args = { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] };
+    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    expect(dr.dryRun).toBe(true);
+
+    await expect(
+      st_add_invoice_line_item.handler(
+        env,
+        { ...args, dryRun: false, confirmation_token: dr.confirmation_token },
+        CTX
+      )
+    ).rejects.toThrow(/args changed since dryRun/);
+  });
+});
+
 // ── Pricebook payload transform (Bugs 2 + 3) ─────────────────
 // ST silently drops `name` and `categoryId` on POST/PATCH. The 4 pricebook
 // tools rewrite them to `displayName` and `categories: [N]` before submit,
@@ -396,5 +707,194 @@ describe('st_create_material primaryVendor (QUA-685)', () => {
     expect(result.payload.primaryVendor).toMatchObject({ vendorId: 555, cost: 9.5, active: true });
     expect(result.payload).not.toHaveProperty('primaryVendorId');
     expect(result.payload).not.toHaveProperty('primaryVendorCost');
+  });
+});
+
+// ── st_create_adjustment_invoice ─────────────────────────────
+
+import { st_create_adjustment_invoice } from '../invoicing/st_create_adjustment_invoice';
+
+describe('st_create_adjustment_invoice', () => {
+  function makeParentEnv(parentInvoice: unknown) {
+    return {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          return new Response(JSON.stringify({ data: [parentInvoice] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+  }
+
+  it('throws validation_error when lineItems is empty', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null });
+    await expect(
+      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 222, lineItems: [] }, CTX)
+    ).rejects.toMatchObject({ code: 'validation_error' });
+  });
+
+  it('throws not_found when the parent invoice does not exist', async () => {
+    const env = {
+      ST_PROXY: { fetch: vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+    await expect(
+      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 999999, lineItems: [{ skuId: 1, quantity: 1, price: -200 }] }, CTX)
+    ).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('rejects a parent invoice not in Posted or Exported status', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Pending', adjustmentToId: null });
+    await expect(
+      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200 }] }, CTX)
+    ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('Posted') });
+  });
+
+  it('rejects a parent invoice that is itself an adjustment invoice', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: 111 });
+    await expect(
+      st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200 }] }, CTX)
+    ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('adjustment') });
+  });
+
+  it('dryRun=true returns DryRunResult with token for a valid Exported parent', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    const result: any = await st_create_adjustment_invoice.handler(
+      env as any,
+      { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -998484, type: 'Service' }] },
+      CTX
+    );
+    expect(result.dryRun).toBe(true);
+    expect(result.tool).toBe('st_create_adjustment_invoice');
+    expect(result.confirmation_token).toBeTypeOf('string');
+  });
+
+  it('does not warn when adjustment line total nets the stated offsetAmount to zero, warns when it does not', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    const netted: any = await st_create_adjustment_invoice.handler(
+      env as any,
+      { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -100 }], offsetAmount: 100 },
+      CTX
+    );
+    expect(netted.warnings).toEqual([]);
+
+    const unnetted: any = await st_create_adjustment_invoice.handler(
+      env as any,
+      { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -50 }], offsetAmount: 100 },
+      CTX
+    );
+    expect(unnetted.warnings.some((w: string) => w.includes('does not net'))).toBe(true);
+  });
+
+  it('confirm call executes via /api/st/write with correct endpoint/method/payload (NOT durableWrite)', async () => {
+    let writeCall: { url: string; body: any } | undefined;
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            writeCall = { url, body: JSON.parse(init!.body as string) };
+            return new Response(JSON.stringify({ id: 333, status: 'ok' }), { status: 200 });
+          }
+          return new Response(JSON.stringify({ data: [{ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } }] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+
+    const args = { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -998484, type: 'Service' as const }] };
+    const dr: any = await st_create_adjustment_invoice.handler(env, args, CTX);
+    const result: any = await st_create_adjustment_invoice.handler(
+      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+    );
+
+    expect(result.dryRun).toBe(false);
+    // durableWrite would hit /api/st/durable-write — assert it never does.
+    expect(env.ST_PROXY.fetch.mock.calls.some((c: any[]) => String(c[0]).includes('durable-write'))).toBe(false);
+    expect(writeCall!.url).toBe('https://servicetitan-proxy/api/st/write');
+    expect(writeCall!.body.endpoint).toBe('/accounting/v2/tenant/000000000/invoices');
+    expect(writeCall!.body.method).toBe('POST');
+    expect(writeCall!.body.payload).toMatchObject({
+      adjustmentToId: 222,
+      lineItems: args.lineItems,
+      businessUnitId: 257,
+    });
+  });
+
+  // ── Fix 1: ids filter not honored guard ────────────────────
+  it('throws upstream_error when the invoices list endpoint returns a different id than requested (ids filter not honored)', async () => {
+    // Parent read returns id 999 even though parentInvoiceId 222 was requested —
+    // simulates ST silently ignoring the `ids` param.
+    const env = makeParentEnv({ id: 999, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    await expect(
+      st_create_adjustment_invoice.handler(
+        env as any,
+        { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200, type: 'Service' }] },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('ids filter not honored') });
+  });
+
+  // ── Fix 2: TOCTOU — now LIVE end-to-end (the Fix-3 hard-block previously
+  // short-circuited before verifyToken ran; now that the hard-block is
+  // lifted, this test proves the "args changed since dryRun" rejection
+  // actually fires on the real confirm path). ──
+  it('rejects the confirm call when the parent syncStatus changed between dryRun and confirm (TOCTOU, end-to-end)', async () => {
+    let call = 0;
+    const parentStates = [
+      { id: 222, syncStatus: 'Posted', adjustmentToId: null, businessUnit: { id: 257 } },
+      { id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } },
+    ];
+    const env: any = {
+      ST_PROXY: {
+        fetch: vi.fn(async (url: string) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            throw new Error('should not reach the live write — TOCTOU must reject before this');
+          }
+          const state = parentStates[Math.min(call, parentStates.length - 1)];
+          call++;
+          return new Response(JSON.stringify({ data: [state] }), { status: 200 });
+        }),
+      },
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+    };
+
+    // dryRun call reads parent with syncStatus=Posted (parentStates[0]).
+    const args = { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200, type: 'Service' as const }] };
+    const dr: any = await st_create_adjustment_invoice.handler(env, args, CTX);
+    expect(dr.dryRun).toBe(true);
+
+    // Confirm call re-reads parent — now syncStatus=Exported (parentStates[1]) —
+    // a *different* value than what was hashed into the token during dryRun.
+    // gate.verifyToken must throw "args changed since dryRun", and the live
+    // /api/st/write call must never be reached.
+    await expect(
+      st_create_adjustment_invoice.handler(
+        env,
+        { ...args, dryRun: false, confirmation_token: dr.confirmation_token },
+        CTX
+      )
+    ).rejects.toThrow(/args changed since dryRun/);
+  });
+
+  // Fix 3 (the sandbox hard-block) has been REMOVED: the endpoint is now
+  // confirmed by the ST Accounting v2 API catalog, so live writes are enabled.
+  // See "confirm call executes via /api/st/write" above for the now-live path.
+
+  it('dryRun=true still returns a normal preview (hard-block only applies to dryRun=false)', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
+    const result: any = await st_create_adjustment_invoice.handler(
+      env as any,
+      { parentInvoiceId: 222, lineItems: [{ skuId: 1, quantity: 1, price: -200, type: 'Service' }] },
+      CTX
+    );
+    expect(result.dryRun).toBe(true);
+    expect(result.confirmation_token).toBeTypeOf('string');
   });
 });

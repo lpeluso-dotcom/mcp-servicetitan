@@ -17,8 +17,8 @@ function schemaOf(name: string) {
 // ── Registry sanity ──────────────────────────────────────────
 
 describe('tool registry', () => {
-  it('exports 107 tools (QUA-739 pricebook margin-discipline composites + Supabase-backed pricebook search tools; find_technician_by_name — name-based technician lookup wrapping name-resolver; semantic_search_gold — TAI-STV2 Woz gold vector search; gold_margin_by_bu + tech_scorecard — TAI-STV2 guided-surface backing tools)', () => {
-    expect(TOOLS.length).toBe(107);
+  it('exports 109 tools (adds st_add_invoice_line_item + st_create_adjustment_invoice — invoice-write tools for the project-invoice/job-invoice misattribution fix)', () => {
+    expect(TOOLS.length).toBe(109);
   });
 
   it('every tool has name + description + zodSchema', () => {
@@ -49,7 +49,9 @@ describe('tool registry', () => {
       'reschedule_appointment',
       'save_tech_debrief',
       'sell_estimate',
+      'st_add_invoice_line_item',
       'st_call',
+      'st_create_adjustment_invoice',
       'st_create_material',
       'st_create_service',
       'st_patch_material',
@@ -66,8 +68,8 @@ describe('tool registry', () => {
   });
 
   it('toolsForRole("default") excludes st_call; admin includes it', () => {
-    expect(toolsForRole('default').length).toBe(106);
-    expect(toolsForRole('admin').length).toBe(107);
+    expect(toolsForRole('default').length).toBe(108);
+    expect(toolsForRole('admin').length).toBe(109);
     expect(toolsForRole('default').find((t) => t.name === 'st_call')).toBeUndefined();
     expect(toolsForRole('admin').find((t) => t.name === 'st_call')).toBeDefined();
   });
@@ -308,5 +310,100 @@ describe('siro_get_engagement schema', () => {
 
   it('accepts a non-empty string', () => {
     expect(s.safeParse({ engagementId: 'eng-xyz' }).success).toBe(true);
+  });
+});
+
+// ── st_add_invoice_line_item ─────────────────────────────────
+// Schema rewritten 2026-07-31 to the CONFIRMED InvoiceItemUpdateRequest
+// field set (live-probed). description + quantity are required; price,
+// generalLedgerAccountId, businessUnitId, and type no longer exist on the
+// real ST model and are gone from this schema too.
+
+describe('st_add_invoice_line_item schema', () => {
+  const s = schemaOf('st_add_invoice_line_item');
+
+  it('accepts a minimal valid line item (description + quantity only)', () => {
+    expect(s.safeParse({
+      invoiceId: 111,
+      lineItems: [{ description: 'Service call diagnostic', quantity: 1 }],
+    }).success).toBe(true);
+  });
+
+  it('accepts the full confirmed field set', () => {
+    expect(s.safeParse({
+      invoiceId: 111,
+      lineItems: [{
+        id: 55, skuId: 1, skuName: 'Diagnostic Fee', description: 'Diagnostic Fee',
+        quantity: 1, cost: 45, technicianId: 9,
+      }],
+    }).success).toBe(true);
+  });
+
+  it('rejects missing invoiceId', () => {
+    expect(s.safeParse({ lineItems: [{ description: 'x', quantity: 1 }] }).success).toBe(false);
+  });
+
+  it('rejects a line item missing description', () => {
+    expect(s.safeParse({ invoiceId: 111, lineItems: [{ quantity: 1 }] }).success).toBe(false);
+  });
+
+  it('rejects a line item missing quantity', () => {
+    expect(s.safeParse({ invoiceId: 111, lineItems: [{ description: 'x' }] }).success).toBe(false);
+  });
+
+  it('rejects an empty lineItems array', () => {
+    expect(s.safeParse({ invoiceId: 111, lineItems: [] }).success).toBe(false);
+  });
+
+  it('strips fields that do not exist on the confirmed ST model (price, type, generalLedgerAccountId, businessUnitId) instead of preserving them', () => {
+    const r: any = s.safeParse({
+      invoiceId: 111,
+      lineItems: [{
+        description: 'x', quantity: 1,
+        price: 200, type: 'Service', generalLedgerAccountId: 1, businessUnitId: 2,
+      }],
+    });
+    expect(r.success).toBe(true); // zod strips unknown keys by default rather than rejecting them
+    expect(r.data.lineItems[0]).not.toHaveProperty('price');
+    expect(r.data.lineItems[0]).not.toHaveProperty('type');
+    expect(r.data.lineItems[0]).not.toHaveProperty('generalLedgerAccountId');
+    expect(r.data.lineItems[0]).not.toHaveProperty('businessUnitId');
+  });
+
+  it('no longer has a jobId argument — job-link reassignment is not an API capability, so a stray jobId is stripped, not honored', () => {
+    const r: any = s.safeParse({ invoiceId: 111, jobId: 42, lineItems: [{ description: 'x', quantity: 1 }] });
+    expect(r.success).toBe(true);
+    expect(r.data).not.toHaveProperty('jobId');
+  });
+
+  it('defaults dryRun to true', () => {
+    const parsed = s.parse({ invoiceId: 111, lineItems: [{ description: 'x', quantity: 1 }] });
+    expect(parsed.dryRun).toBe(true);
+  });
+});
+
+// ── st_create_adjustment_invoice ─────────────────────────────
+
+describe('st_create_adjustment_invoice schema', () => {
+  const s = schemaOf('st_create_adjustment_invoice');
+
+  it('accepts a minimal valid negative-offset line item', () => {
+    expect(s.safeParse({
+      parentInvoiceId: 222,
+      lineItems: [{ quantity: 1, price: -998484, type: 'Service' }],
+    }).success).toBe(true);
+  });
+
+  it('rejects missing parentInvoiceId', () => {
+    expect(s.safeParse({ lineItems: [{ quantity: 1, price: -100 }] }).success).toBe(false);
+  });
+
+  it('rejects an empty lineItems array', () => {
+    expect(s.safeParse({ parentInvoiceId: 222, lineItems: [] }).success).toBe(false);
+  });
+
+  it('defaults dryRun to true', () => {
+    const parsed = s.parse({ parentInvoiceId: 222, lineItems: [{ quantity: 1, price: -100 }] });
+    expect(parsed.dryRun).toBe(true);
   });
 });
