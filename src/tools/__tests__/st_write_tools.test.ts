@@ -252,25 +252,91 @@ describe('st_create_material', () => {
 import { st_add_invoice_line_item } from '../invoicing/st_add_invoice_line_item';
 
 describe('st_add_invoice_line_item', () => {
-  function makeReadEnv(invoiceBody: unknown, fetchImpl?: (url: string) => Promise<Response>) {
-    return {
+  // ── ServiceTitan simulator ──────────────────────────────────
+  // The invoice read reflects the writes that have been made, because the
+  // tool now VERIFIES by re-reading: a mock that always returns the same
+  // static invoice cannot tell "the money landed" from "HTTP 200 and nothing
+  // happened", which is the entire defect class under repair.
+  //
+  // Append semantics mirror the confirmed incident: the item's read-side
+  // `price` is whatever `unitPrice` was sent — and $0.00 when none was
+  // (ST does not run dynamic pricing on API-appended items).
+  interface SimItem { id: number; skuName?: string; description?: string; quantity?: number; cost?: number; price: number }
+
+  function makeInvoiceEnv(opts: {
+    invoice?: Record<string, unknown>;
+    items?: SimItem[];
+    /** Return a Response to override the write outcome for call N (1-based). */
+    onWrite?: (call: number, payload: any) => Response | undefined;
+    /** Return a Response to override the invoice read (used to simulate lag / dropped effects). */
+    onRead?: (state: { writeCount: number; items: SimItem[] }) => Response | undefined;
+    /** Model ST recomputing/zeroing the submitted price at persist time. */
+    persistedPrice?: (payload: any) => number;
+  } = {}) {
+    const invoice = { id: 111, syncStatus: 'Pending', customer: { id: 5 }, ...(opts.invoice ?? {}) };
+    const items: SimItem[] = (opts.items ?? []).map((i) => ({ ...i }));
+    let nextItemId = 9001;
+    let writeCount = 0;
+    const writeCalls: any[] = [];
+
+    const env: any = {
       ST_PROXY: {
-        fetch: vi.fn(async (url: string) => {
-          if (fetchImpl) return fetchImpl(url);
-          if (url.includes('dryRun=1')) {
-            return new Response(JSON.stringify({ echo: true }), { status: 200 });
+        fetch: vi.fn(async (url: string, init?: RequestInit) => {
+          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.endsWith('/api/st/write')) {
+            const body = JSON.parse(init!.body as string);
+            writeCalls.push(body);
+            writeCount++;
+            const override = opts.onWrite?.(writeCount, body.payload);
+            if (override) return override;
+            const p = body.payload;
+            const price = opts.persistedPrice ? opts.persistedPrice(p) : (p.unitPrice ?? 0);
+            let respId: number;
+            if (p.id !== undefined) {
+              const existing = items.find((it) => it.id === p.id);
+              respId = p.id;
+              if (existing) {
+                // ST binds a whole InvoiceItemUpdateRequest — fields present
+                // in the body are applied; fields absent are left alone here
+                // (the UNPROBED assumption the tool now verifies).
+                if (p.description !== undefined) existing.description = p.description;
+                if (p.quantity !== undefined) existing.quantity = p.quantity;
+                if (p.cost !== undefined) existing.cost = p.cost;
+                if (p.unitPrice !== undefined || opts.persistedPrice) existing.price = price;
+              }
+            } else {
+              respId = nextItemId++;
+              items.push({
+                id: respId, skuName: p.skuName, description: p.description,
+                quantity: p.quantity, cost: p.cost, price,
+              });
+            }
+            return new Response(JSON.stringify({ id: respId, status: 'ok' }), { status: 200 });
           }
-          // invoices read endpoint returns a list envelope { data: [...] }
-          return new Response(JSON.stringify({ data: [invoiceBody] }), { status: 200 });
+          const override = opts.onRead?.({ writeCount, items });
+          if (override) return override;
+          return new Response(JSON.stringify({ data: [{ ...invoice, items }] }), { status: 200 });
         }),
       },
-      MCP_SYNC_KEY: 'test-sync-key',
-      MCP_SERVICE_VERSION: '0.0.0-test',
-      ST_TENANT_ID: '000000000',
-      DB: makeDB(),
-      PROXY_STATE: {},
-      SIRO_API_TOKEN: '',
+      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
+      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }),
+      PROXY_STATE: {}, SIRO_API_TOKEN: '',
+      // Test seam — production uses the real 2s/10s read-after-write backoff.
+      VERIFY_BACKOFF_MS: [0, 0],
     };
+    return { env, writeCalls, items, get writeCount() { return writeCount; } };
+  }
+
+  // Runs the full dryRun → confirm cycle against a simulator env.
+  async function runConfirm(env: any, args: any) {
+    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    return st_add_invoice_line_item.handler(
+      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+    ) as Promise<any>;
+  }
+
+  function makeReadEnv(invoiceBody: unknown) {
+    return makeInvoiceEnv({ invoice: invoiceBody as Record<string, unknown> }).env;
   }
 
   it('throws validation_error when lineItems is empty', async () => {
@@ -289,13 +355,52 @@ describe('st_add_invoice_line_item', () => {
     await expect(
       st_add_invoice_line_item.handler(
         env as any,
-        { invoiceId: 111, lineItems: [{ description: 'no sku', quantity: 1 }] },
+        { invoiceId: 111, lineItems: [{ description: 'no sku', quantity: 1, unitPrice: 10 }] },
         CTX
       )
     ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('skuId') });
   });
 
+  // THE INCIDENT, encoded: item 84402146 was appended to invoice 83052705 with
+  // no monetary field on the wire and landed at $0.00 behind an HTTP 200. ST
+  // does NOT compute Pricebook Pro dynamic pricing on API-appended items, so
+  // "omit unitPrice and let ST price it" is false for the append path.
+  it('throws validation_error when APPENDING without unitPrice — an appended item with no price lands at $0.00', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
+    await expect(
+      st_add_invoice_line_item.handler(
+        env as any,
+        { invoiceId: 111, lineItems: [{ skuName: 'HI1', description: 'HVAC Install', quantity: 1 }] },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringMatching(/unitPrice/) });
+  });
+
+  it('no /api/st/write call is made when the append-without-unitPrice guard fires', async () => {
+    const sim = makeInvoiceEnv();
+    await expect(
+      st_add_invoice_line_item.handler(
+        sim.env, { invoiceId: 111, lineItems: [{ skuName: 'HI1', description: 'x', quantity: 1 }] }, CTX
+      )
+    ).rejects.toMatchObject({ code: 'validation_error' });
+    expect(sim.writeCount).toBe(0);
+  });
+
   it('allows an update (id present) without skuId or skuName', async () => {
+    const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
+    const result: any = await st_add_invoice_line_item.handler(
+      env as any,
+      { invoiceId: 111, lineItems: [{ id: 999, description: 'update existing', quantity: 2, unitPrice: 50 }] },
+      CTX
+    );
+    expect(result.dryRun).toBe(true);
+  });
+
+  // The update path (id present → UpdateInvoiceItemAsync) is UNPROBED: an
+  // ASP.NET update model can bind an omitted field as null and zero a priced
+  // line. Omitting is allowed (it may be the only way to leave a dynamically
+  // priced line alone) but it must WARN, and the verify-read must catch it.
+  it('warns — but does not block — when an UPDATE omits unitPrice/cost (unprobed null-overwrite risk)', async () => {
     const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
     const result: any = await st_add_invoice_line_item.handler(
       env as any,
@@ -303,6 +408,8 @@ describe('st_add_invoice_line_item', () => {
       CTX
     );
     expect(result.dryRun).toBe(true);
+    expect(result.warnings.some((w: string) => /unitPrice/.test(w) && /999/.test(w))).toBe(true);
+    expect(result.warnings.some((w: string) => /cost/.test(w))).toBe(true);
   });
 
   it('throws not_found when the invoice does not exist', async () => {
@@ -314,7 +421,7 @@ describe('st_add_invoice_line_item', () => {
     await expect(
       st_add_invoice_line_item.handler(
         env as any,
-        { invoiceId: 999999, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] },
+        { invoiceId: 999999, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1, unitPrice: 89 }] },
         CTX
       )
     ).rejects.toMatchObject({ code: 'not_found' });
@@ -324,7 +431,7 @@ describe('st_add_invoice_line_item', () => {
     const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
     const result: any = await st_add_invoice_line_item.handler(
       env as any,
-      { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] },
+      { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1, unitPrice: 89 }] },
       CTX
     );
     expect(result.dryRun).toBe(true);
@@ -337,7 +444,7 @@ describe('st_add_invoice_line_item', () => {
     const env = makeReadEnv({ id: 111, syncStatus: 'Exported', customer: { id: 5 } });
     const result: any = await st_add_invoice_line_item.handler(
       env as any,
-      { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] },
+      { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1, unitPrice: 89 }] },
       CTX
     );
     expect(result.dryRun).toBe(true);
@@ -347,9 +454,9 @@ describe('st_add_invoice_line_item', () => {
   it('dryRun preview lists N steps for N line items, each with the items endpoint and a flat single-item payload', async () => {
     const env = makeReadEnv({ id: 111, syncStatus: 'Pending', customer: { id: 5 } });
     const lineItems = [
-      { skuId: 501, description: 'Item A', quantity: 1 },
-      { skuId: 502, description: 'Item B', quantity: 2, cost: 10 },
-      { skuId: 503, description: 'Item C', quantity: 3, technicianId: 9 },
+      { skuId: 501, description: 'Item A', quantity: 1, unitPrice: 10 },
+      { skuId: 502, description: 'Item B', quantity: 2, cost: 10, unitPrice: 20 },
+      { skuId: 503, description: 'Item C', quantity: 3, technicianId: 9, unitPrice: 30 },
     ];
     const result: any = await st_add_invoice_line_item.handler(env as any, { invoiceId: 111, lineItems }, CTX);
 
@@ -365,43 +472,23 @@ describe('st_add_invoice_line_item', () => {
 
   // ── Confirm path executes via /api/st/write (NOT durableWrite) ──
   it('live path issues exactly N /api/st/write calls, one flat body per line item (not wrapped in items[]/array)', async () => {
-    const writeCalls: { url: string; body: any }[] = [];
     const lineItems = [
-      { skuId: 501, description: 'Item A', quantity: 1 },
-      { skuId: 502, description: 'Item B', quantity: 2, cost: 10 },
-      { skuId: 503, description: 'Item C', quantity: 3, technicianId: 9 },
+      { skuId: 501, description: 'Item A', quantity: 1, unitPrice: 10 },
+      { skuId: 502, description: 'Item B', quantity: 2, cost: 10, unitPrice: 20 },
+      { skuId: 503, description: 'Item C', quantity: 3, technicianId: 9, unitPrice: 30 },
     ];
-    const env: any = {
-      ST_PROXY: {
-        fetch: vi.fn(async (url: string, init?: RequestInit) => {
-          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
-          if (url.endsWith('/api/st/write')) {
-            writeCalls.push({ url, body: JSON.parse(init!.body as string) });
-            return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
-          }
-          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 } }] }), { status: 200 });
-        }),
-      },
-      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
-      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
-    };
-
-    const args = { invoiceId: 111, lineItems };
-    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
-    const result: any = await st_add_invoice_line_item.handler(
-      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
-    );
+    const sim = makeInvoiceEnv();
+    const result: any = await runConfirm(sim.env, { invoiceId: 111, lineItems });
 
     expect(result.dryRun).toBe(false);
     expect(result.result.itemsWritten).toBe(3);
-    expect(writeCalls.length).toBe(3);
-    writeCalls.forEach((c, i) => {
-      expect(c.url).toBe('https://servicetitan-proxy/api/st/write');
-      expect(c.body.endpoint).toBe('/accounting/v2/tenant/000000000/invoices/111/items');
-      expect(c.body.method).toBe('PATCH');
-      expect(c.body.payload).toEqual(lineItems[i]); // flat — NOT wrapped in items[]/array
-      expect(Array.isArray(c.body.payload)).toBe(false);
-      expect(c.body.payload).not.toHaveProperty('items');
+    expect(sim.writeCalls.length).toBe(3);
+    sim.writeCalls.forEach((c, i) => {
+      expect(c.endpoint).toBe('/accounting/v2/tenant/000000000/invoices/111/items');
+      expect(c.method).toBe('PATCH');
+      expect(c.payload).toEqual(lineItems[i]); // flat — NOT wrapped in items[]/array
+      expect(Array.isArray(c.payload)).toBe(false);
+      expect(c.payload).not.toHaveProperty('items');
     });
   });
 
@@ -411,34 +498,19 @@ describe('st_add_invoice_line_item', () => {
   // HTTP 200 (real damage: item 84402146 on invoice 83052705). These tests
   // pin the exact wire field name on both the preview and the live payload.
   it('unitPrice survives into the dryRun preview and the outbound /api/st/write payload', async () => {
-    const writeCalls: any[] = [];
-    const env: any = {
-      ST_PROXY: {
-        fetch: vi.fn(async (url: string, init?: RequestInit) => {
-          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
-          if (url.endsWith('/api/st/write')) {
-            writeCalls.push(JSON.parse(init!.body as string));
-            return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
-          }
-          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 } }] }), { status: 200 });
-        }),
-      },
-      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
-      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
-    };
-
+    const sim = makeInvoiceEnv();
     const args = {
       invoiceId: 111,
       lineItems: [{ skuName: 'HI1', description: 'HVAC Install', quantity: 1, unitPrice: 13674 }],
     };
-    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    const dr: any = await st_add_invoice_line_item.handler(sim.env, args, CTX);
     expect(dr.payload.steps[0].payload.unitPrice).toBe(13674);
 
     const result: any = await st_add_invoice_line_item.handler(
-      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+      sim.env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
     );
     expect(result.dryRun).toBe(false);
-    expect(writeCalls[0].payload.unitPrice).toBe(13674);
+    expect(sim.writeCalls[0].payload.unitPrice).toBe(13674);
   });
 
   it('preserves a NEGATIVE unitPrice (the offsetting-line case) — sign is not coerced or dropped', async () => {
@@ -451,38 +523,24 @@ describe('st_add_invoice_line_item', () => {
     expect(result.payload.steps[0].payload.unitPrice).toBe(-13674);
   });
 
-  // REGRESSION GUARD: `price` is silently ignored by ST on this endpoint. If
-  // someone reintroduces it (schema or payload builder), this fails.
+  // REGRESSION GUARD: `price` is silently ignored by ST on this endpoint. The
+  // zod schema now REJECTS it outright (see schemas.test.ts); this asserts the
+  // second layer — the allow-list payload builder — never puts it on the wire
+  // even if something upstream of zod slipped it through.
   it('never emits `price` on the outbound payload — ST silently drops it and the line lands at $0.00', async () => {
-    const writeCalls: any[] = [];
-    const env: any = {
-      ST_PROXY: {
-        fetch: vi.fn(async (url: string, init?: RequestInit) => {
-          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
-          if (url.endsWith('/api/st/write')) {
-            writeCalls.push(JSON.parse(init!.body as string));
-            return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
-          }
-          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 } }] }), { status: 200 });
-        }),
-      },
-      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
-      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
-    };
-
-    // A caller (or a future regression) shoves `price` in alongside unitPrice.
+    const sim = makeInvoiceEnv();
     const args: any = {
       invoiceId: 111,
       lineItems: [{ skuName: 'HI1', description: 'HVAC Install', quantity: 1, unitPrice: 100, price: 999 }],
     };
-    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+    const dr: any = await st_add_invoice_line_item.handler(sim.env, args, CTX);
     expect(dr.payload.steps[0].payload).not.toHaveProperty('price');
 
     await st_add_invoice_line_item.handler(
-      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+      sim.env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
     );
-    expect(writeCalls[0].payload).not.toHaveProperty('price');
-    expect(writeCalls[0].payload.unitPrice).toBe(100);
+    expect(sim.writeCalls[0].payload).not.toHaveProperty('price');
+    expect(sim.writeCalls[0].payload.unitPrice).toBe(100);
   });
 
   // skuId IS valid on THIS endpoint (asymmetry vs. the adjustment endpoint,
@@ -499,98 +557,80 @@ describe('st_add_invoice_line_item', () => {
   });
 
   it('partial failure: 3 items, call 2 fails — error states 1 item already succeeded and is already written, and mentions DELETE for cleanup', async () => {
-    let writeCallCount = 0;
     const lineItems = [
-      { skuId: 501, description: 'Item A', quantity: 1 },
-      { skuId: 502, description: 'Item B', quantity: 2 },
-      { skuId: 503, description: 'Item C', quantity: 3 },
+      { skuId: 501, description: 'Item A', quantity: 1, unitPrice: 10 },
+      { skuId: 502, description: 'Item B', quantity: 2, unitPrice: 20 },
+      { skuId: 503, description: 'Item C', quantity: 3, unitPrice: 30 },
     ];
-    const env: any = {
-      ST_PROXY: {
-        fetch: vi.fn(async (url: string) => {
-          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
-          if (url.endsWith('/api/st/write')) {
-            writeCallCount++;
-            if (writeCallCount === 1) return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
-            return new Response('Bad Request', { status: 400 });
-          }
-          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 } }] }), { status: 200 });
-        }),
-      },
-      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
-      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
-    };
-
-    const args = { invoiceId: 111, lineItems };
-    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
-    await expect(
-      st_add_invoice_line_item.handler(env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX)
-    ).rejects.toMatchObject({
+    const sim = makeInvoiceEnv({
+      onWrite: (call) => (call >= 2 ? new Response('Bad Request', { status: 400 }) : undefined),
+    });
+    await expect(runConfirm(sim.env, { invoiceId: 111, lineItems })).rejects.toMatchObject({
       code: 'upstream_error',
       message: expect.stringMatching(/1 item.*succeeded.*already written/i),
     });
     // Only 2 write calls attempted: item 1 (succeeded) + item 2 (failed). Item 3 is never attempted.
-    expect(writeCallCount).toBe(2);
+    expect(sim.writeCount).toBe(2);
   });
 
   it('partial-failure error message names the DELETE endpoint for manual cleanup of the already-written item', async () => {
-    let writeCallCount = 0;
     const lineItems = [
-      { skuId: 501, description: 'Item A', quantity: 1 },
-      { skuId: 502, description: 'Item B', quantity: 2 },
+      { skuId: 501, description: 'Item A', quantity: 1, unitPrice: 10 },
+      { skuId: 502, description: 'Item B', quantity: 2, unitPrice: 20 },
     ];
-    const env: any = {
-      ST_PROXY: {
-        fetch: vi.fn(async (url: string) => {
-          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
-          if (url.endsWith('/api/st/write')) {
-            writeCallCount++;
-            if (writeCallCount === 1) return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
-            return new Response('Bad Request', { status: 400 });
-          }
-          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', customer: { id: 5 } }] }), { status: 200 });
-        }),
-      },
-      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
-      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
-    };
-
-    const args = { invoiceId: 111, lineItems };
-    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
-    await expect(
-      st_add_invoice_line_item.handler(env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX)
-    ).rejects.toMatchObject({
+    const sim = makeInvoiceEnv({
+      onWrite: (call) => (call >= 2 ? new Response('Bad Request', { status: 400 }) : undefined),
+    });
+    await expect(runConfirm(sim.env, { invoiceId: 111, lineItems })).rejects.toMatchObject({
       code: 'upstream_error',
       message: expect.stringContaining('DELETE /accounting/v2/tenant/000000000/invoices/111/items/{itemId}'),
     });
   });
 
-  it('exported invoice still warns at dryRun and still proceeds through confirm (warn-only preserved, not blocked)', async () => {
-    const writeCalls: any[] = [];
-    const env: any = {
-      ST_PROXY: {
-        fetch: vi.fn(async (url: string, init?: RequestInit) => {
-          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
-          if (url.endsWith('/api/st/write')) {
-            writeCalls.push(JSON.parse(init!.body as string));
-            return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
-          }
-          return new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Exported', customer: { id: 5 } }] }), { status: 200 });
-        }),
-      },
-      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
-      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
-    };
+  // The cleanup instruction is useless without the ids it just learned: the
+  // already-written items would have to be hunted in the ST UI. The error
+  // carries them in `details` AND in the message.
+  it('partial failure carries the ALREADY-WRITTEN item ids in the error details and message', async () => {
+    const lineItems = [
+      { skuId: 501, description: 'Item A', quantity: 1, unitPrice: 10 },
+      { skuId: 502, description: 'Item B', quantity: 2, unitPrice: 20 },
+      { skuId: 503, description: 'Item C', quantity: 3, unitPrice: 30 },
+    ];
+    const sim = makeInvoiceEnv({
+      onWrite: (call) => (call >= 3 ? new Response('Bad Request', { status: 400 }) : undefined),
+    });
+    const err: any = await runConfirm(sim.env, { invoiceId: 111, lineItems }).catch((e) => e);
+    expect(err.code).toBe('upstream_error');
+    // Items 1 and 2 were written and ST returned their ids (9001, 9002).
+    expect(err.details.writtenItemIds).toEqual([9001, 9002]);
+    expect(err.details.itemsWritten).toBe(2);
+    expect(err.details.failedAtCall).toBe(3);
+    expect(err.details.invoiceId).toBe(111);
+    expect(err.message).toContain('9001, 9002');
+  });
 
-    const args = { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] };
-    const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
+  // The proxy's status code is not ServiceTitan's outcome: a 200 carrying an
+  // {ok:false} envelope was previously swallowed straight into `result`.
+  it('treats an HTTP 200 with an {ok:false} proxy envelope as a failure, not success', async () => {
+    const sim = makeInvoiceEnv({
+      onWrite: () => new Response(JSON.stringify({ ok: false, message: 'ST rejected the item' }), { status: 200 }),
+    });
+    await expect(
+      runConfirm(sim.env, { invoiceId: 111, lineItems: [{ skuName: 'HI1', description: 'x', quantity: 1, unitPrice: 10 }] })
+    ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('ok:false') });
+  });
+
+  it('exported invoice still warns at dryRun and still proceeds through confirm (warn-only preserved, not blocked)', async () => {
+    const sim = makeInvoiceEnv({ invoice: { id: 111, syncStatus: 'Exported', customer: { id: 5 } } });
+    const args = { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1, unitPrice: 89 }] };
+    const dr: any = await st_add_invoice_line_item.handler(sim.env, args, CTX);
     expect(dr.warnings.some((w: string) => w.includes('Exported'))).toBe(true);
 
     const result: any = await st_add_invoice_line_item.handler(
-      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+      sim.env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
     );
     expect(result.dryRun).toBe(false);
-    expect(writeCalls.length).toBe(1);
+    expect(sim.writeCalls.length).toBe(1);
   });
 
   // ── Fix 1: ids filter not honored guard ────────────────────
@@ -601,7 +641,7 @@ describe('st_add_invoice_line_item', () => {
     await expect(
       st_add_invoice_line_item.handler(
         env as any,
-        { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] },
+        { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1, unitPrice: 89 }] },
         CTX
       )
     ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('ids filter not honored') });
@@ -611,8 +651,8 @@ describe('st_add_invoice_line_item', () => {
   it('rejects the confirm call when the invoice syncStatus changed between dryRun and confirm (TOCTOU)', async () => {
     let call = 0;
     const invoiceStates = [
-      { id: 111, syncStatus: 'Pending', customer: { id: 5 } },
-      { id: 111, syncStatus: 'Exported', customer: { id: 5 } },
+      { id: 111, syncStatus: 'Pending', customer: { id: 5 }, items: [] },
+      { id: 111, syncStatus: 'Exported', customer: { id: 5 }, items: [] },
     ];
     const env: any = {
       ST_PROXY: {
@@ -631,7 +671,7 @@ describe('st_add_invoice_line_item', () => {
       SIRO_API_TOKEN: '',
     };
 
-    const args = { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1 }] };
+    const args = { invoiceId: 111, lineItems: [{ skuId: 501, description: 'Diagnostic', quantity: 1, unitPrice: 89 }] };
     const dr: any = await st_add_invoice_line_item.handler(env, args, CTX);
     expect(dr.dryRun).toBe(true);
 
@@ -642,6 +682,151 @@ describe('st_add_invoice_line_item', () => {
         CTX
       )
     ).rejects.toThrow(/args changed since dryRun/);
+  });
+
+  // ── POST-WRITE VERIFY-READ ─────────────────────────────────
+  // HTTP 200 is not proof the money landed — that assumption is what shipped
+  // a $0.00 line and an empty adjustment invoice on the same day. Every case
+  // below returns 200 from the write and differs only in what the re-read
+  // shows.
+
+  it('verified=true reports the observed item ids and the amount ServiceTitan actually persisted', async () => {
+    const sim = makeInvoiceEnv({ items: [{ id: 700, price: 5, quantity: 1 }] });
+    const result: any = await runConfirm(sim.env, {
+      invoiceId: 111,
+      lineItems: [{ skuName: 'HI1', description: 'HVAC Install', quantity: 2, unitPrice: 100 }],
+    });
+    expect(result.verified).toBe(true);
+    expect(result.result.appendedItemIds).toEqual([9001]);
+    expect(result.result.expectedAppendedAmount).toBe(200);
+    expect(result.result.actualAppendedAmount).toBe(200);
+    // Verification is by DELTA against the baseline ids, never by "an item with
+    // this SKU exists" — invoice 83052705 already carries an inert $0 HI1 line.
+    expect(result.result.appendedItemIds).not.toContain(700);
+  });
+
+  it('raises silent_noop when the write returns 200 but the re-read shows no new item', async () => {
+    const sim = makeInvoiceEnv({
+      // ST "accepts" the PATCH and persists nothing — the invoice is unchanged.
+      onWrite: () => new Response(JSON.stringify({ status: 'ok' }), { status: 200 }),
+    });
+    await expect(
+      runConfirm(sim.env, { invoiceId: 111, lineItems: [{ skuName: 'HI1', description: 'x', quantity: 1, unitPrice: 100 }] })
+    ).rejects.toMatchObject({ code: 'silent_noop', message: expect.stringContaining('111') });
+  });
+
+  it('raises amount_mismatch when the item lands but ServiceTitan zeroes the submitted unitPrice', async () => {
+    // The live possibility this codebase cannot otherwise distinguish from
+    // success: QSC runs Pricebook Pro, so ST recomputing/zeroing a submitted
+    // price at persist time looks exactly like the $0.00 incident.
+    const sim = makeInvoiceEnv({ persistedPrice: () => 0 });
+    const err: any = await runConfirm(sim.env, {
+      invoiceId: 111,
+      lineItems: [{ skuName: 'HI1', description: 'HVAC Install', quantity: 1, unitPrice: 9771 }],
+    }).catch((e) => e);
+    expect(err.code).toBe('amount_mismatch');
+    expect(err.details.expected).toBe(9771);
+    expect(err.details.actual).toBe(0);
+    expect(err.details.appendedItemIds).toEqual([9001]); // names what exists so it can be cleaned up
+  });
+
+  it('raises verify_unavailable (NOT silent_noop) when the verify-read comes back empty, after backoff, and never re-sends the write', async () => {
+    const sim = makeInvoiceEnv({
+      // Read-after-write lag signature: HTTP 200 with empty data.
+      onRead: ({ writeCount }) =>
+        writeCount > 0 ? new Response(JSON.stringify({ data: [] }), { status: 200 }) : undefined,
+    });
+    await expect(
+      runConfirm(sim.env, { invoiceId: 111, lineItems: [{ skuName: 'HI1', description: 'x', quantity: 1, unitPrice: 100 }] })
+    ).rejects.toMatchObject({ code: 'verify_unavailable' });
+    // The write is NEVER retried on a verify failure — a retry duplicates the line.
+    expect(sim.writeCount).toBe(1);
+  });
+
+  it('raises verify_unavailable when the verify-read carries no items array at all (nothing can be concluded)', async () => {
+    const sim = makeInvoiceEnv({
+      onRead: ({ writeCount }) =>
+        writeCount > 0
+          ? new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending' }] }), { status: 200 })
+          : undefined,
+    });
+    await expect(
+      runConfirm(sim.env, { invoiceId: 111, lineItems: [{ skuName: 'HI1', description: 'x', quantity: 1, unitPrice: 100 }] })
+    ).rejects.toMatchObject({ code: 'verify_unavailable' });
+  });
+
+  it('raises verify_unavailable when the verify-read returns a different invoice id (ids filter not honored post-write)', async () => {
+    const sim = makeInvoiceEnv({
+      onRead: ({ writeCount, items }) =>
+        writeCount > 0
+          ? new Response(JSON.stringify({ data: [{ id: 999, syncStatus: 'Pending', items }] }), { status: 200 })
+          : undefined,
+    });
+    await expect(
+      runConfirm(sim.env, { invoiceId: 111, lineItems: [{ skuName: 'HI1', description: 'x', quantity: 1, unitPrice: 100 }] })
+    ).rejects.toMatchObject({ code: 'verify_unavailable', message: expect.stringContaining('ids filter not honored') });
+  });
+
+  // ── Update-path verification (the path with no prior coverage) ──
+  it('update with unitPrice: verified=true when ST honors the submitted price', async () => {
+    const sim = makeInvoiceEnv({ items: [{ id: 700, description: 'HVAC Install', quantity: 1, cost: 5000, price: 0 }] });
+    const result: any = await runConfirm(sim.env, {
+      invoiceId: 111,
+      lineItems: [{ id: 700, description: 'HVAC Install', quantity: 1, unitPrice: 9771, cost: 5000 }],
+    });
+    expect(result.verified).toBe(true);
+    expect(result.result.updatedItemIds).toEqual([700]);
+  });
+
+  it('update with unitPrice: amount_mismatch when ST does not honor the submitted price', async () => {
+    const sim = makeInvoiceEnv({
+      items: [{ id: 700, description: 'HVAC Install', quantity: 1, price: 0 }],
+      persistedPrice: () => 1,
+    });
+    await expect(
+      runConfirm(sim.env, { invoiceId: 111, lineItems: [{ id: 700, description: 'HVAC Install', quantity: 1, unitPrice: 9771 }] })
+    ).rejects.toMatchObject({ code: 'amount_mismatch' });
+  });
+
+  // THE UNPROBED DAMAGE CLASS: an update that omits unitPrice is legal, and an
+  // ASP.NET update model can bind the omitted field as null and zero a
+  // correctly priced line. The tool cannot prevent it without a probe, but it
+  // must never report it as success.
+  it('update WITHOUT unitPrice: amount_mismatch when ST zeroes the existing price (null-overwrite detected against the pre-write baseline)', async () => {
+    const sim = makeInvoiceEnv({
+      items: [{ id: 700, description: 'HVAC Install', quantity: 1, price: 9771 }],
+      persistedPrice: () => 0, // ST binds the absent unitPrice as null → $0.00
+    });
+    const err: any = await runConfirm(sim.env, {
+      invoiceId: 111,
+      lineItems: [{ id: 700, description: 'HVAC Install (renamed)', quantity: 1 }],
+    }).catch((e) => e);
+    expect(err.code).toBe('amount_mismatch');
+    expect(err.details.before).toBe(9771);
+    expect(err.details.after).toBe(0);
+    expect(err.message).toMatch(/WITHOUT unitPrice/);
+  });
+
+  it('update WITHOUT unitPrice: verified=true when ST leaves the existing price untouched', async () => {
+    const sim = makeInvoiceEnv({ items: [{ id: 700, description: 'HVAC Install', quantity: 1, price: 9771 }] });
+    const result: any = await runConfirm(sim.env, {
+      invoiceId: 111,
+      lineItems: [{ id: 700, description: 'HVAC Install (renamed)', quantity: 1 }],
+    });
+    expect(result.verified).toBe(true);
+  });
+
+  it('raises silent_noop when an updated item id is absent from the re-read', async () => {
+    const sim = makeInvoiceEnv({
+      items: [{ id: 700, description: 'HVAC Install', quantity: 1, price: 9771 }],
+      onRead: ({ writeCount }) =>
+        writeCount > 0
+          ? new Response(JSON.stringify({ data: [{ id: 111, syncStatus: 'Pending', items: [] }] }), { status: 200 })
+          : undefined,
+    });
+    await expect(
+      runConfirm(sim.env, { invoiceId: 111, lineItems: [{ id: 700, description: 'x', quantity: 1, unitPrice: 5 }] })
+    ).rejects.toMatchObject({ code: 'silent_noop' });
   });
 });
 
@@ -808,18 +993,98 @@ describe('st_create_material primaryVendor (QUA-685)', () => {
 import { st_create_adjustment_invoice } from '../invoicing/st_create_adjustment_invoice';
 
 describe('st_create_adjustment_invoice', () => {
-  function makeParentEnv(parentInvoice: unknown) {
-    return {
+  // ── ServiceTitan simulator ──────────────────────────────────
+  // Models the three surfaces this tool now touches: the D1 pricebook mirror
+  // (skuName resolution), the invoices read (parent + the CREATED adjustment,
+  // dispatched by the `ids` filter), and the write. The created invoice is
+  // read back so the post-write verify-read has something real to assert —
+  // adjustment invoice 84402274 proved that "HTTP 200 + an id" says nothing
+  // about whether any line or any dollar landed.
+  function defaultCreatedItems(payload: any) {
+    return (payload.items ?? []).map((it: any, i: number) => ({
+      id: 5001 + i,
+      skuName: it.skuName,
+      description: it.description,
+      quantity: it.quantity,
+      cost: it.cost,
+      price: it.unitPrice ?? 0, // READ-side field name; no price sent → $0.00
+    }));
+  }
+
+  function makeAdjustEnv(opts: {
+    parent?: Record<string, unknown>;
+    /** 'resolved' (default) | 'missing' (mirror says no such SKU) | 'error' (mirror unreachable) */
+    sku?: 'resolved' | 'missing' | 'error';
+    createdInvoiceId?: number;
+    writeResponse?: (payload: any) => Response;
+    createdItems?: (payload: any) => any;
+    onRead?: (state: { ids: number; writeCount: number }) => Response | undefined;
+  } = {}) {
+    const parent = { id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 }, ...(opts.parent ?? {}) };
+    const createdId = opts.createdInvoiceId ?? 333;
+    let created: any = null;
+    let writeCount = 0;
+    const writeCalls: any[] = [];
+
+    const env: any = {
       ST_PROXY: {
-        fetch: vi.fn(async (url: string) => {
+        fetch: vi.fn(async (url: string, init?: RequestInit) => {
           if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
-          return new Response(JSON.stringify({ data: [parentInvoice] }), { status: 200 });
+
+          // D1 pricebook mirror (skuName resolution).
+          if (url.endsWith('/api/sql/read')) {
+            if (opts.sku === 'error') return new Response('mirror down', { status: 400 });
+            const sql = String(JSON.parse(init!.body as string).sql ?? '');
+            if (/COUNT/i.test(sql)) {
+              return new Response(JSON.stringify({ success: true, results: [{ n: 4821 }] }), { status: 200 });
+            }
+            const results = opts.sku === 'missing' ? [] : [{ kind: 'service', code: 'HI1', name: 'HI1' }];
+            return new Response(JSON.stringify({ success: true, results }), { status: 200 });
+          }
+
+          if (url.endsWith('/api/st/write')) {
+            const body = JSON.parse(init!.body as string);
+            writeCalls.push(body);
+            writeCount++;
+            if (opts.writeResponse) return opts.writeResponse(body.payload);
+            const items = (opts.createdItems ?? defaultCreatedItems)(body.payload);
+            const subTotal = (Array.isArray(items) ? items : []).reduce(
+              (s: number, it: any) => s + (it.price ?? 0) * (it.quantity ?? 0), 0
+            );
+            created = { id: createdId, adjustmentToId: parent.id, syncStatus: 'Pending', items, subTotal, total: subTotal };
+            return new Response(JSON.stringify({ id: createdId, status: 'ok' }), { status: 200 });
+          }
+
+          const ids = Number(decodeURIComponent(url).match(/ids=(\d+)/)?.[1]);
+          const override = opts.onRead?.({ ids, writeCount });
+          if (override) return override;
+          if (ids === createdId) {
+            return new Response(JSON.stringify({ data: created ? [created] : [] }), { status: 200 });
+          }
+          return new Response(JSON.stringify({ data: [parent] }), { status: 200 });
         }),
       },
       MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
-      DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '',
+      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }),
+      PROXY_STATE: {}, SIRO_API_TOKEN: '',
+      // Test seam — production uses the real 2s/10s read-after-write backoff.
+      VERIFY_BACKOFF_MS: [0, 0],
     };
+    return { env, writeCalls, get writeCount() { return writeCount; } };
   }
+
+  async function runConfirm(env: any, args: any) {
+    const dr: any = await st_create_adjustment_invoice.handler(env, args, CTX);
+    return st_create_adjustment_invoice.handler(
+      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+    ) as Promise<any>;
+  }
+
+  function makeParentEnv(parentInvoice: Record<string, unknown>) {
+    return makeAdjustEnv({ parent: parentInvoice }).env;
+  }
+
+  const OFFSET_LINE = { skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -998484 };
 
   it('throws validation_error when lineItems is empty', async () => {
     const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null });
@@ -829,11 +1094,9 @@ describe('st_create_adjustment_invoice', () => {
   });
 
   it('throws not_found when the parent invoice does not exist', async () => {
-    const env = {
-      ST_PROXY: { fetch: vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) },
-      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
-      DB: makeDB(), PROXY_STATE: {}, SIRO_API_TOKEN: '',
-    };
+    const env = makeAdjustEnv({
+      onRead: ({ ids }) => (ids === 999999 ? new Response(JSON.stringify({ data: [] }), { status: 200 }) : undefined),
+    }).env;
     await expect(
       st_create_adjustment_invoice.handler(env as any, { parentInvoiceId: 999999, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -200 }] }, CTX)
     ).rejects.toMatchObject({ code: 'not_found' });
@@ -856,9 +1119,7 @@ describe('st_create_adjustment_invoice', () => {
   it('dryRun=true returns DryRunResult with token for a valid Exported parent', async () => {
     const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
     const result: any = await st_create_adjustment_invoice.handler(
-      env as any,
-      { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -998484 }] },
-      CTX
+      env as any, { parentInvoiceId: 222, lineItems: [OFFSET_LINE] }, CTX
     );
     expect(result.dryRun).toBe(true);
     expect(result.tool).toBe('st_create_adjustment_invoice');
@@ -882,48 +1143,37 @@ describe('st_create_adjustment_invoice', () => {
     expect(unnetted.warnings.some((w: string) => w.includes('does not net'))).toBe(true);
   });
 
-  it('confirm call executes via /api/st/write with correct endpoint/method/payload (NOT durableWrite)', async () => {
-    let writeCall: { url: string; body: any } | undefined;
-    const env: any = {
-      ST_PROXY: {
-        fetch: vi.fn(async (url: string, init?: RequestInit) => {
-          if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
-          if (url.endsWith('/api/st/write')) {
-            writeCall = { url, body: JSON.parse(init!.body as string) };
-            return new Response(JSON.stringify({ id: 333, status: 'ok' }), { status: 200 });
-          }
-          return new Response(JSON.stringify({ data: [{ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } }] }), { status: 200 });
-        }),
-      },
-      MCP_SYNC_KEY: 'test-sync-key', MCP_SERVICE_VERSION: '0.0.0-test', ST_TENANT_ID: '000000000',
-      DB: makeDB({ consumed_at: null, expires_at: Date.now() + 1_000_000 }), PROXY_STATE: {}, SIRO_API_TOKEN: '',
-    };
-
-    const args = { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -998484 }] };
-    const dr: any = await st_create_adjustment_invoice.handler(env, args, CTX);
+  it('warns when a line omits unitPrice — ST creates it at $0.00 and it offsets nothing', async () => {
+    const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null });
     const result: any = await st_create_adjustment_invoice.handler(
-      env, { ...args, dryRun: false, confirmation_token: dr.confirmation_token }, CTX
+      env as any, { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1 }] }, CTX
     );
+    expect(result.warnings.some((w: string) => /\$0\.00/.test(w) && /unitPrice/.test(w))).toBe(true);
+  });
+
+  it('confirm call executes via /api/st/write with correct endpoint/method/payload (NOT durableWrite)', async () => {
+    const sim = makeAdjustEnv();
+    const result: any = await runConfirm(sim.env, { parentInvoiceId: 222, lineItems: [OFFSET_LINE] });
 
     expect(result.dryRun).toBe(false);
     // durableWrite would hit /api/st/durable-write — assert it never does.
-    expect(env.ST_PROXY.fetch.mock.calls.some((c: any[]) => String(c[0]).includes('durable-write'))).toBe(false);
-    expect(writeCall!.url).toBe('https://servicetitan-proxy/api/st/write');
-    expect(writeCall!.body.endpoint).toBe('/accounting/v2/tenant/000000000/invoices');
-    expect(writeCall!.body.method).toBe('POST');
+    expect(sim.env.ST_PROXY.fetch.mock.calls.some((c: any[]) => String(c[0]).includes('durable-write'))).toBe(false);
+    const writeCall = sim.writeCalls[0];
+    expect(writeCall.endpoint).toBe('/accounting/v2/tenant/000000000/invoices');
+    expect(writeCall.method).toBe('POST');
     // CONFIRMED shape (live probe 2026-07-31): the line array is `items`, NOT
     // `lineItems`. Sending `lineItems` was silently dropped and produced a
     // ZERO-ITEM $0.00 adjustment invoice behind an HTTP 200 (real damage:
     // adjustment invoice 84402274 against parent 83058736, undeletable via API).
-    expect(writeCall!.body.payload).toMatchObject({
+    expect(writeCall.payload).toMatchObject({
       adjustmentToId: 222,
       items: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -998484 }],
     });
-    expect(writeCall!.body.payload).not.toHaveProperty('lineItems');
+    expect(writeCall.payload).not.toHaveProperty('lineItems');
     // Top-level businessUnitId / invoiceDate are silently ignored by ST — the
     // tool must not send them and must not pretend they take effect.
-    expect(writeCall!.body.payload).not.toHaveProperty('businessUnitId');
-    expect(writeCall!.body.payload).not.toHaveProperty('invoiceDate');
+    expect(writeCall.payload).not.toHaveProperty('businessUnitId');
+    expect(writeCall.payload).not.toHaveProperty('invoiceDate');
   });
 
   // ── Wire-shape guards for the adjustment endpoint (endpoint B) ──
@@ -950,6 +1200,8 @@ describe('st_create_adjustment_invoice', () => {
   });
 
   // REGRESSION GUARD: `price` on an adjustment item is silently ignored by ST.
+  // The zod schema now REJECTS it (see schemas.test.ts); this asserts the
+  // second layer — the allow-list payload builder.
   it('never emits `price` on an adjustment item — ST drops it and the adjustment lands at $0.00', async () => {
     const env = makeParentEnv({ id: 222, syncStatus: 'Exported', adjustmentToId: null, businessUnit: { id: 257 } });
     const dr: any = await st_create_adjustment_invoice.handler(
@@ -997,6 +1249,60 @@ describe('st_create_adjustment_invoice', () => {
     );
   });
 
+  // ── skuName resolution (pre-write) ─────────────────────────
+  // On the items-PATCH endpoint an unresolvable SKU fails LOUDLY (HTTP 500
+  // "Sku (Name:) is not found."). HERE it fails SILENTLY: the line is dropped
+  // and ST returns an empty $0.00 adjustment invoice that CANNOT be deleted
+  // via the API. So the name is resolved before the write, not diagnosed after.
+  it('rejects an unresolvable skuName at dryRun time, before any undeletable invoice exists', async () => {
+    const sim = makeAdjustEnv({ sku: 'missing' });
+    await expect(
+      st_create_adjustment_invoice.handler(
+        sim.env, { parentInvoiceId: 222, lineItems: [{ skuName: 'HI-1', description: 'Offset', quantity: 1, unitPrice: -100 }] }, CTX
+      )
+    ).rejects.toMatchObject({ code: 'validation_error', message: expect.stringContaining('does not exist in the pricebook') });
+    expect(sim.writeCount).toBe(0);
+  });
+
+  it('rejects an unresolvable skuName on the CONFIRM call too (a SKU that vanishes between preview and write)', async () => {
+    // Preview with a working mirror, then confirm against one that no longer
+    // knows the SKU: the write must not go out.
+    const good = makeAdjustEnv();
+    const dr: any = await st_create_adjustment_invoice.handler(
+      good.env, { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100 }] }, CTX
+    );
+    const gone = makeAdjustEnv({ sku: 'missing' });
+    await expect(
+      st_create_adjustment_invoice.handler(
+        gone.env,
+        { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100 }], dryRun: false, confirmation_token: dr.confirmation_token },
+        CTX
+      )
+    ).rejects.toMatchObject({ code: 'validation_error' });
+    expect(gone.writeCount).toBe(0);
+  });
+
+  // FAIL OPEN on infrastructure: a mirror that is down must not block a
+  // legitimate adjustment — it is reported as unverified instead.
+  it('does NOT block when the pricebook mirror is unreachable — it reports the SKU as unverified', async () => {
+    const sim = makeAdjustEnv({ sku: 'error' });
+    const dr: any = await st_create_adjustment_invoice.handler(
+      sim.env, { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100 }] }, CTX
+    );
+    expect(dr.dryRun).toBe(true);
+    expect(dr.skuResolution.unverified).toHaveLength(1);
+    expect(dr.skuResolution.unverified[0].skuName).toBe('HI1');
+  });
+
+  it('reports a resolved SKU on the dryRun result', async () => {
+    const sim = makeAdjustEnv();
+    const dr: any = await st_create_adjustment_invoice.handler(
+      sim.env, { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100 }] }, CTX
+    );
+    expect(dr.skuResolution.unverified).toHaveLength(0);
+    expect(dr.skuResolution.resolved[0]).toMatchObject({ status: 'resolved', skuName: 'HI1' });
+  });
+
   // ── Fix 1: ids filter not honored guard ────────────────────
   it('throws upstream_error when the invoices list endpoint returns a different id than requested (ids filter not honored)', async () => {
     // Parent read returns id 999 even though parentInvoiceId 222 was requested —
@@ -1023,8 +1329,13 @@ describe('st_create_adjustment_invoice', () => {
     ];
     const env: any = {
       ST_PROXY: {
-        fetch: vi.fn(async (url: string) => {
+        fetch: vi.fn(async (url: string, init?: RequestInit) => {
           if (url.includes('dryRun=1')) return new Response(JSON.stringify({ echo: true }), { status: 200 });
+          if (url.endsWith('/api/sql/read')) {
+            const sql = String(JSON.parse(init!.body as string).sql ?? '');
+            if (/COUNT/i.test(sql)) return new Response(JSON.stringify({ success: true, results: [{ n: 1 }] }), { status: 200 });
+            return new Response(JSON.stringify({ success: true, results: [{ kind: 'service', code: 'HI1', name: 'HI1' }] }), { status: 200 });
+          }
           if (url.endsWith('/api/st/write')) {
             throw new Error('should not reach the live write — TOCTOU must reject before this');
           }
@@ -1068,5 +1379,98 @@ describe('st_create_adjustment_invoice', () => {
     );
     expect(result.dryRun).toBe(true);
     expect(result.confirmation_token).toBeTypeOf('string');
+  });
+
+  // ── POST-WRITE VERIFY-READ ─────────────────────────────────
+  // 84402274 was created by an HTTP 200 and carried zero items at $0.00.
+  // Every failure below must NAME the created invoice id: adjustment invoices
+  // are not deletable through the API, so a stray one nobody can name is the
+  // worst outcome this tool has.
+
+  it('verified=true returns the created adjustment invoice id and the totals ServiceTitan actually persisted', async () => {
+    const sim = makeAdjustEnv();
+    const result: any = await runConfirm(sim.env, {
+      parentInvoiceId: 222,
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -9771 }],
+    });
+    expect(result.verified).toBe(true);
+    expect(result.adjustmentInvoiceId).toBe(333);
+    expect(result.verification).toMatchObject({
+      adjustmentInvoiceId: 333, parentInvoiceId: 222,
+      itemsSubmitted: 1, itemsLanded: 1, expectedTotal: -9771, actualTotal: -9771,
+    });
+  });
+
+  it('raises silent_noop naming the created invoice id when the adjustment lands with ZERO items (the 84402274 failure)', async () => {
+    const sim = makeAdjustEnv({ createdItems: () => null }); // ST returns items: null
+    const err: any = await runConfirm(sim.env, {
+      parentInvoiceId: 222,
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -9771 }],
+    }).catch((e) => e);
+    expect(err.code).toBe('silent_noop');
+    expect(err.message).toContain('333');
+    expect(err.message).toMatch(/not deletable via the ST API/i);
+    expect(err.details.adjustmentInvoiceId).toBe(333);
+  });
+
+  it('raises silent_noop when ServiceTitan drops SOME of the submitted lines', async () => {
+    const sim = makeAdjustEnv({ createdItems: (p: any) => defaultCreatedItems(p).slice(0, 1) });
+    const err: any = await runConfirm(sim.env, {
+      parentInvoiceId: 222,
+      lineItems: [
+        { skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -9771 },
+        { skuName: 'HI1', description: 'Offset 2', quantity: 1, unitPrice: -100 },
+      ],
+    }).catch((e) => e);
+    expect(err.code).toBe('silent_noop');
+    expect(err.details).toMatchObject({ adjustmentInvoiceId: 333, submitted: 2, landed: 1 });
+  });
+
+  it('raises amount_mismatch when the lines land but the money does not', async () => {
+    const sim = makeAdjustEnv({
+      createdItems: (p: any) => defaultCreatedItems(p).map((it: any) => ({ ...it, price: 0 })),
+    });
+    const err: any = await runConfirm(sim.env, {
+      parentInvoiceId: 222,
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -9771 }],
+    }).catch((e) => e);
+    expect(err.code).toBe('amount_mismatch');
+    expect(err.details).toMatchObject({ adjustmentInvoiceId: 333, expected: -9771, actual: 0 });
+    expect(err.message).toContain('333');
+  });
+
+  it('raises verify_unavailable — warning that an invoice MAY exist — when the create response carries no id', async () => {
+    const sim = makeAdjustEnv({ writeResponse: () => new Response(JSON.stringify({ status: 'ok' }), { status: 200 }) });
+    const err: any = await runConfirm(sim.env, {
+      parentInvoiceId: 222,
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -9771 }],
+    }).catch((e) => e);
+    expect(err.code).toBe('verify_unavailable');
+    expect(err.message).toMatch(/MAY EXIST/i);
+    expect(err.message).toMatch(/not deletable/i);
+  });
+
+  it('raises verify_unavailable naming the created id when the new invoice cannot be read back, and never re-sends the create', async () => {
+    const sim = makeAdjustEnv({
+      onRead: ({ ids, writeCount }) =>
+        ids === 333 && writeCount > 0 ? new Response(JSON.stringify({ data: [] }), { status: 200 }) : undefined,
+    });
+    const err: any = await runConfirm(sim.env, {
+      parentInvoiceId: 222,
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -9771 }],
+    }).catch((e) => e);
+    expect(err.code).toBe('verify_unavailable');
+    expect(err.message).toContain('333');
+    // A retry would create a SECOND undeletable adjustment invoice.
+    expect(sim.writeCount).toBe(1);
+  });
+
+  it('treats an HTTP 200 with an {ok:false} proxy envelope as a failure, not success', async () => {
+    const sim = makeAdjustEnv({
+      writeResponse: () => new Response(JSON.stringify({ ok: false, message: 'ST rejected the create' }), { status: 200 }),
+    });
+    await expect(
+      runConfirm(sim.env, { parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -9771 }] })
+    ).rejects.toMatchObject({ code: 'upstream_error', message: expect.stringContaining('ok:false') });
   });
 });

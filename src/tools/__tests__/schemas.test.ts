@@ -364,25 +364,44 @@ describe('st_add_invoice_line_item schema', () => {
     expect(s.safeParse({ invoiceId: 111, lineItems: [] }).success).toBe(false);
   });
 
-  // REGRESSION GUARD: `price` is silently dropped by ST on this endpoint —
-  // sending it produced $0.00 line items behind an HTTP 200. `unitPrice` is
-  // the real field. If someone reintroduces `price` to the schema, this fails.
-  it('strips fields that do not exist on the confirmed ST model (price, type, generalLedgerAccountId, businessUnitId) instead of preserving them', () => {
+  // REGRESSION GUARD (inverted 2026-07-31 per adversarial review): silently
+  // STRIPPING a caller's `price` recreates the $0.00-write defect one layer up
+  // — the caller believes they set the money, the wire carries nothing. Every
+  // field that is not on the confirmed ST model must be REJECTED loudly, and
+  // `price` specifically must point the caller at `unitPrice`.
+  it('REJECTS a line item carrying `price` — with an error that names unitPrice as the fix', () => {
     const r: any = s.safeParse({
       invoiceId: 111,
-      lineItems: [{
-        description: 'x', quantity: 1,
-        price: 200, type: 'Service', generalLedgerAccountId: 1, businessUnitId: 2,
-      }],
+      lineItems: [{ description: 'x', quantity: 1, price: 200 }],
     });
-    expect(r.success).toBe(true); // zod strips unknown keys by default rather than rejecting them
-    expect(r.data.lineItems[0]).not.toHaveProperty('price');
-    expect(r.data.lineItems[0]).not.toHaveProperty('type');
-    expect(r.data.lineItems[0]).not.toHaveProperty('generalLedgerAccountId');
-    expect(r.data.lineItems[0]).not.toHaveProperty('businessUnitId');
+    expect(r.success).toBe(false);
+    const messages = r.error.issues.map((i: any) => i.message).join(' | ');
+    expect(messages).toMatch(/unitPrice/);
   });
 
-  it('no longer has a jobId argument — job-link reassignment is not an API capability, so a stray jobId is stripped, not honored', () => {
+  it('REJECTS line-item fields that do not exist on the confirmed ST model (type, generalLedgerAccountId, businessUnitId, and any unknown key)', () => {
+    for (const bad of [
+      { type: 'Service' },
+      { generalLedgerAccountId: 1 },
+      { businessUnitId: 2 },
+      { totallyUnknownKey: 3 },
+    ]) {
+      const r = s.safeParse({
+        invoiceId: 111,
+        lineItems: [{ description: 'x', quantity: 1, ...bad }],
+      });
+      expect(r.success).toBe(false);
+    }
+  });
+
+  it('REJECTS an empty-string skuName on an append line (would 500 at ST mid-sequence otherwise)', () => {
+    expect(s.safeParse({
+      invoiceId: 111,
+      lineItems: [{ skuName: '', description: 'x', quantity: 1 }],
+    }).success).toBe(false);
+  });
+
+  it('no longer has a jobId argument — job-link reassignment is not an API capability; the top-level SDK schema strips it (documented limitation: top-level unknown keys are outside this tool\'s zod shape)', () => {
     const r: any = s.safeParse({ invoiceId: 111, jobId: 42, lineItems: [{ description: 'x', quantity: 1 }] });
     expect(r.success).toBe(true);
     expect(r.data).not.toHaveProperty('jobId');
@@ -426,35 +445,57 @@ describe('st_create_adjustment_invoice schema', () => {
     expect(s.safeParse({ parentInvoiceId: 222, lineItems: [] }).success).toBe(false);
   });
 
-  // REGRESSION GUARD: reintroducing `price` (or skuId/type/GL/BU) to this
-  // schema would silently resurrect the $0.00-adjustment bug.
-  it('strips fields ST silently ignores on this endpoint (skuId, price, type, generalLedgerAccountId, businessUnitId)', () => {
+  // REGRESSION GUARD (inverted 2026-07-31 per adversarial review): stripping a
+  // caller's `price` IS the $0.00-adjustment vector, one layer up from ST.
+  // Everything not on the confirmed items[] model must be rejected loudly,
+  // with `price` → unitPrice and `skuId` → skuName guidance.
+  it('REJECTS an items[] line carrying `price` — with an error that names unitPrice as the fix', () => {
     const r: any = s.safeParse({
       parentInvoiceId: 222,
-      lineItems: [{
-        skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100,
-        skuId: 1, price: -999, type: 'Service', generalLedgerAccountId: 3, businessUnitId: 4,
-      }],
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, price: -999 }],
     });
-    expect(r.success).toBe(true); // zod strips unknown keys rather than rejecting
-    expect(r.data.lineItems[0]).not.toHaveProperty('skuId');
-    expect(r.data.lineItems[0]).not.toHaveProperty('price');
-    expect(r.data.lineItems[0]).not.toHaveProperty('type');
-    expect(r.data.lineItems[0]).not.toHaveProperty('generalLedgerAccountId');
-    expect(r.data.lineItems[0]).not.toHaveProperty('businessUnitId');
-    expect(r.data.lineItems[0].unitPrice).toBe(-100);
+    expect(r.success).toBe(false);
+    expect(r.error.issues.map((i: any) => i.message).join(' | ')).toMatch(/unitPrice/);
   });
 
-  it('no longer has top-level businessUnitId / invoiceDate args — ST ignores both, so they are stripped rather than honored', () => {
+  it('REJECTS an items[] line carrying `skuId` — with an error that names skuName as the fix (this endpoint resolves by name only)', () => {
+    const r: any = s.safeParse({
+      parentInvoiceId: 222,
+      lineItems: [{ skuId: 62958024, skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100 }],
+    });
+    expect(r.success).toBe(false);
+    expect(r.error.issues.map((i: any) => i.message).join(' | ')).toMatch(/skuName/);
+  });
+
+  it('REJECTS items[] fields ST silently ignores on this endpoint (type, generalLedgerAccountId, businessUnitId, unknown keys)', () => {
+    for (const bad of [
+      { type: 'Service' },
+      { generalLedgerAccountId: 3 },
+      { businessUnitId: 4 },
+      { anythingElse: true },
+    ]) {
+      const r = s.safeParse({
+        parentInvoiceId: 222,
+        lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100, ...bad }],
+      });
+      expect(r.success).toBe(false);
+    }
+  });
+
+  // Tombstoned top-level args: ST ignores both, and silently stripping them
+  // would be the same silent-no-op UX at the zod layer. They reject with an
+  // explanatory message instead.
+  it('REJECTS the removed top-level businessUnitId / invoiceDate args with explanatory errors', () => {
     const r: any = s.safeParse({
       parentInvoiceId: 222,
       businessUnitId: 257,
       invoiceDate: '2026-07-31',
       lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100 }],
     });
-    expect(r.success).toBe(true);
-    expect(r.data).not.toHaveProperty('businessUnitId');
-    expect(r.data).not.toHaveProperty('invoiceDate');
+    expect(r.success).toBe(false);
+    const messages = r.error.issues.map((i: any) => i.message).join(' | ');
+    expect(messages).toMatch(/removed 2026-07-31/);
+    expect(messages).toMatch(/inherits the parent/);
   });
 
   it('keeps summary — it IS accepted at the top level by ST', () => {
