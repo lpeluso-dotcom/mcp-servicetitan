@@ -48,13 +48,6 @@ esac
 [[ -z "${MCP_SYNC_KEY:-}" ]] && { echo "❌ MCP_SYNC_KEY not set"; exit 2; }
 command -v jq >/dev/null || { echo "❌ jq required"; exit 2; }
 
-# Write tools (excluded). Source: grep "defineWriteTool|durableWrite" src/tools/.
-# Plus st_call (admin gateway) since it's role-gated and shouldn't be in default sweep.
-WRITES="add_customer_note add_job_note assign_technicians book_job hold_appointment
-reschedule_appointment update_estimate_status create_call_with_campaign
-st_post_marketing_attribution create_recurring_service create_task st_call
-st_create_material st_create_service st_patch_material st_patch_service"
-
 OUT="/tmp/mcp-st-all-tools-smoke-$(date +%Y%m%d-%H%M%S).csv"
 echo "tool,status,latency_ms,note" > "$OUT"
 
@@ -81,17 +74,34 @@ TOOL_COUNT="$(echo "$TOOL_NAMES" | grep -c .)"
 [[ "$TOOL_COUNT" -lt 60 ]] && { echo "❌ tools/list returned only $TOOL_COUNT tools — abort"; exit 1; }
 echo "  Got $TOOL_COUNT tools"
 
-# 2. Filter to reads
-READS=""
-for TOOL in $TOOL_NAMES; do
-  IS_WRITE=0
-  for W in $WRITES; do
-    [[ "$TOOL" == "$W" ]] && { IS_WRITE=1; break; }
-  done
-  [[ "$IS_WRITE" -eq 0 ]] && READS="$READS $TOOL"
-done
+# 2. Filter to reads — DENY BY DEFAULT, derived from the wire (QUA-1044).
+#
+# This sweep invokes each selected tool with EMPTY ARGS against a live deploy
+# target (prod included), so the selection is a safety boundary, not a
+# convenience. It used to subtract a hand-maintained WRITES name list and
+# sweep everything else — which meant every write tool added after that list
+# was written became CI-invocable on prod by default. It rotted twice: 9 real
+# write tools uncovered (including the st_add_invoice_line_item /
+# st_create_adjustment_invoice money-writes and save_tech_debrief, which
+# bypasses the write gate and INSERTs straight into own-D1), plus a phantom
+# entry that was a filename and had never matched anything. Only Zod
+# required-field rejection stood between the sweep and a live write.
+#
+# Now: a tool is swept ONLY if it explicitly advertises readOnlyHint == true.
+# Anything else — readOnlyHint false, absent, or a new tool that forgot its
+# annotations — is excluded. Mirrors isSweepEligible() in src/tool-registry.ts;
+# both are pinned by src/tools/__tests__/smoke_sweep_denylist.test.ts.
+READS="$(echo "$TOOLS_JSON" | jq -r '.tools[] | select(.annotations.readOnlyHint == true) | .name' 2>/dev/null | tr '\n' ' ')"
 READ_COUNT="$(echo "$READS" | wc -w)"
-echo "  Filtered to $READ_COUNT reads ($((TOOL_COUNT - READ_COUNT)) writes excluded)"
+EXCLUDED=$((TOOL_COUNT - READ_COUNT))
+echo "  Filtered to $READ_COUNT reads ($EXCLUDED excluded: writes + any tool not explicitly readOnlyHint:true)"
+
+# A wire that carries no usable annotations would silently collapse the sweep
+# to zero tools and still exit 0 — a green run that tested nothing. Fail loud.
+[[ "$READ_COUNT" -lt 50 ]] && {
+  echo "❌ only $READ_COUNT of $TOOL_COUNT tools are annotated readOnlyHint:true — refusing to run a near-empty sweep"
+  exit 1
+}
 
 # 3. Iterate reads
 PASS=0; NEEDS_ARGS=0; FAIL=0
