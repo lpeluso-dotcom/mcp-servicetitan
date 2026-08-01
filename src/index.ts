@@ -19,7 +19,7 @@ import { registerTool, type RequestContext } from './tool-registry';
 import { registerPrompts } from './prompts/index';
 import { registerResultResource } from './resources/results';
 import { registerCatalogResources } from './resources/catalogs';
-import { resolveAuth, verifyConnectorToken } from './auth';
+import { resolveAuth } from './auth';
 import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
 import { unackedErrorsHandler } from './routes/admin-errors';
@@ -261,32 +261,11 @@ export function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: Request
   return server;
 }
 
-// Plain 401 for the connector route — deliberately NO www-authenticate header (a challenge
-// would make Claude attempt an OAuth flow). CORS headers included so claude.ai surfaces the
-// error rather than a CORS failure. The token is never echoed or logged.
-function unauthorizedConnectorResponse(request: Request): Response {
-  const corsOptions = corsOptionsFor(request);
-  return new Response(
-    JSON.stringify({ error: 'unauthorized', message: 'invalid or expired connector token' }),
-    {
-      status: 401,
-      headers: {
-        'content-type': 'application/json',
-        'access-control-allow-origin': corsOptions.origin,
-        'access-control-allow-methods': corsOptions.methods,
-        'access-control-allow-headers': corsOptions.headers,
-        'access-control-expose-headers': corsOptions.exposeHeaders,
-        vary: 'origin',
-      },
-    }
-  );
-}
-
 // ─── Export ───────────────────────────────────────────────────
 // defaultHandler for the OAuthProvider: the worker's existing router. The provider serves
 // /.well-known/oauth-authorization-server + /token + /register and Bearer-gates /mcp-oauth via the
-// apiHandler; every other path (Hono /health|/admin|/webhooks, keyed /mcp, disabled /c/<token>/mcp)
-// falls through here unchanged.
+// apiHandler; every other path (Hono /health|/admin|/webhooks, keyed /mcp) falls through here
+// unchanged. `/c/<token>/mcp` was DELETED 2026-08-01 (QUA-1117) — see the note at its old site.
 async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
@@ -296,29 +275,25 @@ async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContex
     const oauthRoute = await handleOAuthRoute(request, env, url);
     if (oauthRoute) return oauthRoute;
 
-    // ── /c/<token>/mcp — Claude Desktop custom-connector entry (QUA, Jessica Hunt, READ-ONLY). ──
-    // Desktop's connector UI accepts only a URL (no custom header), so the secret lives in the URL
-    // path and IS the credential. A valid token resolves to its role (Jessica = 'readonly', which
-    // registers ZERO write tools) and dispatches through the SAME per-request McpServer flow after
-    // rewriting the path to /mcp (the SDK handler is bound to that route). Invalid/expired token →
-    // plain 401 with NO www-authenticate (so Claude does not attempt OAuth). Token is never logged.
-    const connMatch = url.pathname.match(/^\/c\/([A-Za-z0-9_-]+)\/mcp$/);
-    if (connMatch) {
-      let reqCtx: RequestContext;
-      if (request.method === 'OPTIONS') {
-        reqCtx = { actor: 'preflight', role: 'readonly' };
-      } else {
-        const conn = await verifyConnectorToken(connMatch[1], env);
-        if (!conn) return unauthorizedConnectorResponse(request);
-        reqCtx = { actor: conn.owner, role: conn.role };
-      }
-      const runtimeEnv = env; // tenant placeholder resolution is done at each data-helper call site (readST/stRead/write-factory)
-      const server = buildServer(runtimeEnv, execCtx, reqCtx);
-      const handler = createMcpHandler(server, { route: '/mcp', corsOptions: corsOptionsFor(request) });
-      const rewrittenUrl = new URL(request.url);
-      rewrittenUrl.pathname = '/mcp';
-      return handler(new Request(rewrittenUrl.toString(), request), runtimeEnv, execCtx);
-    }
+    // ── /c/<token>/mcp — DELETED 2026-08-01 (QUA-1117 item 3). ──
+    // This was the Claude Desktop custom-connector entry: Desktop's UI accepts only a URL, so the
+    // secret lived in the path and WAS the credential. It is gone rather than secret-gated, and
+    // the distinction matters. The route stayed compiled and reachable, disabled only by an unset
+    // secret — the 2026-08-01 audit probed it and got 401, not 404, on both this worker and
+    // qsc-hopper. Worse, a URL token carried its OWN role: a row minted role:'default' reached all
+    // 24 write tools, so the read-only guarantee the connector existed to provide could be
+    // bypassed by whoever minted the token. A credential in a URL also lands in browser history,
+    // proxy logs and referrer headers, none of which the worker controls.
+    //
+    // There is no replacement path here: use the header-authenticated /mcp door, or /mcp-oauth,
+    // both of which resolve role from a credential the caller cannot choose.
+    //
+    // Falls through to Hono below (the path does not start with /mcp) → 404, which is what
+    // scripts/probe-connector-guards.sh section 1 asserts.
+    //
+    // The D1 table `mcp_auth_tokens` (migration 0004) is deliberately LEFT IN PLACE — dropping a
+    // prod D1 table needs an R2 backup and Luke's approval per protected-modules.md. Nothing reads
+    // it now; removing it is a separate, gated cleanup.
 
     // Dispatch non-MCP routes to Hono.
     if (
