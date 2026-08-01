@@ -140,6 +140,14 @@ const ST_ADJUSTMENT_ITEM_FIELDS: readonly (keyof AdjustmentLineItemInput)[] = [
   'skuName', 'description', 'quantity', 'cost', 'unitPrice',
 ];
 
+// Deletion guard: `keyof` above catches RENAMES but not DELETIONS — removing a
+// name from the list still typechecks and silently stops sending that field
+// (the same silent-no-op class). This makes a deletion a compile error too.
+type _AdjFieldsComplete =
+  Exclude<keyof AdjustmentLineItemInput, (typeof ST_ADJUSTMENT_ITEM_FIELDS)[number]> extends never ? true : never;
+const _adjFieldsComplete: _AdjFieldsComplete = true;
+void _adjFieldsComplete;
+
 function toStAdjustmentItemPayload(item: AdjustmentLineItemInput): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const field of ST_ADJUSTMENT_ITEM_FIELDS) {
@@ -301,7 +309,7 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
     // an empty $0.00 adjustment invoice behind an HTTP 200.
     const payload: Record<string, unknown> = {
       adjustmentToId: parentInvoiceId,
-      ...(summary ? { summary } : {}),
+      ...(summary !== undefined ? { summary } : {}),
       items: lineItems.map(toStAdjustmentItemPayload),
     };
 

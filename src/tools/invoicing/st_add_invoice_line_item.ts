@@ -140,6 +140,14 @@ const ST_INVOICE_ITEM_FIELDS: readonly (keyof InvoiceLineItemInput)[] = [
   'id', 'skuId', 'skuName', 'description', 'quantity', 'cost', 'technicianId', 'unitPrice',
 ];
 
+// Deletion guard: `keyof` above catches RENAMES but not DELETIONS — removing a
+// name from the list still typechecks and silently stops sending that field
+// (the same silent-no-op class). This makes a deletion a compile error too.
+type _ItemFieldsComplete =
+  Exclude<keyof InvoiceLineItemInput, (typeof ST_INVOICE_ITEM_FIELDS)[number]> extends never ? true : never;
+const _itemFieldsComplete: _ItemFieldsComplete = true;
+void _itemFieldsComplete;
+
 function toStInvoiceItemPayload(item: InvoiceLineItemInput): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const field of ST_INVOICE_ITEM_FIELDS) {
@@ -344,11 +352,14 @@ export const st_add_invoice_line_item: ToolDef<Args> = {
     const itemPayloads = lineItems.map(toStInvoiceItemPayload);
 
     // dryRun preview lists ALL N calls as a compound payload, mirroring
-    // assign_technicians — what's approved must match what runs.
+    // assign_technicians — what's approved must match what runs, INCLUDING the
+    // endpoint: the preview shows the tenant-resolved URL, not the 000000000
+    // placeholder, so the approved steps literally match the executed calls.
+    const previewEndpoint = rewriteTenantPlaceholders(env, itemsEndpoint);
     const compoundPayload = {
       steps: itemPayloads.map((payload, i) => ({
         call: i + 1,
-        endpoint: itemsEndpoint,
+        endpoint: previewEndpoint,
         method: 'PATCH',
         payload,
       })),
