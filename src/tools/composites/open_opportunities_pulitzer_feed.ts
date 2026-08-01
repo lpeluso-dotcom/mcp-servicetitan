@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -116,7 +117,7 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
               o.estimate_amount, o.sold_estimate_amount, o.open_estimates_count,
               o.job_type_name, o.business_unit, o.technicians_json,
               o.location_name, o.location_address,
-              o.created_date, o.modified_date, o.job_completed_on,
+              o.created_date, o.modified_date, o.job_completed_on, o.synced_at,
               e.estimate_id      AS latest_estimate_id,
               e.summary          AS latest_estimate_name,
               e.status           AS latest_estimate_status,
@@ -143,6 +144,12 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
     const totalEstimateAmount = out.reduce((acc, r) => acc + (r.estimate_amount ?? 0), 0);
     const totalSoldAmount = out.reduce((acc, r) => acc + (r.sold_estimate_amount ?? 0), 0);
 
+    // MB-1 / QUA-1141: this feed drives Pulitzer's daily report. Reading the
+    // mirror raw meant an EMPTY `opportunities` table rendered as a confident
+    // `count: 0` — "clean board" — which is what happened in production. The
+    // count is only meaningful alongside the freshness of what produced it.
+    const freshness = stampMirrorFreshness(rows, { table: 'opportunities' });
+
     return {
       filters: {
         businessUnit: args.businessUnit ?? null,
@@ -153,10 +160,15 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
         count: out.length,
         total_estimate_amount: Number(totalEstimateAmount.toFixed(2)),
         total_sold_amount: Number(totalSoldAmount.toFixed(2)),
+        // A zero here is NOT self-evidently "no open opportunities" — say so
+        // in the summary itself, where a report generator will actually see
+        // it, rather than only in a sibling field it may never read.
+        count_is_authoritative: freshness._freshness === 'fresh',
       },
       opportunities: out,
       _composite: 'open_opportunities_pulitzer_feed',
       _source: 'd1',
+      ...freshness,
     };
   },
   transformResult: defaultShaper,

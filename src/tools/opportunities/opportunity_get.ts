@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { McpError } from '../../errors';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -82,7 +83,21 @@ export const opportunity_get: ToolDef<Args> = {
         [args.opportunityId],
       );
       if (rows.length === 0) {
-        return { status: 'not_found', opportunity: null, estimates: [], _source: 'd1' };
+        // MB-1 / QUA-1141: `not_found` here is a claim about the MIRROR, not
+        // about ServiceTitan. With the `opportunities` mirror empty in
+        // production this tool returned not_found for opportunities that
+        // genuinely exist — so say which one this is.
+        return {
+          status: 'not_found',
+          opportunity: null,
+          estimates: [],
+          _source: 'd1',
+          ...stampMirrorFreshness(rows, { table: 'opportunities' }),
+          _not_found_caveat:
+            `No row for opportunity ${args.opportunityId} in the taylor-ai D1 mirror. This does ` +
+            `NOT establish that the opportunity does not exist in ServiceTitan — the mirror has ` +
+            `been empty in production. Confirm against live ST before acting on this.`,
+        };
       }
       const opp = rows[0];
 
@@ -119,6 +134,7 @@ export const opportunity_get: ToolDef<Args> = {
         },
         estimates: estimates.map((e) => ({ ...e, active: e.active !== 0 })),
         _source: 'd1',
+        ...stampMirrorFreshness(rows, { table: 'opportunities' }),
       };
     } catch (err) {
       throw new McpError(
