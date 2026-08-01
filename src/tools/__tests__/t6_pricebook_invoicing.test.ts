@@ -176,6 +176,38 @@ describe('get_configurable_equipment_children', () => {
     expect(result.equipment).toEqual([]);
     expect(result.isConfigurableEquipment).toBe(false);
   });
+
+  // The defect this tool is being fixed for (2026-07-18) was that a nonexistent
+  // parent id still returned 50 unrelated equipment rows. Pin the replacement
+  // behaviour: the by-id GET 404s and that must surface as not_found, never as
+  // an empty-but-successful result that reads like "this parent has no variants".
+  it('surfaces a nonexistent parent as not_found, not an empty success', async () => {
+    const env = makeEnv(async () => new Response('{"message":"Not Found"}', { status: 404 }));
+    await expect(
+      get_configurable_equipment_children.handler(env, { parentEquipmentId: 999999999 }, CTX),
+    ).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('discloses truncation when a parent carries more variants than the hydration cap', async () => {
+    const variantIds = Array.from({ length: 30 }, (_, i) => 900000 + i);
+    const env = makeEnv(async (url: string) => {
+      const endpoint = decodeURIComponent(url.split('endpoint=')[1]);
+      const id = Number(endpoint.split('/equipment/')[1]);
+      if (id === 5150) {
+        return new Response(
+          JSON.stringify({ id: 5150, isConfigurableEquipment: true, variationsOrConfigurableEquipment: variantIds }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ id, displayName: `Variant ${id}` }), { status: 200 });
+    });
+    const result: any = await get_configurable_equipment_children.handler(env, { parentEquipmentId: 5150 }, CTX);
+    // Capping is fine; capping SILENTLY is the audit's P-2 anti-pattern — a
+    // caller must be able to tell 25-of-30 from a complete list of 25.
+    expect(result.equipment).toHaveLength(25);
+    expect(result.truncated).toBe(true);
+    expect(result.variant_count).toBe(30);
+  });
 });
 
 describe('list_service_categories', () => {
