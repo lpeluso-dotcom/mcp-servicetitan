@@ -282,8 +282,15 @@ export function findTool(name: string): ToolDef<any> | undefined {
  * Filter tools by caller role.
  *   - 'readonly' (QUA, Jessica Hunt Desktop connector): read-only reporting surface. Strips
  *     every isWrite=true tool and adminOnly tools — identical safe set as 'lockdown', but a
- *     PER-CONNECTOR role (not the global incident switch). The 18 write tools are never
+ *     PER-CONNECTOR role (not the global incident switch). The 24 write tools are never
  *     registered, so a readonly caller cannot write to ServiceTitan (removal, not gating).
+ *     Count corrected 2026-08-01 (was "18" — stale since at least v1.7.0). Do not hand-maintain
+ *     this number: src/__tests__/role-write-invariant.test.ts asserts the arithmetic and logs a
+ *     live census (total / readonly / stripped / isWrite / adminOnly) on every run.
+ *
+ *     NOTE the fail-open hazard this filter sits on: `isWrite?` is OPTIONAL, so a new write tool
+ *     that forgets the flag is served to readonly OAuth callers. That test's invariant 4
+ *     cross-checks the flag against each tool's declared ST HTTP method to catch exactly that.
  *   - 'lockdown' (v1.5.2): same read-only filter, applied GLOBALLY via MCP_LOCKDOWN.
  *   - 'admin':   full catalog including st_call escape hatch.
  *   - 'default': everything except adminOnly tools.
