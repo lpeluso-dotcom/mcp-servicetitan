@@ -17,8 +17,8 @@ function schemaOf(name: string) {
 // ── Registry sanity ──────────────────────────────────────────
 
 describe('tool registry', () => {
-  it('exports 104 tools (QUA-739 pricebook margin-discipline composites + Supabase-backed pricebook search tools; find_technician_by_name — name-based technician lookup wrapping name-resolver)', () => {
-    expect(TOOLS.length).toBe(104);
+  it('exports 109 tools (adds st_add_invoice_line_item + st_create_adjustment_invoice — invoice-write tools for the project-invoice/job-invoice misattribution fix)', () => {
+    expect(TOOLS.length).toBe(109);
   });
 
   it('every tool has name + description + zodSchema', () => {
@@ -49,7 +49,9 @@ describe('tool registry', () => {
       'reschedule_appointment',
       'save_tech_debrief',
       'sell_estimate',
+      'st_add_invoice_line_item',
       'st_call',
+      'st_create_adjustment_invoice',
       'st_create_material',
       'st_create_service',
       'st_patch_material',
@@ -66,8 +68,8 @@ describe('tool registry', () => {
   });
 
   it('toolsForRole("default") excludes st_call; admin includes it', () => {
-    expect(toolsForRole('default').length).toBe(103);
-    expect(toolsForRole('admin').length).toBe(104);
+    expect(toolsForRole('default').length).toBe(108);
+    expect(toolsForRole('admin').length).toBe(109);
     expect(toolsForRole('default').find((t) => t.name === 'st_call')).toBeUndefined();
     expect(toolsForRole('admin').find((t) => t.name === 'st_call')).toBeDefined();
   });
@@ -308,5 +310,236 @@ describe('siro_get_engagement schema', () => {
 
   it('accepts a non-empty string', () => {
     expect(s.safeParse({ engagementId: 'eng-xyz' }).success).toBe(true);
+  });
+});
+
+// ── st_add_invoice_line_item ─────────────────────────────────
+// Schema rewritten 2026-07-31 to the CONFIRMED InvoiceItemUpdateRequest
+// field set (live-probed). description + quantity are required; price,
+// generalLedgerAccountId, businessUnitId, and type no longer exist on the
+// real ST model and are gone from this schema too.
+
+describe('st_add_invoice_line_item schema', () => {
+  const s = schemaOf('st_add_invoice_line_item');
+
+  it('accepts a minimal valid line item (description + quantity only)', () => {
+    expect(s.safeParse({
+      invoiceId: 111,
+      lineItems: [{ description: 'Service call diagnostic', quantity: 1 }],
+    }).success).toBe(true);
+  });
+
+  it('accepts the full confirmed field set (including unitPrice — the real monetary field)', () => {
+    expect(s.safeParse({
+      invoiceId: 111,
+      lineItems: [{
+        id: 55, skuId: 1, skuName: 'Diagnostic Fee', description: 'Diagnostic Fee',
+        quantity: 1, cost: 45, technicianId: 9, unitPrice: 89,
+      }],
+    }).success).toBe(true);
+  });
+
+  it('accepts a NEGATIVE unitPrice (offsetting lines are expressed as negative unitPrice)', () => {
+    const r: any = s.safeParse({
+      invoiceId: 111,
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -13674 }],
+    });
+    expect(r.success).toBe(true);
+    expect(r.data.lineItems[0].unitPrice).toBe(-13674);
+  });
+
+  it('rejects missing invoiceId', () => {
+    expect(s.safeParse({ lineItems: [{ description: 'x', quantity: 1 }] }).success).toBe(false);
+  });
+
+  it('rejects a line item missing description', () => {
+    expect(s.safeParse({ invoiceId: 111, lineItems: [{ quantity: 1 }] }).success).toBe(false);
+  });
+
+  it('rejects a line item missing quantity', () => {
+    expect(s.safeParse({ invoiceId: 111, lineItems: [{ description: 'x' }] }).success).toBe(false);
+  });
+
+  it('rejects an empty lineItems array', () => {
+    expect(s.safeParse({ invoiceId: 111, lineItems: [] }).success).toBe(false);
+  });
+
+  // REGRESSION GUARD (inverted 2026-07-31 per adversarial review): silently
+  // STRIPPING a caller's `price` recreates the $0.00-write defect one layer up
+  // — the caller believes they set the money, the wire carries nothing. Every
+  // field that is not on the confirmed ST model must be REJECTED loudly, and
+  // `price` specifically must point the caller at `unitPrice`.
+  it('REJECTS a line item carrying `price` — with an error that names unitPrice as the fix', () => {
+    const r: any = s.safeParse({
+      invoiceId: 111,
+      lineItems: [{ description: 'x', quantity: 1, price: 200 }],
+    });
+    expect(r.success).toBe(false);
+    const messages = r.error.issues.map((i: any) => i.message).join(' | ');
+    expect(messages).toMatch(/unitPrice/);
+  });
+
+  it('REJECTS line-item fields that do not exist on the confirmed ST model (type, generalLedgerAccountId, businessUnitId, and any unknown key)', () => {
+    for (const bad of [
+      { type: 'Service' },
+      { generalLedgerAccountId: 1 },
+      { businessUnitId: 2 },
+      { totallyUnknownKey: 3 },
+    ]) {
+      const r = s.safeParse({
+        invoiceId: 111,
+        lineItems: [{ description: 'x', quantity: 1, ...bad }],
+      });
+      expect(r.success).toBe(false);
+    }
+  });
+
+  it('REJECTS an empty-string skuName on an append line (would 500 at ST mid-sequence otherwise)', () => {
+    expect(s.safeParse({
+      invoiceId: 111,
+      lineItems: [{ skuName: '', description: 'x', quantity: 1 }],
+    }).success).toBe(false);
+  });
+
+  it('no longer has a jobId argument — job-link reassignment is not an API capability; the top-level SDK schema strips it (documented limitation: top-level unknown keys are outside this tool\'s zod shape)', () => {
+    const r: any = s.safeParse({ invoiceId: 111, jobId: 42, lineItems: [{ description: 'x', quantity: 1 }] });
+    expect(r.success).toBe(true);
+    expect(r.data).not.toHaveProperty('jobId');
+  });
+
+  it('defaults dryRun to true', () => {
+    const parsed = s.parse({ invoiceId: 111, lineItems: [{ description: 'x', quantity: 1 }] });
+    expect(parsed.dryRun).toBe(true);
+  });
+});
+
+// ── st_create_adjustment_invoice ─────────────────────────────
+
+// Schema rewritten 2026-07-31 to the CONFIRMED POST /invoices body shape
+// (live-probed). items[] accepts ONLY skuName / description / quantity / cost /
+// unitPrice. skuId, price, type, generalLedgerAccountId and businessUnitId are
+// silently dropped by ST on this endpoint and are gone from the schema.
+
+describe('st_create_adjustment_invoice schema', () => {
+  const s = schemaOf('st_create_adjustment_invoice');
+
+  it('accepts a minimal valid negative-offset line item (skuName + quantity + unitPrice)', () => {
+    expect(s.safeParse({
+      parentInvoiceId: 222,
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -998484 }],
+    }).success).toBe(true);
+  });
+
+  it('rejects a line item missing skuName — ST resolves adjustment lines by SKU NAME only (skuId is ignored here)', () => {
+    expect(s.safeParse({
+      parentInvoiceId: 222,
+      lineItems: [{ description: 'Offset', quantity: 1, unitPrice: -100 }],
+    }).success).toBe(false);
+  });
+
+  it('rejects missing parentInvoiceId', () => {
+    expect(s.safeParse({ lineItems: [{ skuName: 'HI1', quantity: 1, unitPrice: -100 }] }).success).toBe(false);
+  });
+
+  it('rejects an empty lineItems array', () => {
+    expect(s.safeParse({ parentInvoiceId: 222, lineItems: [] }).success).toBe(false);
+  });
+
+  // REGRESSION GUARD (inverted 2026-07-31 per adversarial review): stripping a
+  // caller's `price` IS the $0.00-adjustment vector, one layer up from ST.
+  // Everything not on the confirmed items[] model must be rejected loudly,
+  // with `price` → unitPrice and `skuId` → skuName guidance.
+  it('REJECTS an items[] line carrying `price` — with an error that names unitPrice as the fix', () => {
+    const r: any = s.safeParse({
+      parentInvoiceId: 222,
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, price: -999 }],
+    });
+    expect(r.success).toBe(false);
+    expect(r.error.issues.map((i: any) => i.message).join(' | ')).toMatch(/unitPrice/);
+  });
+
+  it('REJECTS an items[] line carrying `skuId` — with an error that names skuName as the fix (this endpoint resolves by name only)', () => {
+    const r: any = s.safeParse({
+      parentInvoiceId: 222,
+      lineItems: [{ skuId: 62958024, skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100 }],
+    });
+    expect(r.success).toBe(false);
+    expect(r.error.issues.map((i: any) => i.message).join(' | ')).toMatch(/skuName/);
+  });
+
+  it('REJECTS items[] fields ST silently ignores on this endpoint (type, generalLedgerAccountId, businessUnitId, unknown keys)', () => {
+    for (const bad of [
+      { type: 'Service' },
+      { generalLedgerAccountId: 3 },
+      { businessUnitId: 4 },
+      { anythingElse: true },
+    ]) {
+      const r = s.safeParse({
+        parentInvoiceId: 222,
+        lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100, ...bad }],
+      });
+      expect(r.success).toBe(false);
+    }
+  });
+
+  // Tombstoned top-level args: ST ignores both, and silently stripping them
+  // would be the same silent-no-op UX at the zod layer. They reject with an
+  // explanatory message instead.
+  it('REJECTS the removed top-level businessUnitId / invoiceDate args with explanatory errors', () => {
+    const r: any = s.safeParse({
+      parentInvoiceId: 222,
+      businessUnitId: 257,
+      invoiceDate: '2026-07-31',
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100 }],
+    });
+    expect(r.success).toBe(false);
+    const messages = r.error.issues.map((i: any) => i.message).join(' | ');
+    expect(messages).toMatch(/removed 2026-07-31/);
+    expect(messages).toMatch(/inherits the parent/);
+  });
+
+  it('keeps summary — it IS accepted at the top level by ST', () => {
+    const r: any = s.safeParse({
+      parentInvoiceId: 222,
+      summary: 'Offset HVAC install misbooked to project invoice',
+      lineItems: [{ skuName: 'HI1', description: 'Offset', quantity: 1, unitPrice: -100 }],
+    });
+    expect(r.success).toBe(true);
+    expect(r.data.summary).toBe('Offset HVAC install misbooked to project invoice');
+  });
+
+  it('defaults dryRun to true', () => {
+    const parsed = s.parse({ parentInvoiceId: 222, lineItems: [{ skuName: 'HI1', quantity: 1, unitPrice: -100 }] });
+    expect(parsed.dryRun).toBe(true);
+  });
+});
+
+// ── Tombstone descriptions survive into the advertised schema ──
+// Without a .describe(), a z.any() tombstone serializes into the published
+// MCP inputSchema as a bare '{}' property — actively ADVERTISING the exact
+// fields that caused the incident as accepted, undescribed inputs. The
+// descriptions below ride into the serialized schema so the warning reaches
+// the caller before the runtime rejection does.
+describe('tombstone field descriptions (advertised-schema warnings)', () => {
+  function fieldDescription(schema: any): string | undefined {
+    return schema?.description;
+  }
+
+  it('st_add_invoice_line_item: the price tombstone carries a DO-NOT-SEND description naming unitPrice', () => {
+    const tool = TOOLS.find((t) => t.name === 'st_add_invoice_line_item')!;
+    const itemSchema: any = (tool.zodSchema as any).lineItems.element ?? (tool.zodSchema as any).lineItems._def?.element;
+    const desc = fieldDescription(itemSchema.shape.price);
+    expect(desc).toMatch(/DO NOT SEND/);
+    expect(desc).toMatch(/unitPrice/);
+  });
+
+  it('st_create_adjustment_invoice: price/skuId item tombstones + top-level businessUnitId/invoiceDate tombstones all carry DO-NOT-SEND descriptions', () => {
+    const tool = TOOLS.find((t) => t.name === 'st_create_adjustment_invoice')!;
+    const shape: any = tool.zodSchema as any;
+    const itemSchema: any = shape.lineItems.element ?? shape.lineItems._def?.element;
+    expect(fieldDescription(itemSchema.shape.price)).toMatch(/unitPrice/);
+    expect(fieldDescription(itemSchema.shape.skuId)).toMatch(/skuName/);
+    expect(fieldDescription(shape.businessUnitId)).toMatch(/DO NOT SEND/);
+    expect(fieldDescription(shape.invoiceDate)).toMatch(/DO NOT SEND/);
   });
 });

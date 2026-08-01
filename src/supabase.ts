@@ -7,6 +7,17 @@ import type { Env } from './env';
 
 export const EMBED_MODEL_ID = '@cf/baai/bge-base-en-v1.5';
 
+// Per-fetch abort budget for Supabase calls. 25s, not 10s: diagnosed
+// 2026-07-18 that the `authenticator` Postgres role (the login role
+// PostgREST always uses, regardless of the caller's effective RLS role)
+// carries its own `statement_timeout` in pg_roles.rolconfig, separate from
+// the database-level default -- a role-level override is NOT reset by a
+// mid-session `SET ROLE`. That role's timeout was raised 8s -> 30s to give
+// pgvector queries room on cold cache pages; this client-side budget stays
+// a few seconds under it so a genuine DB-side hang still surfaces as a
+// clear Postgres error instead of a generic client abort.
+const SUPABASE_FETCH_TIMEOUT_MS = 25_000;
+
 /** Exact embed input the app uses (lib/refresh.ts embedMissing) — keep in lockstep. */
 export function embedInputFor(row: {
   name?: string; description?: string | null; category_name?: string | null;
@@ -34,10 +45,27 @@ function headers(env: Env): Record<string, string> {
   };
 }
 
-export async function sbRpc<T>(env: Env, fn: string, body: Record<string, unknown>): Promise<T> {
+/**
+ * Calls a Postgres function via PostgREST's `/rpc/<fn>` route.
+ *
+ * `schema`, when given, selects a non-`public` exposed schema via the
+ * `Content-Profile` header (PostgREST's per-request schema switch for
+ * write-method requests, which RPC POSTs are). Without it PostgREST
+ * resolves the function name against the FIRST schema in the project's
+ * `pgrst.db_schemas` list (`public`) and 404s (`PGRST202`) for a function
+ * that only exists in another exposed schema — verified live 2026-07-18
+ * calling `vec.match_entities` on project nlaaliehqpgskjmiuzze (which
+ * exposes `public, gold, vec`): identical request minus this header
+ * returns `PGRST202 Could not find the function public.match_entities`.
+ * omit `schema` for `public`-schema RPCs (e.g. `search_pricebook_hybrid`)
+ * — existing callers are unaffected.
+ */
+export async function sbRpc<T>(env: Env, fn: string, body: Record<string, unknown>, schema?: string): Promise<T> {
+  const h = headers(env);
+  if (schema) h['Content-Profile'] = schema;
   const res = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
-    method: 'POST', headers: headers(env), body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000),
+    method: 'POST', headers: h, body: JSON.stringify(body),
+    signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
     const t = await res.text().catch(() => String(res.status));
@@ -46,15 +74,55 @@ export async function sbRpc<T>(env: Env, fn: string, body: Record<string, unknow
   return res.json() as Promise<T>;
 }
 
-export async function sbSelect<T>(env: Env, pathAndQuery: string): Promise<T> {
+export async function sbSelect<T>(env: Env, pathAndQuery: string, schema?: string): Promise<T> {
+  const h = headers(env);
+  if (schema) h['Accept-Profile'] = schema;
   const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
-    headers: headers(env), signal: AbortSignal.timeout(10_000),
+    headers: h, signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
     const t = await res.text().catch(() => String(res.status));
     throw new Error(`supabase select failed ${res.status}: ${t}`);
   }
   return res.json() as Promise<T>;
+}
+
+/**
+ * Row count for a PostgREST filter, read out of the `Content-Range` response
+ * header rather than by pulling rows.
+ *
+ * `Prefer: count=exact` makes PostgREST answer `content-range: <range>/<total>`
+ * (the range degrades to a bare `*` when the filtered set is empty, but the
+ * total after the slash is still exact). `limit=1` is forced on so the body
+ * stays one row: counting by reading rows would cap at the project's 1000-row
+ * ceiling and silently under-report.
+ *
+ * Deliberately NOT `count=planned`: the planner estimate for
+ * `vec.entity_chunks?trade_bu=is.null` measured 34,473 against an exact 31,203
+ * on 2026-07-28 — 10% out, which is the sort of "close enough" that turns a
+ * warning back into a lie. Callers that cannot afford an exact count should
+ * cache the result, not downgrade its accuracy.
+ */
+export async function sbCount(env: Env, pathAndQuery: string, schema?: string): Promise<number> {
+  const h = headers(env);
+  if (schema) h['Accept-Profile'] = schema;
+  h['Prefer'] = 'count=exact';
+  const q = /[?&]limit=/.test(pathAndQuery)
+    ? pathAndQuery
+    : `${pathAndQuery}${pathAndQuery.includes('?') ? '&' : '?'}limit=1`;
+  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${q}`, {
+    headers: h, signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => String(res.status));
+    throw new Error(`supabase count ${pathAndQuery} failed ${res.status}: ${t}`);
+  }
+  const range = res.headers.get('content-range');
+  const total = range?.split('/')[1];
+  if (!total || !/^\d+$/.test(total)) {
+    throw new Error(`supabase count ${pathAndQuery}: no exact count in content-range (${range ?? 'header absent'})`);
+  }
+  return Number(total);
 }
 
 export async function sbWriteEmbedding(
@@ -64,7 +132,7 @@ export async function sbWriteEmbedding(
   const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${q}`, {
     method: 'PATCH', headers: headers(env),
     body: JSON.stringify({ embedding: `[${vector.join(',')}]` }),
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
   });
   if (!res.ok && res.status !== 204) {
     const t = await res.text().catch(() => String(res.status));

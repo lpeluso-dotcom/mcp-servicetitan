@@ -98,6 +98,8 @@ import { get_invoice } from './invoicing/get_invoice';
 import { list_invoices_job } from './invoicing/list_invoices_job';
 import { get_invoice_balance } from './invoicing/get_invoice_balance';
 import { list_unpaid_invoices } from './invoicing/list_unpaid_invoices';
+import { st_add_invoice_line_item } from './invoicing/st_add_invoice_line_item';
+import { st_create_adjustment_invoice } from './invoicing/st_create_adjustment_invoice';
 // T5 — Jobs & Appointments
 import { get_job } from './jobs/get_job';
 import { list_jobs_today } from './jobs/list_jobs_today';
@@ -137,6 +139,10 @@ import { get_job_history } from './jobs/get_job_history';
 // Dawn — SMS support (v1.6.0)
 import { identify_tech_by_phone } from './dawn/identify_tech_by_phone';
 import { save_tech_debrief } from './dawn/save_tech_debrief';
+// TAI-STV2 — semantic search over the Woz gold vector index (Supabase vec schema)
+import { semantic_search_gold } from './gold/semantic_search_gold';
+import { gold_margin_by_bu } from './gold/gold_margin_by_bu';
+import { tech_scorecard } from './composites/tech_scorecard';
 
 export interface ToolContext {
   actor: string;
@@ -216,6 +222,7 @@ export const TOOLS: readonly ToolDef<any>[] = [
   search_pricebook_all, search_pricebook_semantic, search_pricebook_templates, get_proposal_tiers, find_packages_with_item, get_service_breakout,
   // T6 Invoicing
   get_invoice, list_invoices_job, get_invoice_balance, list_unpaid_invoices,
+  st_add_invoice_line_item, st_create_adjustment_invoice,
   // T7 Estimates
   list_estimates_job, get_estimate, dismiss_estimate, sell_estimate, unsell_estimate,
   // Phase 4 Estimate templates
@@ -261,6 +268,10 @@ export const TOOLS: readonly ToolDef<any>[] = [
   save_tech_debrief,
   // QUA-739 — Pricebook margin-discipline composites (D1 pb_ tables)
   pricebook_markup_drift, pricebook_cost_drift, pricebook_vendor_part_gaps,
+  // TAI-STV2 — Woz gold vector search (Supabase vec schema)
+  semantic_search_gold,
+  // TAI-STV2 rebuild — guided-surface backing tools
+  gold_margin_by_bu, tech_scorecard,
 ] as const;
 
 export function findTool(name: string): ToolDef<any> | undefined {

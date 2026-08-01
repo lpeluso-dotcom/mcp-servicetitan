@@ -79,4 +79,10 @@ describe('readonly connector role', () => {
       expect(names.has(need)).toBe(true);
     }
   });
+
+  it('exposes gold_margin_by_bu and tech_scorecard to a readonly caller', () => {
+    const names = toolsForRole('readonly').map((t) => t.name);
+    expect(names).toContain('gold_margin_by_bu');
+    expect(names).toContain('tech_scorecard');
+  });
 });

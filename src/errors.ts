@@ -10,7 +10,24 @@ export type McpErrorCode =
   | 'not_found'
   | 'upstream_error'
   | 'timeout'
-  | 'internal_error';
+  | 'internal_error'
+  // ── Post-write verification codes (2026-07-31) ──────────────
+  // ServiceTitan's ASP.NET model binding silently drops unknown body fields
+  // and still returns HTTP 200, so "the write returned 200" is NOT evidence
+  // that anything was persisted. Every ST write whose whole point is a
+  // monetary effect must re-read and assert the effect landed; these three
+  // codes carry the distinction between the ways that assertion can fail.
+  //   silent_noop       — the write reported success but the re-read shows the
+  //                       effect is absent (items missing, item id not found).
+  //   amount_mismatch   — the effect exists but the money is wrong (submitted
+  //                       unitPrice not honored, e.g. recomputed or zeroed).
+  //   verify_unavailable— the write may well have landed, but we could not
+  //                       observe it (read-after-write lag, read error, ids
+  //                       filter not honored, response carried no id). NEVER
+  //                       auto-retry the write on this code.
+  | 'silent_noop'
+  | 'amount_mismatch'
+  | 'verify_unavailable';
 
 export interface McpErrorResponse {
   ok: false;

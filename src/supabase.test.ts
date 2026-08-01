@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-  EMBED_MODEL_ID, embedInputFor, embedQuery, sbRpc, sbSelect, sbWriteEmbedding, shapePriceRow,
+  EMBED_MODEL_ID, embedInputFor, embedQuery, sbCount, sbRpc, sbSelect, sbWriteEmbedding, shapePriceRow,
 } from './supabase';
 
 type FetchMock = (url: string | URL, init: RequestInit & { headers: Record<string, string>; body?: string }) => Promise<Response>;
@@ -57,6 +57,27 @@ describe('supabase helpers', () => {
     await expect(sbRpc(env(), 'fn', {})).rejects.toThrow(/supabase rpc fn failed 500/);
   });
 
+  it('sbRpc omits Content-Profile when no schema is given (default public-schema RPCs unaffected)', async () => {
+    const fetchImpl: FetchMock = async () => new Response('[]', { status: 200 });
+    const fetchMock = vi.fn(fetchImpl);
+    vi.stubGlobal('fetch', fetchMock);
+    await sbRpc(env(), 'search_pricebook_hybrid', { query_text: 'cap' });
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers['Content-Profile']).toBeUndefined();
+  });
+
+  it('sbRpc sets Content-Profile to the given schema (non-public PostgREST schema selection)', async () => {
+    const fetchImpl: FetchMock = async () => new Response('[]', { status: 200 });
+    const fetchMock = vi.fn(fetchImpl);
+    vi.stubGlobal('fetch', fetchMock);
+    await sbRpc(env(), 'match_entities', { query_embedding: [0.1] }, 'vec');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://proj.supabase.co/rest/v1/rpc/match_entities');
+    expect(init.headers['Content-Profile']).toBe('vec');
+    // apikey/Authorization still present — schema selection is additive, not a replacement
+    expect(init.headers.apikey).toBe('sb-key');
+  });
+
   it('sbSelect GETs /rest/v1/<pathAndQuery>', async () => {
     const fetchImpl: FetchMock = async () => new Response(JSON.stringify([{ st_id: 1 }]), { status: 200 });
     const fetchMock = vi.fn(fetchImpl);
@@ -64,6 +85,62 @@ describe('supabase helpers', () => {
     const out = await sbSelect(env(), 'pricebook_items?st_id=eq.1');
     expect(out).toEqual([{ st_id: 1 }]);
     expect(fetchMock.mock.calls[0][0]).toBe('https://proj.supabase.co/rest/v1/pricebook_items?st_id=eq.1');
+  });
+
+  it('sbSelect sends Accept-Profile when a schema is given', async () => {
+    const seen: Record<string, string> = {};
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      for (const [k, v] of Object.entries(init.headers as Record<string, string>)) seen[k.toLowerCase()] = v;
+      return new Response(JSON.stringify([{ id: 1 }]), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_PB_KEY: 'k' } as any;
+    await sbSelect(env, 'dim_business_unit?select=*', 'gold');
+    expect(seen['accept-profile']).toBe('gold');
+  });
+
+  it('sbSelect omits Accept-Profile when no schema is given (public)', async () => {
+    const seen: Record<string, string> = {};
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      for (const [k, v] of Object.entries(init.headers as Record<string, string>)) seen[k.toLowerCase()] = v;
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_PB_KEY: 'k' } as any;
+    await sbSelect(env, 'pricebook_items?select=code');
+    expect(seen['accept-profile']).toBeUndefined();
+  });
+
+  it('sbCount asks PostgREST for an exact count and reads it out of content-range', async () => {
+    const seen: Record<string, string> = {};
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      for (const [k, v] of Object.entries(init.headers as Record<string, string>)) seen[k.toLowerCase()] = v;
+      return new Response('[]', { status: 206, headers: { 'content-range': '0-0/349036' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const n = await sbCount(env(), 'entity_chunks?select=chunk_id', 'vec');
+
+    expect(n).toBe(349036);
+    expect(seen['prefer']).toContain('count=exact');
+    expect(seen['accept-profile']).toBe('vec');
+    // Ask for no rows back — only the count header matters, so never ship 349k rows.
+    expect(fetchMock.mock.calls[0][0]).toContain('limit=1');
+  });
+
+  it('sbCount reads a zero count from the `*/0` form PostgREST returns for an empty set', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('[]', { status: 200, headers: { 'content-range': '*/0' } })));
+    await expect(sbCount(env(), 'entity_chunks?select=chunk_id&entity_key=eq.job', 'vec')).resolves.toBe(0);
+  });
+
+  it('sbCount throws when the count is missing or only a planner estimate placeholder', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('[]', { status: 200, headers: { 'content-range': '0-0/*' } })));
+    await expect(sbCount(env(), 'entity_chunks?select=chunk_id', 'vec')).rejects.toThrow(/exact count/i);
+  });
+
+  it('sbCount throws on non-2xx', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 500 })));
+    await expect(sbCount(env(), 'entity_chunks?select=chunk_id', 'vec')).rejects.toThrow(/supabase count/i);
   });
 
   it('sbWriteEmbedding PATCHes by (code,item_type) with a bracketed vector literal', async () => {
