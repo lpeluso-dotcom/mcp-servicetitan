@@ -513,3 +513,33 @@ describe('st_create_adjustment_invoice schema', () => {
     expect(parsed.dryRun).toBe(true);
   });
 });
+
+// ── Tombstone descriptions survive into the advertised schema ──
+// Without a .describe(), a z.any() tombstone serializes into the published
+// MCP inputSchema as a bare '{}' property — actively ADVERTISING the exact
+// fields that caused the incident as accepted, undescribed inputs. The
+// descriptions below ride into the serialized schema so the warning reaches
+// the caller before the runtime rejection does.
+describe('tombstone field descriptions (advertised-schema warnings)', () => {
+  function fieldDescription(schema: any): string | undefined {
+    return schema?.description;
+  }
+
+  it('st_add_invoice_line_item: the price tombstone carries a DO-NOT-SEND description naming unitPrice', () => {
+    const tool = TOOLS.find((t) => t.name === 'st_add_invoice_line_item')!;
+    const itemSchema: any = (tool.zodSchema as any).lineItems.element ?? (tool.zodSchema as any).lineItems._def?.element;
+    const desc = fieldDescription(itemSchema.shape.price);
+    expect(desc).toMatch(/DO NOT SEND/);
+    expect(desc).toMatch(/unitPrice/);
+  });
+
+  it('st_create_adjustment_invoice: price/skuId item tombstones + top-level businessUnitId/invoiceDate tombstones all carry DO-NOT-SEND descriptions', () => {
+    const tool = TOOLS.find((t) => t.name === 'st_create_adjustment_invoice')!;
+    const shape: any = tool.zodSchema as any;
+    const itemSchema: any = shape.lineItems.element ?? shape.lineItems._def?.element;
+    expect(fieldDescription(itemSchema.shape.price)).toMatch(/unitPrice/);
+    expect(fieldDescription(itemSchema.shape.skuId)).toMatch(/skuName/);
+    expect(fieldDescription(shape.businessUnitId)).toMatch(/DO NOT SEND/);
+    expect(fieldDescription(shape.invoiceDate)).toMatch(/DO NOT SEND/);
+  });
+});
