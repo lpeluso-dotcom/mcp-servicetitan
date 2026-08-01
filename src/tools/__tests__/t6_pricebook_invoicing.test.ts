@@ -130,22 +130,83 @@ describe('search_materials', () => {
 });
 
 describe('get_configurable_equipment_children', () => {
+  // Single-record GET returns the resource directly — no { data } envelope.
+  const singleOk = (record: unknown) => async () =>
+    new Response(JSON.stringify(record), { status: 200 });
+
   it('requires parentEquipmentId', async () => {
     const schema = z.object(get_configurable_equipment_children.zodSchema);
     expect(schema.safeParse({}).success).toBe(false);
   });
 
-  it('fetches children for parent equipment ID', async () => {
-    const env = makeEnv(liveOk([{ id: 101 }, { id: 102 }]));
-    const result: any = await get_configurable_equipment_children.handler(env, { parentEquipmentId: 99 }, CTX);
-    expect(result.equipment).toBeDefined();
-  });
-
-  it('calls equipment endpoint with correct parent ID', async () => {
-    const env = makeEnv(liveOk([]));
+  it('GETs the parent record by id — never the list endpoint with a parentEquipmentId param', async () => {
+    // ST's /equipment list endpoint has no parentEquipmentId filter; it silently
+    // ignores unknown query params and returns the unfiltered first page.
+    const env = makeEnv(singleOk({ id: 99, isConfigurableEquipment: true, variationsOrConfigurableEquipment: [] }));
     await get_configurable_equipment_children.handler(env, { parentEquipmentId: 99 }, CTX);
     const [url] = env.ST_PROXY.fetch.mock.calls[0];
-    expect(url).toContain('equipment');
+    const endpoint = decodeURIComponent(url.split('endpoint=')[1]);
+    expect(endpoint).toContain('/equipment/99');
+    expect(endpoint).not.toContain('parentEquipmentId');
+  });
+
+  it('hydrates variationsOrConfigurableEquipment ids into equipment records', async () => {
+    // ST returns the variants as bare integer ids (verified live 2026-07-18 on
+    // parent 77672766 → [76332415]); each is fetched to keep the tool's
+    // equipment-records contract.
+    const records: Record<string, unknown> = {
+      '/equipment/77672766': { id: 77672766, isConfigurableEquipment: true, variationsOrConfigurableEquipment: [76332415] },
+      '/equipment/76332415': { id: 76332415, displayName: 'Variant WH', active: true },
+    };
+    const env = makeEnv(async (url: string) => {
+      const endpoint = decodeURIComponent(url.split('endpoint=')[1]);
+      const match = Object.entries(records).find(([suffix]) => endpoint.endsWith(suffix));
+      if (!match) throw new Error(`unexpected URL: ${endpoint}`);
+      return new Response(JSON.stringify(match[1]), { status: 200 });
+    });
+    const result: any = await get_configurable_equipment_children.handler(env, { parentEquipmentId: 77672766 }, CTX);
+    expect(result.equipment).toEqual([{ id: 76332415, displayName: 'Variant WH', active: true }]);
+    expect(result.parentEquipmentId).toBe(77672766);
+    expect(result.isConfigurableEquipment).toBe(true);
+  });
+
+  it('returns empty equipment for a non-configurable parent with no variations field', async () => {
+    const env = makeEnv(singleOk({ id: 99, isConfigurableEquipment: false }));
+    const result: any = await get_configurable_equipment_children.handler(env, { parentEquipmentId: 99 }, CTX);
+    expect(result.equipment).toEqual([]);
+    expect(result.isConfigurableEquipment).toBe(false);
+  });
+
+  // The defect this tool is being fixed for (2026-07-18) was that a nonexistent
+  // parent id still returned 50 unrelated equipment rows. Pin the replacement
+  // behaviour: the by-id GET 404s and that must surface as not_found, never as
+  // an empty-but-successful result that reads like "this parent has no variants".
+  it('surfaces a nonexistent parent as not_found, not an empty success', async () => {
+    const env = makeEnv(async () => new Response('{"message":"Not Found"}', { status: 404 }));
+    await expect(
+      get_configurable_equipment_children.handler(env, { parentEquipmentId: 999999999 }, CTX),
+    ).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('discloses truncation when a parent carries more variants than the hydration cap', async () => {
+    const variantIds = Array.from({ length: 30 }, (_, i) => 900000 + i);
+    const env = makeEnv(async (url: string) => {
+      const endpoint = decodeURIComponent(url.split('endpoint=')[1]);
+      const id = Number(endpoint.split('/equipment/')[1]);
+      if (id === 5150) {
+        return new Response(
+          JSON.stringify({ id: 5150, isConfigurableEquipment: true, variationsOrConfigurableEquipment: variantIds }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ id, displayName: `Variant ${id}` }), { status: 200 });
+    });
+    const result: any = await get_configurable_equipment_children.handler(env, { parentEquipmentId: 5150 }, CTX);
+    // Capping is fine; capping SILENTLY is the audit's P-2 anti-pattern — a
+    // caller must be able to tell 25-of-30 from a complete list of 25.
+    expect(result.equipment).toHaveLength(25);
+    expect(result.truncated).toBe(true);
+    expect(result.variant_count).toBe(30);
   });
 });
 
