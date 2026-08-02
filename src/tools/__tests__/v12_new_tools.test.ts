@@ -437,8 +437,13 @@ describe('search_pricebook_all', () => {
   it('query path fans out across all 3 D1 tables and merges results', async () => {
     const env = makeD1Env([]);
     await search_pricebook_all.handler(env as any, { query: 'flush' }, { actor: 'vitest', correlation: 'test' });
-    // 3 parallel queries for query path (services + materials + equipment)
-    expect((env.ST_PROXY.fetch as any).mock.calls.length).toBe(3);
+    // 3 parallel data queries for query path (services + materials +
+    // equipment); the fetchTableMax probe (`AS t,`) rides alongside.
+    const dataCalls = (env.ST_PROXY.fetch as any).mock.calls.filter((c: any) => {
+      const body = c[1]?.body ? JSON.parse(c[1].body) : { sql: '' };
+      return !/ AS t,/.test(String(body.sql));
+    });
+    expect(dataCalls.length).toBe(3);
   });
 
   it('rejects when neither code nor query provided', async () => {
@@ -475,10 +480,19 @@ describe('search_pricebook_all', () => {
     // Three parallel fetches: services, materials, equipment
     const svcRow = { code: 'SVC-DYN', name: 'Dynamic Service', description: '', category: 'HVAC', price: 0, calculated_price: 200, member_price: null, hours: 1.0, type: 'service' };
     const matRow = { code: 'MAT-050', name: 'Some Material', description: '', category: 'Parts', price: 50, calculated_price: null, member_price: null, hours: null, type: 'material' };
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, results: [svcRow] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, results: [matRow] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, results: [] }), { status: 200 }));
+    const fetchMock = vi.fn(async (_url: any, init?: any) => {
+      const body = init?.body ? JSON.parse(init.body as string) : { sql: '' };
+      const sql = String(body.sql);
+      if (/ AS t,/.test(sql)) {
+        const m = new Date(Date.now() - 3_600_000).toISOString();
+        return new Response(JSON.stringify({ success: true, results: [
+          { t: 'pb_services', m }, { t: 'pb_materials', m }, { t: 'pb_equipment', m },
+        ] }), { status: 200 });
+      }
+      if (sql.includes('pb_services')) return new Response(JSON.stringify({ success: true, results: [svcRow] }), { status: 200 });
+      if (sql.includes('pb_materials')) return new Response(JSON.stringify({ success: true, results: [matRow] }), { status: 200 });
+      return new Response(JSON.stringify({ success: true, results: [] }), { status: 200 });
+    });
     const env = {
       ST_PROXY: { fetch: fetchMock },
       MCP_SYNC_KEY: 'test-key',
@@ -504,10 +518,18 @@ describe('search_pricebook_all', () => {
   // 'dynamic-unknown' — NOT 'static' and NOT misreported as free/unpriced.
   it('calculated_price: service with price 0 and no calculated_price flags pricing=dynamic-unknown', async () => {
     const svcRow = { code: 'SVC-STALE', name: 'Stale Sync Service', description: '', category: 'HVAC', price: 0, calculated_price: null, member_price: null, hours: 1.0, type: 'service' };
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, results: [svcRow] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, results: [] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, results: [] }), { status: 200 }));
+    const fetchMock = vi.fn(async (_url: any, init?: any) => {
+      const body = init?.body ? JSON.parse(init.body as string) : { sql: '' };
+      const sql = String(body.sql);
+      if (/ AS t,/.test(sql)) {
+        const m = new Date(Date.now() - 3_600_000).toISOString();
+        return new Response(JSON.stringify({ success: true, results: [
+          { t: 'pb_services', m }, { t: 'pb_materials', m }, { t: 'pb_equipment', m },
+        ] }), { status: 200 });
+      }
+      if (sql.includes('pb_services')) return new Response(JSON.stringify({ success: true, results: [svcRow] }), { status: 200 });
+      return new Response(JSON.stringify({ success: true, results: [] }), { status: 200 });
+    });
     const env = {
       ST_PROXY: { fetch: fetchMock },
       MCP_SYNC_KEY: 'test-key',

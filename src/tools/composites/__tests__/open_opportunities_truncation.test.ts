@@ -46,6 +46,10 @@ function row(id: number, estimate: number, sold: number) {
  */
 function wire(totalRows: number, returned: number, sumEstimate: number, sumSold: number) {
   readD1.mockImplementation(async (_env: unknown, sql: string) => {
+    if (/ AS t,/.test(sql)) {
+      // fetchTableMax probe — a fresh table MAX (freshness is not under test here).
+      return { rows: [{ t: 'opportunities', m: new Date(Date.now() - 3_600_000).toISOString() }] };
+    }
     if (/count\(/i.test(sql)) {
       return { rows: [{ cohort_count: totalRows, cohort_estimate_amount: sumEstimate, cohort_sold_amount: sumSold }] };
     }
@@ -107,6 +111,9 @@ describe('open_opportunities_pulitzer_feed truncation (QUA-1109)', () => {
     // returned. Assert both queries carry the same bound parameters.
     const seen: Array<{ sql: string; params: unknown[] }> = [];
     readD1.mockImplementation(async (_e: unknown, sql: string, params: unknown[]) => {
+      if (/ AS t,/.test(sql)) {
+        return { rows: [{ t: 'opportunities', m: new Date().toISOString() }] };
+      }
       seen.push({ sql, params });
       if (/count\(/i.test(sql)) {
         return { rows: [{ cohort_count: 5, cohort_estimate_amount: 1, cohort_sold_amount: 1 }] };

@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { readST } from '../../st';
 import { codeVariants } from './search_pricebook_all';
 import { queryD1First } from '../../d1-proxy';
-import { stampMirrorFreshness } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
@@ -85,17 +85,22 @@ export const search_pricebook_services: ToolDef<Args> = {
   async handler(env, args, { actor, correlation }) {
     // Exact-code path (D1) — try first, return early on hit.
     if (args.code) {
+      // Table-level freshness probe (F1 redesign) — concurrent with the code
+      // lookup; never rejects (degrades to {}).
+      const tableMaxP = fetchTableMax(env, ['pb_services']);
       const exact = await lookupExactCode(env, args.code, correlation);
       if (exact) {
         // MB-1 / QUA-1141: this serves a raw pb_services mirror row — stamp
-        // it so a stale hit is disclosed instead of served silently. (Voice-
-        // facing: the stamp only adds a warning when the row can't prove it's
-        // current.)
+        // it so a hit off a frozen mirror is disclosed instead of served
+        // silently. Freshness is judged by the TABLE's MAX(synced_at): the
+        // row's own synced_at only says when the row itself last changed.
+        // synced_at is stamp plumbing, stripped from the emitted row.
+        const { synced_at: _synced_at, ...service } = exact as Record<string, unknown>;
         return {
-          services: [exact],
+          services: [service],
           _source: 'd1-exact',
           _matched_code: args.code,
-          ...stampMirrorFreshness([exact], { table: 'pb_services' }),
+          ...stampMirrorFreshness([exact], { table: 'pb_services', tableMax: await tableMaxP }),
         };
       }
       // No D1 row — fall through to live ST with the code as a fuzzy name token.

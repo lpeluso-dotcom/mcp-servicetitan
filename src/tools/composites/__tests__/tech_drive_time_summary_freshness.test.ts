@@ -16,9 +16,15 @@ const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString
 
 const ARGS = { technicianId: 75766687, startDate: '2026-07-01', endDate: '2026-07-27' };
 
-/** Route the two readD1 calls: technicians lookup vs the per-day rollup. */
-function primeMirror(dayRows: Array<Record<string, unknown>>) {
+/**
+ * Route the three readD1 calls: technicians lookup, the per-day rollup, and
+ * the fetchTableMax probe (matched on `AS t,`; defaults to a fresh 1h MAX).
+ */
+function primeMirror(dayRows: Array<Record<string, unknown>>, tableMax: string | null = hoursAgo(1)) {
   return vi.spyOn(d1, 'readD1').mockImplementation(async (_env: any, sql: any) => {
+    if (/ AS t,/.test(String(sql))) {
+      return { rows: [{ t: 'job_timesheets', m: tableMax }] } as any;
+    }
     if (/\bfrom\s+technicians\b/i.test(String(sql))) {
       return { rows: [{ technician_id: 75766687, name: 'Brooks Hunsucker', business_unit: 'PSR' }] } as any;
     }
@@ -43,14 +49,24 @@ describe('tech_drive_time_summary freshness disclosure (MB-1 / QUA-1141)', () =>
     expect(rollupSql!).toMatch(/MAX\(synced_at\)/i);
   });
 
-  it('does NOT present a zero-filled window as authoritative when the mirror returns no rows', async () => {
-    primeMirror([]);
+  it('does NOT present a zero-filled window as authoritative when the mirror cannot prove liveness', async () => {
+    primeMirror([], null);
     const out: any = await tech_drive_time_summary.handler({} as any, ARGS, ctx);
     expect(out.totals.total_drive_minutes).toBe(0);
     expect(out.metrics_are_authoritative).toBe(false);
     expect(out._freshness).toBe('unknown');
     expect(out._empty).toBe(true);
     expect(out._warning).toMatch(/not proof/i);
+  });
+
+  it('a zero-row window on a LIVE mirror is an honest "no timesheets in window" (F5)', async () => {
+    primeMirror([]);
+    const out: any = await tech_drive_time_summary.handler({} as any, ARGS, ctx);
+    expect(out.totals.total_drive_minutes).toBe(0);
+    expect(out.metrics_are_authoritative).toBe(true);
+    expect(out._freshness).toBe('fresh');
+    expect(out._empty).toBe(true);
+    expect(out._warning).toBeUndefined();
   });
 
   it('marks a fresh mirror authoritative', async () => {
@@ -62,8 +78,15 @@ describe('tech_drive_time_summary freshness disclosure (MB-1 / QUA-1141)', () =>
     expect(out._warning).toBeUndefined();
   });
 
-  it('flags the frozen-mirror failure mode (rows present, weeks old) as stale', async () => {
+  it('old day rows on a LIVE mirror are not called stale — the table probe decides (F1)', async () => {
     primeMirror([day('2026-07-01', hoursAgo(24 * 30))]);
+    const out: any = await tech_drive_time_summary.handler({} as any, ARGS, ctx);
+    expect(out._freshness).toBe('fresh');
+    expect(out.metrics_are_authoritative).toBe(true);
+  });
+
+  it('flags the frozen-mirror failure mode (table MAX weeks old) as stale', async () => {
+    primeMirror([day('2026-07-01', hoursAgo(24 * 30))], hoursAgo(24 * 30));
     const out: any = await tech_drive_time_summary.handler({} as any, ARGS, ctx);
     expect(out._freshness).toBe('stale');
     expect(out.metrics_are_authoritative).toBe(false);

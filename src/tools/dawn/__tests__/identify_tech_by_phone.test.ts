@@ -19,10 +19,23 @@ type Row = Record<string, unknown>;
  * Build an env with an ST_PROXY mock that returns successive responses,
  * one per call (FIFO). Each test wires the registry + technicians answers
  * in the order the tool issues them (registry first, technicians second).
+ * The fetchTableMax probe (matched on `AS t,` in the SQL) is routed
+ * separately — `tableMaxIso` controls the technicians table MAX(synced_at)
+ * (defaults fresh, 1h) so the FIFO queue only feeds the real reads.
  */
-function fakeEnv(responses: Array<Row[] | { httpStatus?: number; success?: boolean; error?: string }>) {
+function fakeEnv(
+  responses: Array<Row[] | { httpStatus?: number; success?: boolean; error?: string }>,
+  tableMaxIso: string | null = new Date(Date.now() - 1 * 3_600_000).toISOString(),
+) {
   let i = 0;
-  const fetcher = vi.fn(async () => {
+  const fetcher = vi.fn(async (_url: any, init?: any) => {
+    const body = init?.body ? JSON.parse(init.body as string) : { sql: '' };
+    if (/ AS t,/.test(String(body.sql))) {
+      return new Response(
+        JSON.stringify({ success: true, results: [{ t: 'technicians', m: tableMaxIso }] }),
+        { status: 200 },
+      );
+    }
     const r = responses[i++];
     if (r && !Array.isArray(r) && typeof r.httpStatus === 'number') {
       return new Response('upstream', { status: r.httpStatus });
@@ -38,6 +51,14 @@ function fakeEnv(responses: Array<Row[] | { httpStatus?: number; success?: boole
   } as any;
 }
 
+/** Non-probe calls only — the FIFO queue the tests reason about. */
+function dataCalls(env: any) {
+  return (env.ST_PROXY.fetch as any).mock.calls.filter((c: any) => {
+    const body = c[1]?.body ? JSON.parse(c[1].body) : { sql: '' };
+    return !/ AS t,/.test(String(body.sql));
+  });
+}
+
 const ctx = { actor: 'test', correlation: 'c1' };
 
 describe('identify_tech_by_phone (QUA-267 binding fix)', () => {
@@ -50,7 +71,7 @@ describe('identify_tech_by_phone (QUA-267 binding fix)', () => {
     expect(out.source).toBe('voice_registry');
     expect(out.tech_id).toBe('111');
     expect(out.tech_name).toBe('Brooks Hunsucker');
-    // Tier 2 should NOT have fired.
+    // Tier 2 should NOT have fired (and neither should the table-max probe).
     expect((env.ST_PROXY.fetch as any).mock.calls).toHaveLength(1);
   });
 
@@ -64,7 +85,7 @@ describe('identify_tech_by_phone (QUA-267 binding fix)', () => {
     expect(out.source).toBe('technicians');
     expect(out.tech_id).toBe('222');
     expect(out.tech_name).toBe('AH Tech');
-    expect((env.ST_PROXY.fetch as any).mock.calls).toHaveLength(2);
+    expect(dataCalls(env)).toHaveLength(2);
   });
 
   it('falls through to technicians when tier 1 returns "Unknown Tech"', async () => {
@@ -82,7 +103,7 @@ describe('identify_tech_by_phone (QUA-267 binding fix)', () => {
     const env = fakeEnv([[], []]);
     const out = (await identify_tech_by_phone.handler(env, { phone: '5555555555' }, ctx)) as any;
     expect(out.status).toBe('not_found');
-    expect((env.ST_PROXY.fetch as any).mock.calls).toHaveLength(2);
+    expect(dataCalls(env)).toHaveLength(2);
   });
 
   it('rejects too-short numbers before hitting D1', async () => {
@@ -156,7 +177,7 @@ describe('identify_tech_by_phone freshness disclosure (MB-1 / QUA-1141)', () => 
   it('the tier-2 technicians SELECT carries synced_at', async () => {
     const env = fakeEnv([[], []]);
     await identify_tech_by_phone.handler(env, { phone: '8435365603' }, ctx);
-    const tier2Body = JSON.parse((env.ST_PROXY.fetch as any).mock.calls[1][1].body);
+    const tier2Body = JSON.parse(dataCalls(env)[1][1].body);
     expect(tier2Body.sql).toContain('synced_at');
   });
 
@@ -176,20 +197,40 @@ describe('identify_tech_by_phone freshness disclosure (MB-1 / QUA-1141)', () => 
     const env = fakeEnv([
       [],
       [{ tech_id: '222', name: 'AH Tech', business_unit: null, role: 'DummyTech', synced_at: hoursAgo(24 * 30) }],
-    ]);
+    ], hoursAgo(24 * 30));
     const out = (await identify_tech_by_phone.handler(env, { phone: '8435365603' }, ctx)) as any;
     expect(out.status).toBe('found');
     expect(out._freshness).toBe('stale');
     expect(out._warning).toMatch(/STALE DATA/);
   });
 
-  it('not_found is a claim about the MIRROR, not ServiceTitan', async () => {
+  it('not_found on a LIVE mirror is an honest "not in the mirror as of the last sync" (F5)', async () => {
     const env = fakeEnv([[], []]);
     const out = (await identify_tech_by_phone.handler(env, { phone: '5555555555' }, ctx)) as any;
     expect(out.status).toBe('not_found');
     expect(out._not_found_caveat).toMatch(/mirror/i);
+    expect(out._freshness).toBe('fresh');
+    expect(out._empty).toBe(true);
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('not_found on an UNPROVABLE mirror stays unknown', async () => {
+    const env = fakeEnv([[], []], null);
+    const out = (await identify_tech_by_phone.handler(env, { phone: '5555555555' }, ctx)) as any;
+    expect(out.status).toBe('not_found');
     expect(out._freshness).toBe('unknown');
     expect(out._empty).toBe(true);
+  });
+
+  it('an old tier-2 row on a LIVE mirror is not called stale — the table probe decides (F1)', async () => {
+    const env = fakeEnv([
+      [],
+      [{ tech_id: '222', name: 'AH Tech', business_unit: null, role: 'DummyTech', synced_at: hoursAgo(24 * 30) }],
+    ]);
+    const out = (await identify_tech_by_phone.handler(env, { phone: '8435365603' }, ctx)) as any;
+    expect(out.status).toBe('found');
+    expect(out._freshness).toBe('fresh');
+    expect(out._warning).toBeUndefined();
   });
 
   it('does NOT stamp a voice_registry hit — learned table, no sync to disclose', async () => {

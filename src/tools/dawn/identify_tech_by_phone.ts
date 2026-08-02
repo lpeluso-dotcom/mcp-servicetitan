@@ -18,7 +18,7 @@ import { z } from 'zod';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
 import { queryD1First } from '../../d1-proxy';
-import { stampMirrorFreshness, type FreshnessStamp } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax, type FreshnessStamp } from '../../mirror-freshness';
 import type { Env } from '../../env';
 
 interface Args {
@@ -108,6 +108,10 @@ export const identify_tech_by_phone: ToolDef<Args> = {
       }
 
       // Tier 2: technicians table (canonical ST sync). Also taylor-ai D1.
+      // The table-level freshness probe (F1/F5 redesign) runs concurrently
+      // with the lookup; it never rejects (degrades to {}). Deliberately not
+      // fired on the tier-1 fast path — voice_registry hits carry no stamp.
+      const tableMaxP = fetchTableMax(env, ['technicians']);
       const row = await queryD1First<{
         tech_id: string;
         name: string;
@@ -131,19 +135,23 @@ export const identify_tech_by_phone: ToolDef<Args> = {
           role: row.role,
           business_unit: row.business_unit,
           source: 'technicians',
-          // MB-1 / QUA-1141: a hit off a frozen mirror may be an ex-tech.
-          ...stampMirrorFreshness([row], { table: 'technicians' }),
+          // MB-1 / QUA-1141: a hit off a frozen mirror may be an ex-tech —
+          // the table-level probe (not the row's own synced_at) decides.
+          ...stampMirrorFreshness([row], { table: 'technicians', tableMax: await tableMaxP }),
         };
       }
 
-      // MB-1 / QUA-1141: a miss is a claim about the MIRROR, not ServiceTitan
-      // — a new hire or changed number is absent until the next sync.
+      // MB-1 / QUA-1141: a miss is a claim about the MIRROR, not ServiceTitan.
+      // On a proven-fresh mirror this is an honest "not in the mirror as of
+      // the last sync" (F5); otherwise a new hire or changed number may
+      // simply be absent until the next sync.
       return {
         status: 'not_found',
-        ...stampMirrorFreshness([], { table: 'technicians' }),
+        ...stampMirrorFreshness([], { table: 'technicians', tableMax: await tableMaxP }),
         _not_found_caveat:
-          'No match in the taylor-ai D1 mirror. This does NOT prove the caller is not a QSC tech — ' +
-          'new hires and changed numbers are absent until the next technicians sync.',
+          'No match in the taylor-ai D1 mirror as of its last sync (see _freshness). If the ' +
+          'mirror is not proven fresh this does NOT prove the caller is not a QSC tech — new ' +
+          'hires and changed numbers are absent until the next technicians sync.',
       };
     } catch (err) {
       return { status: 'parse_error', message: `Lookup error: ${String(err)}` };

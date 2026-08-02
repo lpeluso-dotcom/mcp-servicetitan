@@ -185,22 +185,25 @@ describe('outputSchema — lenient fixture validation (top-10 tools)', () => {
 
   // Envelope per search_pricebook_all — two real shapes: 'success' (code or
   // query hit) and 'not_found'. See v12_new_tools.test.ts for real item rows.
-  // Both carry the MB-1 / QUA-1141 freshness stamp on every path.
+  // Both carry the MB-1 / QUA-1141 v2 freshness stamp on every path: items
+  // no longer leak synced_at (stamp plumbing, stripped), and `_tables` holds
+  // the per-table verdicts from the fetchTableMax probe.
   it('search_pricebook_all: success envelope (code lookup)', () => {
     expectValid(search_pricebook_all, {
       status: 'success',
       count: 1,
       matched_code: 'FLU-150',
-      items: [{ code: 'FLU-150', name: 'Flush', description: '', category: 'Drain', price: 150, member_price: null, hours: 0.75, type: 'service', calculated_price: 200, pricing: 'dynamic', synced_at: '2026-07-30T05:00:00Z' }],
+      items: [{ code: 'FLU-150', name: 'Flush', description: '', category: 'Drain', price: 150, member_price: null, hours: 0.75, type: 'service', calculated_price: 200, pricing: 'dynamic' }],
       _source: 'd1',
       _mirror_table: 'pb_services',
       _stale_hours: 3.2,
       _freshness: 'fresh',
       _empty: false,
+      _tables: { pb_services: { stale_hours: 3.2, freshness: 'fresh' } },
     });
   });
 
-  it('search_pricebook_all: not_found envelope', () => {
+  it('search_pricebook_all: not_found envelope (unprovable mirror)', () => {
     expectValid(search_pricebook_all, {
       status: 'not_found',
       message: 'Nothing found for "zzz". Try a different term.',
@@ -211,7 +214,12 @@ describe('outputSchema — lenient fixture validation (top-10 tools)', () => {
       _stale_hours: null,
       _freshness: 'unknown',
       _empty: true,
-      _warning: '0 rows returned from the taylor-ai D1 mirror table `pb_services+pb_materials+pb_equipment`. This is NOT proof that zero matching records exist.',
+      _tables: {
+        pb_services: { stale_hours: null, freshness: 'unknown' },
+        pb_materials: { stale_hours: null, freshness: 'unknown' },
+        pb_equipment: { stale_hours: null, freshness: 'unknown' },
+      },
+      _warning: 'Freshness unknown for `pb_services+pb_materials+pb_equipment`: mirror table(s) returned no MAX(synced_at) — a zero or miss from it is NOT proof that zero matching records exist.',
     });
   });
 
@@ -228,8 +236,10 @@ describe('outputSchema — lenient fixture validation (top-10 tools)', () => {
 
   // Envelope per job_cost_actuals composite (composites/job_cost_actuals.ts)
   // — real numbers pinned by v15_composites.test.ts's Brooks/77423990 probe.
-  // Carries the MB-1 / QUA-1141 freshness stamp on every path (its _warning
-  // rides in _warnings, so no top-level _warning field).
+  // Carries the MB-1 / QUA-1141 v2 freshness stamp on every path (its
+  // _warning rides in _warnings, so no top-level _warning field): emitted
+  // timesheets no longer leak synced_at, and `_tables` holds the
+  // job_timesheets verdict from the fetchTableMax probe.
   it('job_cost_actuals: full composite envelope (Brooks/77423990 probe shape)', () => {
     expectValid(job_cost_actuals, {
       jobId: 77423990,
@@ -241,7 +251,7 @@ describe('outputSchema — lenient fixture validation (top-10 tools)', () => {
         'gross_profit_$': 718, gross_margin_pct: 84.5,
       },
       per_technician: [{ technician_id: 75766687, technician_name: 'Brooks Hunsucker', drive_minutes: 24, working_minutes: 152, timesheet_count: 1 }],
-      timesheets: [{ timesheet_id: 1, job_id: 77423990, appointment_id: 200, technician_id: 75766687, dispatched_on: '2026-02-20T16:38:00Z', arrived_on: '2026-02-20T17:02:00Z', canceled_on: null, done_on: '2026-02-20T19:34:00Z', drive_minutes: 24, working_minutes: 152, active: true, synced_at: '2026-07-30T05:00:00Z' }],
+      timesheets: [{ timesheet_id: 1, job_id: 77423990, appointment_id: 200, technician_id: 75766687, dispatched_on: '2026-02-20T16:38:00Z', arrived_on: '2026-02-20T17:02:00Z', canceled_on: null, done_on: '2026-02-20T19:34:00Z', drive_minutes: 24, working_minutes: 152, active: true }],
       appointments: [],
       assignments: [],
       estimates: [],
@@ -252,6 +262,7 @@ describe('outputSchema — lenient fixture validation (top-10 tools)', () => {
       _stale_hours: 3.2,
       _freshness: 'fresh',
       _empty: false,
+      _tables: { job_timesheets: { stale_hours: 3.2, freshness: 'fresh' } },
       _composite: 'job_cost_actuals',
       _source: 'mixed',
       correlation: 'c1',

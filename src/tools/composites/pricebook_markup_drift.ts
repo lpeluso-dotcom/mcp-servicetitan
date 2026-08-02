@@ -25,7 +25,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
-import { stampMirrorFreshness } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -150,7 +150,13 @@ export const pricebook_markup_drift: ToolDef<Args> = {
     const minCategoryPeers = args.minCategoryPeers ?? DEFAULT_MIN_CATEGORY_PEERS;
     const includeMarginRisk = args.includeMarginRisk ?? true;
 
-    const { rows } = await readD1<MarkupRow>(env, MARKUP_SQL, []);
+    // Every table this composite reads gets its own liveness verdict —
+    // including pb_categories, whose join supplies the category names the
+    // grouping depends on (F2: no table hides behind a fresh sibling).
+    const [{ rows }, tableMax] = await Promise.all([
+      readD1<MarkupRow>(env, MARKUP_SQL, []),
+      fetchTableMax(env, ['pb_materials', 'pb_equipment', 'pb_categories']),
+    ]);
 
     const withMarkup = rows.map((r) => ({
       ...r,
@@ -215,10 +221,14 @@ export const pricebook_markup_drift: ToolDef<Args> = {
       };
     }
 
-    // MB-1 / QUA-1141: one stamp across everything read from both tables —
-    // the placeholder COUNT row contributes via its MAX(synced_at), so even a
-    // zero-computable-rows run can prove the mirror is alive.
-    const freshness = stampMirrorFreshness([...rows, ...riskRows], { table: 'pb_materials+pb_equipment' });
+    // MB-1 / QUA-1141: per-table verdicts from the MAX(synced_at) probe —
+    // a zero-computable-rows run on proven-live tables is an honest zero,
+    // and a frozen table is named even when its sibling is fresh (F2/F5).
+    // The riskRows still ride along for _empty/degraded-mode fidelity.
+    const freshness = stampMirrorFreshness([...rows, ...riskRows], {
+      table: 'pb_materials+pb_equipment',
+      tableMax,
+    });
 
     return {
       filters: { threshold, minCategoryPeers, includeMarginRisk },

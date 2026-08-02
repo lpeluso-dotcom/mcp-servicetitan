@@ -18,7 +18,7 @@ import { authHeaders } from '../../auth';
 import { gatherFetches, stRead } from '../../composite-helpers';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
-import { stampMirrorFreshness } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -137,6 +137,7 @@ export const job_cost_actuals: ToolDef<Args> = {
     _stale_hours: z.number().nullable(),
     _freshness: z.string(),
     _empty: z.boolean(),
+    _tables: z.record(z.string(), z.unknown()).optional(),
     _composite: z.string().optional(),
     _source: z.string().optional(),
     correlation: z.string().optional(),
@@ -148,8 +149,9 @@ export const job_cost_actuals: ToolDef<Args> = {
     const headers = authHeaders(env, correlation, actor);
     const tenant = env.ST_TENANT_ID;
 
-    // Parallel D1 reads + one live invoice fanout.
-    const [jobRows, tsRows, apptRows, asgRows, estRows] = await Promise.all([
+    // Parallel D1 reads (+ the table-level freshness probe) + one live
+    // invoice fanout.
+    const [jobRows, tsRows, apptRows, asgRows, estRows, tableMax] = await Promise.all([
       readD1<JobRow>(
         env,
         `SELECT job_id, customer_id, business_unit, job_type, job_status,
@@ -185,6 +187,7 @@ export const job_cost_actuals: ToolDef<Args> = {
          FROM estimates WHERE job_id = ? ORDER BY modified_date DESC`,
         [jobId],
       ),
+      fetchTableMax(env, ['job_timesheets']),
     ]);
 
     const job = jobRows.rows[0] ?? null;
@@ -270,11 +273,14 @@ export const job_cost_actuals: ToolDef<Args> = {
     }
 
     // MB-1 / QUA-1141: the timesheet read is the one that drives money —
-    // stamp its freshness. This tool already carries a _warnings array
-    // (QUA-1066), so the stamp's warning is concatenated into it rather than
-    // emitted as a colliding top-level _warning.
+    // stamp its freshness off the table-level MAX(synced_at) probe (F1: the
+    // rows' own synced_at only dates the rows, not the sync). This tool
+    // already carries a _warnings array (QUA-1066), so the stamp's warning is
+    // concatenated into it rather than emitted as a colliding top-level
+    // _warning.
     const { _warning: freshnessWarning, ...freshness } = stampMirrorFreshness(tsRows.rows, {
       table: 'job_timesheets',
+      tableMax,
     });
     if (freshnessWarning) warnings.push(freshnessWarning);
 
@@ -320,7 +326,8 @@ export const job_cost_actuals: ToolDef<Args> = {
       per_technician: [...perTech.values()].sort(
         (a, b) => b.working_minutes - a.working_minutes,
       ),
-      timesheets: tsRows.rows.map((t) => ({ ...t, active: t.active !== 0 })),
+      // synced_at is stamp plumbing, not part of the emitted timesheet shape.
+      timesheets: tsRows.rows.map(({ synced_at: _synced_at, ...t }) => ({ ...t, active: t.active !== 0 })),
       appointments: apptRows.rows,
       assignments: asgRows.rows,
       estimates: estRows.rows.map((e) => ({ ...e, active: e.active !== 0 })),

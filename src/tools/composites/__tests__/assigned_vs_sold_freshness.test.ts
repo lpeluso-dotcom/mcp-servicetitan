@@ -4,8 +4,9 @@
 // This audit feeds commission/bonus review. Reading the `estimates` mirror
 // raw meant a frozen or empty mirror rendered as "0 mismatches — attribution
 // is clean", which is the most believable wrong answer the tool can give.
-// The stamp is computed over the EXAMINED rows (pre-filter), so a clean
-// audit over fresh rows still proves its own age.
+// v2 (F1/F5): freshness comes from the estimates table's MAX(synced_at)
+// probe, so a clean audit on a LIVE mirror is an honest clean audit, and
+// old-but-final examined rows are never called stale.
 // ============================================================
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { assigned_vs_sold_estimate_audit } from '../assigned_vs_sold_estimate_audit';
@@ -16,8 +17,17 @@ const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString
 
 const ARGS = { startDate: '2026-05-01', endDate: '2026-05-31' };
 
-function primeMirror(rows: Array<Record<string, unknown>>) {
-  return vi.spyOn(d1, 'readD1').mockResolvedValue({ rows } as any);
+/** Route the audit read and the fetchTableMax probe by SQL shape. */
+function primeMirror(
+  rows: Array<Record<string, unknown>>,
+  tableMax: string | null = hoursAgo(1),
+) {
+  return vi.spyOn(d1, 'readD1').mockImplementation(async (_env: any, sql: any) => {
+    if (/ AS t,/.test(String(sql))) {
+      return { rows: [{ t: 'estimates', m: tableMax }] } as any;
+    }
+    return { rows } as any;
+  });
 }
 
 /** A flagged row (Sold, blank sold_by) with a controllable synced_at. */
@@ -45,14 +55,23 @@ describe('assigned_vs_sold_estimate_audit freshness disclosure (MB-1 / QUA-1141)
     expect(String(spy.mock.calls[0][1])).toMatch(/e\.synced_at/);
   });
 
-  it('does NOT present "0 mismatches" as a clean audit when the mirror is empty', async () => {
-    primeMirror([]);
+  it('does NOT present "0 mismatches" as a clean audit when the mirror cannot prove liveness', async () => {
+    primeMirror([], null);
     const out: any = await assigned_vs_sold_estimate_audit.handler({} as any, ARGS, ctx);
     expect(out.summary.flagged).toBe(0);
     expect(out.summary.count_is_authoritative).toBe(false);
     expect(out._freshness).toBe('unknown');
     expect(out._empty).toBe(true);
     expect(out._warning).toMatch(/not proof/i);
+  });
+
+  it('a zero-row window on a LIVE mirror is an honest clean window (F5)', async () => {
+    primeMirror([]);
+    const out: any = await assigned_vs_sold_estimate_audit.handler({} as any, ARGS, ctx);
+    expect(out.summary.flagged).toBe(0);
+    expect(out.summary.count_is_authoritative).toBe(true);
+    expect(out._freshness).toBe('fresh');
+    expect(out._warning).toBeUndefined();
   });
 
   it('stamps a fresh mirror authoritative — even when the audit flags nothing', async () => {
@@ -65,8 +84,16 @@ describe('assigned_vs_sold_estimate_audit freshness disclosure (MB-1 / QUA-1141)
     expect(out._warning).toBeUndefined();
   });
 
-  it('flags a frozen mirror as stale and withholds authority', async () => {
-    primeMirror([clean(hoursAgo(24 * 30)), flagged(hoursAgo(24 * 30))]);
+  it('old-but-final examined rows on a LIVE mirror are not called stale (F1)', async () => {
+    primeMirror([clean(hoursAgo(24 * 30))]);
+    const out: any = await assigned_vs_sold_estimate_audit.handler({} as any, ARGS, ctx);
+    expect(out._freshness).toBe('fresh');
+    expect(out.summary.count_is_authoritative).toBe(true);
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('flags a frozen mirror (table MAX weeks old) as stale and withholds authority', async () => {
+    primeMirror([clean(hoursAgo(24 * 30)), flagged(hoursAgo(24 * 30))], hoursAgo(24 * 30));
     const out: any = await assigned_vs_sold_estimate_audit.handler({} as any, ARGS, ctx);
     expect(out.summary.flagged).toBe(1);
     expect(out.summary.count_is_authoritative).toBe(false);

@@ -3,9 +3,24 @@ import { dispatch_pro_utilization_list } from '../dispatch-pro/dispatch_pro_util
 import { dispatch_pro_ratio_list } from '../dispatch-pro/dispatch_pro_ratio_list';
 import { dispatch_pro_alerts_list } from '../dispatch-pro/dispatch_pro_alerts_list';
 
-function envWith(handler: (body: any) => any) {
+/**
+ * `handler` serves the tool's data query; the fetchTableMax probe (matched
+ * on `AS t,`) is answered separately with `tableMaxIso` (defaults fresh 1h)
+ * so per-test handlers never see it.
+ */
+function envWith(
+  handler: (body: any) => any,
+  tableMaxIso: string | null = new Date(Date.now() - 1 * 3_600_000).toISOString(),
+) {
   const fetcher = vi.fn(async (_url: any, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(init.body as string) : {};
+    if (/ AS t,/.test(String(body.sql))) {
+      const m = String(body.sql).match(/FROM (dispatch_pro_\w+)/);
+      return new Response(
+        JSON.stringify({ success: true, results: [{ t: m?.[1], m: tableMaxIso }] }),
+        { status: 200 },
+      );
+    }
     return new Response(JSON.stringify(handler(body)), { status: 200 });
   });
   return {
@@ -108,8 +123,8 @@ describe('dispatch-pro freshness disclosure (MB-1 / QUA-1141)', () => {
     expect(out._warning).toBeUndefined();
   });
 
-  it('utilization: a frozen mirror is flagged stale and authority is withheld', async () => {
-    const env = envWith(() => ({ success: true, results: [utilizationRow(hoursAgo(24 * 20))] }));
+  it('utilization: a frozen mirror (table MAX weeks old) is flagged stale and authority is withheld', async () => {
+    const env = envWith(() => ({ success: true, results: [utilizationRow(hoursAgo(24 * 20))] }), hoursAgo(24 * 20));
     const out: any = await dispatch_pro_utilization_list.handler(env, {}, { actor: 'test', correlation: 'c1' });
     expect(out._freshness).toBe('stale');
     expect(out.count_is_authoritative).toBe(false);
@@ -117,8 +132,8 @@ describe('dispatch-pro freshness disclosure (MB-1 / QUA-1141)', () => {
     expect(out._stale_hours).toBeGreaterThan(48);
   });
 
-  it('utilization: an empty mirror does NOT present count 0 as authoritative', async () => {
-    const env = envWith(() => ({ success: true, results: [] }));
+  it('utilization: an UNPROVABLE mirror (MAX null) does NOT present count 0 as authoritative', async () => {
+    const env = envWith(() => ({ success: true, results: [] }), null);
     const out: any = await dispatch_pro_utilization_list.handler(env, {}, { actor: 'test', correlation: 'c1' });
     expect(out.count).toBe(0);
     expect(out.count_is_authoritative).toBe(false);
@@ -127,8 +142,25 @@ describe('dispatch-pro freshness disclosure (MB-1 / QUA-1141)', () => {
     expect(out._warning).toMatch(/not proof/i);
   });
 
-  it('ratio: stamps the dispatch_pro_ratio mirror and flags an empty read', async () => {
+  it('utilization: zero rows on a LIVE mirror is an honest zero (F5)', async () => {
     const env = envWith(() => ({ success: true, results: [] }));
+    const out: any = await dispatch_pro_utilization_list.handler(env, {}, { actor: 'test', correlation: 'c1' });
+    expect(out.count).toBe(0);
+    expect(out.count_is_authoritative).toBe(true);
+    expect(out._freshness).toBe('fresh');
+    expect(out._empty).toBe(true);
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('utilization: OLD rows on a LIVE mirror are not called stale — the probe decides (F1)', async () => {
+    const env = envWith(() => ({ success: true, results: [utilizationRow(hoursAgo(24 * 20))] }));
+    const out: any = await dispatch_pro_utilization_list.handler(env, {}, { actor: 'test', correlation: 'c1' });
+    expect(out._freshness).toBe('fresh');
+    expect(out.count_is_authoritative).toBe(true);
+  });
+
+  it('ratio: stamps the dispatch_pro_ratio mirror and flags an unprovable empty read', async () => {
+    const env = envWith(() => ({ success: true, results: [] }), null);
     const out: any = await dispatch_pro_ratio_list.handler(env, {}, { actor: 'test', correlation: 'c1' });
     expect(out._mirror_table).toBe('dispatch_pro_ratio');
     expect(out._freshness).toBe('unknown');

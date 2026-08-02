@@ -32,9 +32,23 @@ const OPP_ROW = {
   synced_at: '2026-05-19T12:00:00Z',
 };
 
+/**
+ * `handler` serves the tool's data queries; the fetchTableMax probe
+ * (matched on `AS t,`) is answered separately with a fresh MAX so per-test
+ * handlers (and their SQL captures) never see it.
+ */
 function envWith(handler: (body: any) => any) {
   const fetcher = vi.fn(async (_url: any, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(init.body as string) : {};
+    if (/ AS t,/.test(String(body.sql))) {
+      return new Response(
+        JSON.stringify({
+          success: true,
+          results: [{ t: 'opportunities', m: new Date(Date.now() - 3_600_000).toISOString() }],
+        }),
+        { status: 200 },
+      );
+    }
     return new Response(JSON.stringify(handler(body)), { status: 200 });
   });
   return {

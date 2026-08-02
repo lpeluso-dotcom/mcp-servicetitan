@@ -13,9 +13,20 @@ interface ProxyResponse {
   status?: number;
 }
 
-function fakeEnv(responses: ProxyResponse[]) {
-  const fetcher = vi.fn(async (url: string | Request) => {
+function fakeEnv(
+  responses: ProxyResponse[],
+  tableMaxIso: string | null = new Date(Date.now() - 1 * 3_600_000).toISOString(),
+) {
+  const fetcher = vi.fn(async (url: string | Request, init?: any) => {
     const u = typeof url === 'string' ? url : url.url;
+    // fetchTableMax probe (MB-1 / QUA-1141 v2) — matched on `AS t,`.
+    const body = init?.body ? JSON.parse(init.body as string) : { sql: '' };
+    if (/ AS t,/.test(String(body.sql))) {
+      return new Response(
+        JSON.stringify({ success: true, results: [{ t: 'pb_materials', m: tableMaxIso }] }),
+        { status: 200 },
+      );
+    }
     const match = responses.find((r) => !r.urlContains || u.includes(r.urlContains));
     if (!match) {
       return new Response(JSON.stringify({ success: false, error: 'no mock for ' + u }), { status: 500 });
@@ -27,6 +38,15 @@ function fakeEnv(responses: ProxyResponse[]) {
     ST_PROXY: { fetch: fetcher },
     MCP_SYNC_KEY: 'test-key',
   } as any;
+}
+
+/** Non-probe D1 calls only. */
+function d1DataCalls(env: any) {
+  return (env.ST_PROXY.fetch as any).mock.calls.filter((c: any) => {
+    if (!String(c[0]).includes('/api/sql/read')) return false;
+    const body = c[1]?.body ? JSON.parse(c[1].body) : { sql: '' };
+    return !/ AS t,/.test(String(body.sql));
+  });
 }
 
 const ctx = { actor: 'test', correlation: 'c1' };
@@ -43,7 +63,7 @@ describe('search_materials (QUA-267 code param)', () => {
     expect(out._source).toBe('d1-exact');
     expect(out.materials).toHaveLength(1);
     expect((out.materials[0] as Row).code).toBe('PRV-075');
-    expect((env.ST_PROXY.fetch as any).mock.calls).toHaveLength(1);
+    expect(d1DataCalls(env)).toHaveLength(1);
   });
 
   it('exact code with no D1 hit: falls through to live ST', async () => {
@@ -110,13 +130,30 @@ describe('search_materials freshness disclosure (MB-1 / QUA-1141)', () => {
     expect(out._warning).toBeUndefined();
   });
 
-  it('a stale D1 hit is disclosed, not served silently', async () => {
+  it('a hit off a frozen mirror (table MAX weeks old) is disclosed, not served silently', async () => {
     const env = fakeEnv([
       { urlContains: '/api/sql/read', body: { success: true, results: [{ code: 'PRV-075', name: 'PRV', synced_at: hoursAgo(24 * 23) }] } },
-    ]);
+    ], hoursAgo(24 * 23));
     const out = (await search_materials.handler(env, { code: 'PRV-075' }, ctx)) as any;
     expect(out._source).toBe('d1-exact');
     expect(out._freshness).toBe('stale');
     expect(out._warning).toMatch(/STALE DATA/);
+  });
+
+  it('an old ROW on a live mirror is not called stale — the table probe decides (F1)', async () => {
+    const env = fakeEnv([
+      { urlContains: '/api/sql/read', body: { success: true, results: [{ code: 'PRV-075', name: 'PRV', synced_at: hoursAgo(24 * 23) }] } },
+    ]);
+    const out = (await search_materials.handler(env, { code: 'PRV-075' }, ctx)) as any;
+    expect(out._freshness).toBe('fresh');
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('strips synced_at from the emitted material row (stamp plumbing, not payload)', async () => {
+    const env = fakeEnv([
+      { urlContains: '/api/sql/read', body: { success: true, results: [{ code: 'PRV-075', name: 'PRV', synced_at: hoursAgo(1) }] } },
+    ]);
+    const out = (await search_materials.handler(env, { code: 'PRV-075' }, ctx)) as any;
+    expect(out.materials[0]).not.toHaveProperty('synced_at');
   });
 });

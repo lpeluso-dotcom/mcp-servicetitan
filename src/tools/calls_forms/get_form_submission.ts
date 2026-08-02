@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
 import { readD1 } from '../../d1';
-import { stampMirrorFreshness } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import { readSTPaged } from '../../st';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
@@ -48,18 +48,26 @@ export const get_form_submission: ToolDef<Args> = {
   },
   stEndpoint: { method: 'GET', path: '/forms/v2/tenant/{tid}/submissions', source: 'mixed' },
   async handler(env, args, { actor, correlation }) {
-    const { rows } = await readD1<D1SubmissionRow>(
-      env,
-      'SELECT submission_id, form_id, form_name, status, submitted_on, submitted_by_id, owners_json, units_json, synced_at ' +
-        'FROM form_submissions WHERE submission_id = ? LIMIT 1',
-      [args.formSubmissionId],
-    );
+    const [{ rows }, tableMax] = await Promise.all([
+      readD1<D1SubmissionRow>(
+        env,
+        'SELECT submission_id, form_id, form_name, status, submitted_on, submitted_by_id, owners_json, units_json, synced_at ' +
+          'FROM form_submissions WHERE submission_id = ? LIMIT 1',
+        [args.formSubmissionId],
+      ),
+      fetchTableMax(env, ['form_submissions']),
+    ]);
     if (rows.length > 0) {
       // MB-1 / QUA-1141: a D1 hit used to be served with no freshness signal
-      // — a stale `form_submissions` row looked identical to a current one.
-      // The miss paths below already fall back live / throw, so only the hit
+      // — a hit off a frozen `form_submissions` sync looked identical to a
+      // current one. The table-level MAX(synced_at) probe decides (F1). The
+      // miss paths below already fall back live / throw, so only the hit
       // needs the stamp.
-      return { submission: rows[0], _source: 'd1', ...stampMirrorFreshness(rows, { table: 'form_submissions' }) };
+      return {
+        submission: rows[0],
+        _source: 'd1',
+        ...stampMirrorFreshness(rows, { table: 'form_submissions', tableMax }),
+      };
     }
 
     if (args.formId === undefined) {

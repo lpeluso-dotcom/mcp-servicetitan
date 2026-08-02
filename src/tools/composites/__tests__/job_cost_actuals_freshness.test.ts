@@ -42,9 +42,17 @@ function makeEnv(fetcher: any) {
   return { ST_TENANT_ID: '000000000', ST_PROXY: { fetch: fetcher }, MCP_SYNC_KEY: 'k' } as any;
 }
 
-/** Brooks/77423990 probe shape, with a controllable timesheet synced_at. */
-function routes(timesheetRows: any[]) {
+/**
+ * Brooks/77423990 probe shape, with a controllable timesheet synced_at and a
+ * controllable job_timesheets table MAX (the fetchTableMax probe, matched on
+ * `AS t,` BEFORE the generic FROM job_timesheets route; defaults fresh 1h).
+ */
+function routes(timesheetRows: any[], tableMax: string | null = hoursAgo(1)) {
   return [
+    {
+      matches: (sql: string) => / AS t,/.test(sql),
+      rows: [{ t: 'job_timesheets', m: tableMax }],
+    },
     {
       matches: (sql: string) => sql.includes('FROM jobs WHERE job_id'),
       rows: [{
@@ -73,9 +81,18 @@ describe('job_cost_actuals freshness disclosure (MB-1 / QUA-1141)', () => {
   it('the job_timesheets SELECT carries synced_at — it is the read that drives money', async () => {
     const { fetcher, bodies } = multiRouter(routes([]));
     await job_cost_actuals.handler(makeEnv(fetcher), { jobId: 77423990 }, CTX);
-    const tsSql = bodies.map((b) => b.sql).find((s) => s.includes('FROM job_timesheets'));
+    const tsSql = bodies.map((b) => b.sql).find((s) => s.includes('FROM job_timesheets') && !/ AS t,/.test(s));
     expect(tsSql, 'never queried job_timesheets').toBeDefined();
     expect(tsSql!).toContain('synced_at');
+  });
+
+  it('issues the fetchTableMax probe against job_timesheets', async () => {
+    const { fetcher, bodies } = multiRouter(routes([]));
+    await job_cost_actuals.handler(makeEnv(fetcher), { jobId: 77423990 }, CTX);
+    const probeSql = bodies.map((b) => b.sql).find((s) => / AS t,/.test(s));
+    expect(probeSql, 'never issued the table-max probe').toBeDefined();
+    expect(probeSql!).toMatch(/MAX\(synced_at\)/);
+    expect(probeSql!).toMatch(/FROM job_timesheets/);
   });
 
   it('marks fresh timesheets authoritative with no warnings', async () => {
@@ -86,10 +103,12 @@ describe('job_cost_actuals freshness disclosure (MB-1 / QUA-1141)', () => {
     expect(out.summary.metrics_are_authoritative).toBe(true);
     expect(out._warning).toBeUndefined();
     expect(out._warnings).toBeUndefined();
+    // synced_at is stamp plumbing — stripped from the emitted timesheet rows.
+    expect(out.timesheets[0]).not.toHaveProperty('synced_at');
   });
 
   it('concatenates a stale-mirror warning into _warnings — never a colliding top-level _warning', async () => {
-    const { fetcher } = multiRouter(routes([tsRow(hoursAgo(24 * 30))]));
+    const { fetcher } = multiRouter(routes([tsRow(hoursAgo(24 * 30))], hoursAgo(24 * 30)));
     const out: any = await job_cost_actuals.handler(makeEnv(fetcher), { jobId: 77423990 }, CTX);
     expect(out._freshness).toBe('stale');
     expect(out.summary.metrics_are_authoritative).toBe(false);
@@ -99,8 +118,29 @@ describe('job_cost_actuals freshness disclosure (MB-1 / QUA-1141)', () => {
     expect(out.summary.labor_burden_$).toBeCloseTo(132, 2);
   });
 
-  it('keeps BOTH disclosures on the zero-timesheet path: labor-burden absence AND the empty-mirror stamp', async () => {
+  it('old timesheet rows on a LIVE mirror are not called stale — the table probe decides (F1)', async () => {
+    const { fetcher } = multiRouter(routes([tsRow(hoursAgo(24 * 30))]));
+    const out: any = await job_cost_actuals.handler(makeEnv(fetcher), { jobId: 77423990 }, CTX);
+    expect(out._freshness).toBe('fresh');
+    expect(out.summary.metrics_are_authoritative).toBe(true);
+    expect(out._warnings).toBeUndefined();
+  });
+
+  it('zero timesheets on a LIVE mirror: labor-burden absence still disclosed, but no empty-mirror alarm (F5)', async () => {
     const { fetcher } = multiRouter(routes([]));
+    const out: any = await job_cost_actuals.handler(makeEnv(fetcher), { jobId: 77423990 }, CTX);
+    expect(out._empty).toBe(true);
+    expect(out._freshness).toBe('fresh');
+    // Still not authoritative: the burden is zero-by-absence regardless of mirror health.
+    expect(out.summary.metrics_are_authoritative).toBe(false);
+    const warned = out._warnings.join(' ');
+    expect(warned).toMatch(/labor_burden_unavailable/);
+    expect(warned).not.toMatch(/not proof/i);
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('keeps BOTH disclosures on the zero-timesheet path when the mirror is UNPROVABLE', async () => {
+    const { fetcher } = multiRouter(routes([], null));
     const out: any = await job_cost_actuals.handler(makeEnv(fetcher), { jobId: 77423990 }, CTX);
     expect(out._empty).toBe(true);
     expect(out._freshness).toBe('unknown');

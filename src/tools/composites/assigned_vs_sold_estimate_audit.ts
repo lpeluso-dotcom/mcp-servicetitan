@@ -21,7 +21,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
-import { stampMirrorFreshness } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -120,7 +120,10 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
        ORDER BY e.modified_date DESC
        LIMIT ?`;
 
-    const { rows } = await readD1<EstimateAuditRow>(env, sql, [...params, limit * 3]);
+    const [{ rows }, tableMax] = await Promise.all([
+      readD1<EstimateAuditRow>(env, sql, [...params, limit * 3]),
+      fetchTableMax(env, ['estimates']),
+    ]);
 
     // Filter to the mismatch cohort in JS so we can carry the reason cleanly.
     const out: OutRow[] = [];
@@ -166,9 +169,9 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
 
     // MB-1 / QUA-1141: this audit feeds commission review — a frozen or empty
     // `estimates` mirror rendered as "0 mismatches, attribution is clean".
-    // Stamped over the EXAMINED rows (pre-filter), so a clean audit still
-    // proves its own age.
-    const freshness = stampMirrorFreshness(rows, { table: 'estimates' });
+    // The table-level MAX(synced_at) probe proves the mirror's age, so a
+    // clean audit over a live mirror is an honest clean audit (F1/F5).
+    const freshness = stampMirrorFreshness(rows, { table: 'estimates', tableMax });
 
     return {
       window: { startDate: args.startDate, endDate: args.endDate },

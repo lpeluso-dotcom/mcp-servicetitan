@@ -15,7 +15,7 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
 import { queryD1 as d1ProxyQuery } from '../../d1-proxy';
-import { stampMirrorFreshness } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
@@ -76,6 +76,7 @@ const CODE_LOOKUPS: ReadonlyArray<readonly [string, string]> = [
 
 // Query-path (and code-miss) reads span all three mirrors at once.
 const ALL_TABLES = 'pb_services+pb_materials+pb_equipment';
+const ALL_TABLE_LIST = ['pb_services', 'pb_materials', 'pb_equipment'];
 
 /**
  * Generate code variants to try in order. Spoken input like "flu150" resolves
@@ -112,7 +113,9 @@ function queryD1(
   });
 }
 
-const withPricing = (r: PricebookItem) => ({
+const withPricing = ({ synced_at: _synced_at, ...r }: PricebookItem) => ({
+  // synced_at is stamp plumbing (it feeds stampMirrorFreshness), not part of
+  // the emitted item shape — stripped here like the other composites do.
   ...r,
   // Preserve the numeric `price` contract: never null for a null-price
   // service. Dawn/Retell may read `price` as a number; honesty about
@@ -155,6 +158,7 @@ export const search_pricebook_all: ToolDef<Args> = {
     _stale_hours: z.number().nullable(),
     _freshness: z.string(),
     _empty: z.boolean(),
+    _tables: z.record(z.string(), z.unknown()).optional(),
     _warning: z.string().optional(),
   },
   async handler(env, args, { correlation }) {
@@ -170,6 +174,10 @@ export const search_pricebook_all: ToolDef<Args> = {
     }
 
     try {
+      // Table-level freshness probe (F1/F2 redesign) — fired up front so it
+      // runs concurrently with the data reads; never rejects (degrades to {}).
+      const tableMaxP = fetchTableMax(env, ALL_TABLE_LIST);
+
       // Code path — exact match across all 3 tables, return first hit.
       // Tries code variants in order so spoken/typed input "flu150" resolves
       // to the canonical "FLU-150" without the caller having to format it:
@@ -182,27 +190,34 @@ export const search_pricebook_all: ToolDef<Args> = {
           for (const [sql, table] of CODE_LOOKUPS) {
             const rows = await queryD1(env, sql, [variant], correlation);
             if (rows.length > 0) {
+              const tableMax = await tableMaxP;
               return {
                 status: 'success',
                 count: rows.length,
                 matched_code: variant,
                 items: rows.map(withPricing),
                 _source: 'd1',
-                // MB-1 / QUA-1141: raw mirror row — disclose its age.
-                ...stampMirrorFreshness(rows, { table }),
+                // MB-1 / QUA-1141: raw mirror row — disclose the HIT table's
+                // liveness via its MAX(synced_at), not the row's own age.
+                ...stampMirrorFreshness(rows, {
+                  table,
+                  tableMax: table in tableMax ? { [table]: tableMax[table] } : {},
+                }),
               };
             }
           }
         }
-        // MB-1 / QUA-1141: a miss is a claim about the MIRROR, not ServiceTitan
-        // — the empty stamp says so instead of a silent not_found.
+        // MB-1 / QUA-1141: a miss is a claim about the MIRROR, not ServiceTitan.
+        // With all three tables proven live the miss reads as "not in the
+        // mirror as of the last sync" (a real miss / typo'd code — F5);
+        // otherwise the stamp says which table could not prove liveness.
         return {
           status: 'not_found',
           message: `No pricebook item with code "${code}" (also tried ${variants.slice(1).join(', ')}).`,
           count: 0,
           items: [],
           _source: 'd1',
-          ...stampMirrorFreshness([], { table: ALL_TABLES }),
+          ...stampMirrorFreshness([], { table: ALL_TABLES, tableMax: await tableMaxP }),
         };
       }
 
@@ -220,10 +235,11 @@ export const search_pricebook_all: ToolDef<Args> = {
         .sort((a, b) => ((b.calculated_price ?? b.price) || 0) - ((a.calculated_price ?? a.price) || 0))
         .slice(0, 8);
 
-      // MB-1 / QUA-1141: stamp over everything fetched (pre-cap) — the newest
-      // synced_at across all three mirrors dates the answer; an all-empty
-      // fan-out is flagged, never served as a silent not_found.
-      const freshness = stampMirrorFreshness(all, { table: ALL_TABLES });
+      // MB-1 / QUA-1141: per-table verdicts across all three mirrors (F2 —
+      // a frozen pb_equipment must not hide behind a fresh pb_services), and
+      // an all-empty fan-out on proven-live tables is an honest "no matches
+      // as of the last sync" rather than an alarm (F5).
+      const freshness = stampMirrorFreshness(all, { table: ALL_TABLES, tableMax: await tableMaxP });
 
       if (merged.length === 0) {
         return { status: 'not_found', message: `Nothing found for "${query}". Try a different term.`, count: 0, items: [], _source: 'd1', ...freshness };

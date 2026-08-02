@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { McpError } from '../../errors';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
-import { stampMirrorFreshness } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -173,7 +173,10 @@ export const opportunities_list: ToolDef<Args> = {
       `LIMIT ? OFFSET ?`;
 
     try {
-      const { rows } = await readD1<OpportunityRow>(env, sql, [...params, pageSize + 1, offset]);
+      const [{ rows }, tableMax] = await Promise.all([
+        readD1<OpportunityRow>(env, sql, [...params, pageSize + 1, offset]),
+        fetchTableMax(env, ['opportunities']),
+      ]);
       const hasMore = rows.length > pageSize;
       const slice = hasMore ? rows.slice(0, pageSize) : rows;
       const opportunities = slice.map((r) => ({
@@ -184,8 +187,10 @@ export const opportunities_list: ToolDef<Args> = {
       }));
       // MB-1 / QUA-1141: the `opportunities` mirror has been empty in
       // production, and a raw read reported that as `count: 0` — a confident
-      // "no open opportunities" that was really "we cannot see any".
-      const freshness = stampMirrorFreshness(rows, { table: 'opportunities' });
+      // "no open opportunities" that was really "we cannot see any". The
+      // table-level MAX(synced_at) probe tells an honest zero apart from a
+      // dead mirror (F1/F5 redesign).
+      const freshness = stampMirrorFreshness(rows, { table: 'opportunities', tableMax });
       return {
         count: opportunities.length,
         count_is_authoritative: freshness._freshness === 'fresh',

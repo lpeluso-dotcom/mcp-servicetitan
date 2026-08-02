@@ -3,6 +3,9 @@
 //
 // Mocks readD1 directly (vi.mock('../../../d1')) so we can assert on the
 // exact SQL/params sent, independent of the servicetitan-proxy transport.
+// The handler issues up to four queries per call (markup UNION, the
+// fetchTableMax probe, equipment cost/no-price, placeholder COUNT) — the
+// mock routes by SQL shape rather than call order.
 // ============================================================
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -19,15 +22,45 @@ function makeEnv(): any {
   return { ST_PROXY: { fetch: vi.fn() }, MCP_SYNC_KEY: 'k' };
 }
 
+const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+
+interface WireOpts {
+  markup?: Array<Record<string, unknown>>;
+  equipNoPrice?: Array<Record<string, unknown>>;
+  placeholders?: Array<Record<string, unknown>>;
+  tableMax?: { pb_materials?: string | null; pb_equipment?: string | null; pb_categories?: string | null };
+}
+
+/** Route all four query shapes; tableMax defaults to fresh (1h) per table. */
+function wire(opts: WireOpts = {}) {
+  readD1Mock.mockImplementation(async (_e: unknown, sql: string) => {
+    if (/ AS t,/.test(sql)) {
+      return {
+        rows: [
+          { t: 'pb_materials', m: opts.tableMax?.pb_materials !== undefined ? opts.tableMax.pb_materials : hoursAgo(1) },
+          { t: 'pb_equipment', m: opts.tableMax?.pb_equipment !== undefined ? opts.tableMax.pb_equipment : hoursAgo(1) },
+          { t: 'pb_categories', m: opts.tableMax?.pb_categories !== undefined ? opts.tableMax.pb_categories : hoursAgo(1) },
+        ],
+      };
+    }
+    if (/COUNT\(\*\)/.test(sql)) return { rows: opts.placeholders ?? [{ cnt: 0, synced_at: null }] };
+    if (/price\s*=\s*0/.test(sql)) return { rows: opts.equipNoPrice ?? [] };
+    return { rows: opts.markup ?? [] };
+  });
+}
+
+/** The non-probe calls — what the pre-redesign tests reasoned about. */
+function dataCalls() {
+  return readD1Mock.mock.calls.filter(([, sql]) => !/ AS t,/.test(sql as string));
+}
+
 beforeEach(() => {
   readD1Mock.mockReset();
 });
 
 describe('pricebook_markup_drift', () => {
   it('issues a SELECT-only query scoped to pb_materials + pb_equipment only (no pb_services)', async () => {
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
-    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 0 }] });
+    wire();
 
     await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
 
@@ -46,9 +79,7 @@ describe('pricebook_markup_drift', () => {
   });
 
   it('never string-interpolates threshold into the SQL text (fully parameterized)', async () => {
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
-    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 0 }] });
+    wire();
 
     await pricebook_markup_drift.handler(makeEnv(), { threshold: 0.987654 }, CTX);
 
@@ -71,9 +102,7 @@ describe('pricebook_markup_drift', () => {
       { id: 7, code: 'G2', name: 'Gadget 2', category_name: 'Gadgets', cost: 10, price: 12, kind: 'material' },
       { id: 8, code: 'G3', name: 'Gadget 3', category_name: 'Gadgets', cost: 10, price: 11, kind: 'material' },
     ];
-    readD1Mock.mockResolvedValueOnce({ rows });
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
-    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 0 }] });
+    wire({ markup: rows });
 
     const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
 
@@ -92,14 +121,13 @@ describe('pricebook_markup_drift', () => {
   });
 
   it('surfaces marginRisk populations: equipment cost>0/price=0 and material (0,0) placeholder count', async () => {
-    readD1Mock.mockResolvedValueOnce({ rows: [] }); // main markup query
-    readD1Mock.mockResolvedValueOnce({
-      rows: [
+    wire({
+      equipNoPrice: [
         { id: 501, code: 'E1', name: 'Unbilled Equip 1', cost: 900 },
         { id: 502, code: 'E2', name: 'Unbilled Equip 2', cost: 450 },
       ],
-    }); // equipment cost>0/price=0
-    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 2074 }] }); // material placeholder count
+      placeholders: [{ cnt: 2074, synced_at: null }],
+    });
 
     const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
 
@@ -111,24 +139,25 @@ describe('pricebook_markup_drift', () => {
 
     // The equipment cost-no-price query must never touch price>0 in its WHERE —
     // it is explicitly looking for the price=0 unbilled-cost bug population.
-    const [, equipSql] = readD1Mock.mock.calls[1];
-    expect(equipSql).toContain('pb_equipment');
-    expect(equipSql).toMatch(/price\s*=\s*0/);
+    const equipSql = dataCalls()
+      .map((c) => c[1] as string)
+      .find((s) => /price\s*=\s*0/.test(s) && !/COUNT\(\*\)/.test(s));
+    expect(equipSql).toBeDefined();
+    expect(equipSql!).toContain('pb_equipment');
   });
 
-  it('omits marginRisk when includeMarginRisk=false and only fires the main query', async () => {
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
+  it('omits marginRisk when includeMarginRisk=false and only fires the main data query', async () => {
+    wire();
 
     const out: any = await pricebook_markup_drift.handler(makeEnv(), { includeMarginRisk: false }, CTX);
 
     expect(out.marginRisk).toBeUndefined();
-    expect(readD1Mock).toHaveBeenCalledTimes(1);
+    // One data query (markup UNION); the fetchTableMax probe rides alongside.
+    expect(dataCalls()).toHaveLength(1);
   });
 
   it('carries the honest dynamic-pricing exclusion _note and _source/_composite envelope', async () => {
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
-    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 0 }] });
+    wire();
 
     const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
 
@@ -153,37 +182,39 @@ describe('pricebook_markup_drift', () => {
   });
 });
 
-// ── Mirror-freshness disclosure (MB-1 / QUA-1141) ────────────────────
-// The placeholder query is COUNT(*)-only, which aggregates row age away —
-// it carries MAX(synced_at) alongside the count (the tech_scorecard
-// pattern) so even a rows-empty run can prove the mirror is alive.
-
-const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+// ── Mirror-freshness disclosure (MB-1 / QUA-1141, v2 table-level) ────
+// Freshness comes from the fetchTableMax probe over every table this
+// composite reads (pb_materials, pb_equipment AND the pb_categories join),
+// so a zero-computable-rows run on live tables is an honest zero and a
+// frozen table is named even when a sibling is fresh (F2/F5).
 
 describe('pricebook_markup_drift freshness disclosure (MB-1 / QUA-1141)', () => {
-  it('all three queries carry synced_at — the COUNT(*) one via MAX(synced_at)', async () => {
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
-    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 0, synced_at: null }] });
+  it('all data queries carry synced_at, and the probe covers all three tables read', async () => {
+    wire();
 
     await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
 
-    expect(readD1Mock).toHaveBeenCalledTimes(3);
+    expect(readD1Mock).toHaveBeenCalledTimes(4);
     for (const [, sql] of readD1Mock.mock.calls) {
       expect(sql).toContain('synced_at');
     }
-    const countSql = readD1Mock.mock.calls.map((c) => c[1]).find((s: string) => /COUNT\(\*\)/.test(s));
+    const probeSql = readD1Mock.mock.calls.map((c) => c[1] as string).find((s) => / AS t,/.test(s));
+    expect(probeSql).toBeDefined();
+    expect(probeSql!).toMatch(/MAX\(synced_at\)/);
+    expect(probeSql!).toMatch(/FROM pb_materials/);
+    expect(probeSql!).toMatch(/FROM pb_equipment/);
+    expect(probeSql!).toMatch(/FROM pb_categories/);
+    // The COUNT(*) query still carries MAX(synced_at) for degraded-mode fidelity.
+    const countSql = readD1Mock.mock.calls.map((c) => c[1] as string).find((s) => /COUNT\(\*\)/.test(s));
     expect(countSql).toMatch(/MAX\(synced_at\)/);
   });
 
-  it('fresh rows are stamped fresh and summary metrics are authoritative', async () => {
-    readD1Mock.mockResolvedValueOnce({
-      rows: [
+  it('live tables are stamped fresh and summary metrics are authoritative', async () => {
+    wire({
+      markup: [
         { id: 1, code: 'M1', name: 'A', category_name: 'Plumbing', cost: 10, price: 20, kind: 'material', synced_at: hoursAgo(2) },
       ],
     });
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
-    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 4, synced_at: hoursAgo(2) }] });
 
     const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
 
@@ -193,26 +224,39 @@ describe('pricebook_markup_drift freshness disclosure (MB-1 / QUA-1141)', () => 
     expect(out._warning).toBeUndefined();
   });
 
-  it('a frozen mirror is flagged stale and authority is withheld', async () => {
-    readD1Mock.mockResolvedValueOnce({
-      rows: [
+  it('a frozen table is flagged stale by name and authority is withheld (F2)', async () => {
+    wire({
+      markup: [
         { id: 1, code: 'M1', name: 'A', category_name: 'Plumbing', cost: 10, price: 20, kind: 'material', synced_at: hoursAgo(24 * 25) },
       ],
+      tableMax: { pb_equipment: hoursAgo(24 * 25) },
     });
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
-    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 4, synced_at: hoursAgo(24 * 25) }] });
 
     const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
 
     expect(out._freshness).toBe('stale');
     expect(out.summary.metrics_are_authoritative).toBe(false);
     expect(out._warning).toMatch(/STALE DATA/);
+    expect(out._warning).toMatch(/pb_equipment/);
+    expect(out._tables.pb_materials.freshness).toBe('fresh');
   });
 
-  it('with zero computable rows, MAX(synced_at) on the count row still proves freshness', async () => {
-    readD1Mock.mockResolvedValueOnce({ rows: [] }); // markup rows
-    readD1Mock.mockResolvedValueOnce({ rows: [] }); // equipment cost/no-price
-    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 2074, synced_at: hoursAgo(3) }] });
+  it('with zero computable rows, live tables still prove freshness — an honest zero (F5)', async () => {
+    wire({ placeholders: [{ cnt: 2074, synced_at: hoursAgo(3) }] });
+
+    const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
+
+    expect(out._freshness).toBe('fresh');
+    expect(out.summary.metrics_are_authoritative).toBe(true);
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('OLD rows on live tables are not called stale — the probe decides (F1)', async () => {
+    wire({
+      markup: [
+        { id: 1, code: 'M1', name: 'A', category_name: 'Plumbing', cost: 10, price: 20, kind: 'material', synced_at: hoursAgo(24 * 90) },
+      ],
+    });
 
     const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
 
@@ -220,10 +264,20 @@ describe('pricebook_markup_drift freshness disclosure (MB-1 / QUA-1141)', () => 
     expect(out.summary.metrics_are_authoritative).toBe(true);
   });
 
+  it('an unprovable probe (all MAX null) stays unknown', async () => {
+    wire({ tableMax: { pb_materials: null, pb_equipment: null, pb_categories: null } });
+
+    const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
+
+    expect(out._freshness).toBe('unknown');
+    expect(out.summary.metrics_are_authoritative).toBe(false);
+    expect(out._warning).toMatch(/not proof/i);
+  });
+
   it('marginRisk equipment rows do not leak synced_at — it feeds the stamp, not the payload', async () => {
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
-    readD1Mock.mockResolvedValueOnce({ rows: [{ id: 9, code: 'E9', name: 'Coil', cost: 500, synced_at: hoursAgo(1) }] });
-    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 0, synced_at: hoursAgo(1) }] });
+    wire({
+      equipNoPrice: [{ id: 9, code: 'E9', name: 'Coil', cost: 500, synced_at: hoursAgo(1) }],
+    });
 
     const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
 

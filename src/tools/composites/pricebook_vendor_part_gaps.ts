@@ -28,7 +28,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
-import { stampMirrorFreshness } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -132,9 +132,10 @@ export const pricebook_vendor_part_gaps: ToolDef<Args> = {
   async handler(env, args, { correlation: _correlation }) {
     const includeMissingPartNumber = args.includeMissingPartNumber ?? true;
 
-    const [materialsNoVendor, equipmentNoVendor] = await Promise.all([
+    const [materialsNoVendor, equipmentNoVendor, tableMax] = await Promise.all([
       readD1<NoVendorLinkRow>(env, MATERIALS_NO_VENDOR_SQL, []),
       readD1<NoVendorLinkRow>(env, EQUIPMENT_NO_VENDOR_SQL, []),
+      fetchTableMax(env, ['pb_materials', 'pb_equipment']),
     ]);
 
     // synced_at feeds the stamp below; keep it out of the emitted gap rows.
@@ -167,13 +168,15 @@ export const pricebook_vendor_part_gaps: ToolDef<Args> = {
       noPartNumber = noPartNumber.sort((a, b) => b.cost - a.cost);
     }
 
-    // MB-1 / QUA-1141: one stamp across every row read from both tables —
+    // MB-1 / QUA-1141: per-table verdicts from the MAX(synced_at) probe —
     // "zero gaps" from an empty or frozen mirror must not read as a clean
-    // audit. An all-empty read is 'unknown' by design: this tool only ever
-    // SELECTs gap rows, so emptiness alone can't prove the mirror is alive.
+    // audit, and a frozen table is named even when its sibling is fresh
+    // (F2). With BOTH tables proven live, zero gap rows is an honest clean
+    // audit as of the last sync (F5) — this tool only ever SELECTs gap rows,
+    // so table-level liveness is the only way emptiness can be vouched for.
     const freshness = stampMirrorFreshness(
       [...materialsNoVendor.rows, ...equipmentNoVendor.rows, ...vendoredMaterials],
-      { table: 'pb_materials+pb_equipment' },
+      { table: 'pb_materials+pb_equipment', tableMax },
     );
 
     return {

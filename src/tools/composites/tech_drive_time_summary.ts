@@ -10,7 +10,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
-import { stampMirrorFreshness } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -72,6 +72,10 @@ export const tech_drive_time_summary: ToolDef<Args> = {
     // endDate=2026-01-31 query catches Jan-31 23:59 arrivals.
     const startTs = args.startDate.length === 10 ? `${args.startDate}T00:00:00` : args.startDate;
     const endTs = args.endDate.length === 10 ? `${args.endDate}T23:59:59` : args.endDate;
+
+    // Table-level freshness probe (F1 redesign) — concurrent with the reads
+    // below; never rejects (degrades to {}).
+    const tableMaxP = fetchTableMax(env, ['job_timesheets']);
 
     const { rows: techRows } = await readD1<TechRow>(
       env,
@@ -140,8 +144,12 @@ export const tech_drive_time_summary: ToolDef<Args> = {
     // MB-1 / QUA-1141: same frozen-mirror trap as tech_scorecard —
     // `job_timesheets` has been frozen since 2026-07-01, so a recent window
     // returns zero-filled day rollups that read as "this tech barely worked".
-    // Disclose the mirror's age instead of serving the zeros as truth.
-    const freshness = stampMirrorFreshness(dayRows, { table: 'job_timesheets' });
+    // The table-level MAX(synced_at) probe discloses the mirror's true age
+    // (F1: row-derived age lies on incrementally-synced mirrors).
+    const freshness = stampMirrorFreshness(dayRows, {
+      table: 'job_timesheets',
+      tableMax: await tableMaxP,
+    });
 
     return {
       technicianId: args.technicianId,

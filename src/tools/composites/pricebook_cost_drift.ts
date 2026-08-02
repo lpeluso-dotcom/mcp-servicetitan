@@ -31,7 +31,7 @@ import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
 import { shapePriceRow } from '../../supabase';
-import { stampMirrorFreshness } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -95,7 +95,10 @@ export const pricebook_cost_drift: ToolDef<Args> = {
     const windowDays = clampWindowDays(args.windowDays);
     const dateParam = `-${windowDays} days`;
 
-    const { rows } = await readD1<CostDriftRow>(env, SQL, [dateParam, dateParam, RESULT_CAP]);
+    const [{ rows }, tableMax] = await Promise.all([
+      readD1<CostDriftRow>(env, SQL, [dateParam, dateParam, RESULT_CAP]),
+      fetchTableMax(env, ['pb_materials', 'pb_equipment']),
+    ]);
 
     // shapePriceRow: QSC runs dynamic pricing, so a stored price of 0 is NOT
     // "free" — it means the price is computed at invoice time. D1 stores a
@@ -116,11 +119,12 @@ export const pricebook_cost_drift: ToolDef<Args> = {
       }),
     );
 
-    // MB-1 / QUA-1141: synced_at (mirror sync time) drives the stamp —
-    // updated_at is ST's modifiedOn and says nothing about the mirror's age.
-    // An empty window is 'unknown' by design: "nothing changed lately" and
-    // "the mirror is dead" are indistinguishable from zero rows.
-    const freshness = stampMirrorFreshness(rows, { table: 'pb_materials+pb_equipment' });
+    // MB-1 / QUA-1141: each table's MAX(synced_at) drives the stamp —
+    // updated_at is ST's modifiedOn and says nothing about the mirror's age,
+    // and per-table verdicts stop a frozen pb_equipment hiding behind a
+    // fresh pb_materials (F2). With both tables proven live, an empty window
+    // is an honest "nothing changed lately" (F5).
+    const freshness = stampMirrorFreshness(rows, { table: 'pb_materials+pb_equipment', tableMax });
 
     return {
       window_days: windowDays,

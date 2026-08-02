@@ -28,7 +28,9 @@
 //     from taylor-ai's src/gate-st.js COLUMN_MAP (the single source of
 //     truth for table shapes per qsc-infra .claude/rules/cloudflare.md) —
 //     technicians: ['tech_id','name','business_unit','team','role','phone',
-//     'email','active'] — and cross-checked against this worker's own
+//     'email','active','synced_at'] (synced_at is the mirror sync timestamp
+//     that feeds the MB-1 / QUA-1141 freshness stamps and the fetchTableMax
+//     MAX(synced_at) probe) — and cross-checked against this worker's own
 //     src/tools/dawn/identify_tech_by_phone.ts, which reads the same table
 //     with the same tech_id/name/business_unit/role column names.
 //

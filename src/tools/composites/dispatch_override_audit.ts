@@ -4,7 +4,7 @@ import { readST } from '../../st';
 import { readD1 } from '../../d1';
 import { resolveBusinessUnit, resolveTechnician } from '../../name-resolver';
 import { defaultShaper } from '../../response-shape';
-import { stampMirrorFreshness, type FreshnessStamp } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax, type FreshnessStamp } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface AssignmentRow {
@@ -31,7 +31,8 @@ export const dispatch_override_audit: ToolDef<Args> = {
   description:
     'L5 composite: audit of dispatch assignment overrides (technician reassignments) in a date range. ' +
     'Joins appointment_assignments + appointments + technicians. v1.4 accepts technicianName / businessUnitName as alternatives to numeric IDs. ' +
-    'v1.5.1 (ST-77): pass `includeAutoDispatchedFlag: true` to annotate each row with `isAutoDispatched` (boolean) by batch-fetching the parent jobs.',
+    'v1.5.1 (ST-77): pass `includeAutoDispatchedFlag: true` to annotate each row with `isAutoDispatched` (boolean) by batch-fetching the parent jobs. ' +
+    'The freshness stamp (_mirror_table/_freshness/_stale_hours) covers ONLY the D1 appointment_assignments join that fills each row\'s `technicians`; the appointments/jobs data itself is live ServiceTitan.',
   zodSchema: {
     from: z.string().describe('Start date (ISO 8601)'),
     to: z.string().describe('End date (ISO 8601)'),
@@ -93,14 +94,18 @@ export const dispatch_override_audit: ToolDef<Args> = {
     let freshness: Omit<FreshnessStamp, '_warning'> | null = null;
     if (apptIds.length > 0) {
       const placeholders = apptIds.map(() => '?').join(',');
-      const { rows } = await readD1<AssignmentRow>(
-        env,
-        `SELECT appointment_id, technician_id, technician_name, status, synced_at
-         FROM appointment_assignments WHERE appointment_id IN (${placeholders})`,
-        apptIds,
-      );
+      const [{ rows }, tableMax] = await Promise.all([
+        readD1<AssignmentRow>(
+          env,
+          `SELECT appointment_id, technician_id, technician_name, status, synced_at
+           FROM appointment_assignments WHERE appointment_id IN (${placeholders})`,
+          apptIds,
+        ),
+        fetchTableMax(env, ['appointment_assignments']),
+      ]);
       const { _warning: freshnessWarning, ...stamp } = stampMirrorFreshness(rows, {
         table: 'appointment_assignments',
+        tableMax,
       });
       if (freshnessWarning) warnings.push(freshnessWarning);
       freshness = stamp;

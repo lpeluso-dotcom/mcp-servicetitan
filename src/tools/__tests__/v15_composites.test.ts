@@ -294,7 +294,8 @@ describe('open_opportunities_pulitzer_feed', () => {
     let capturedSql = '';
     const fetcher = vi.fn(async (_url: any, init?: RequestInit) => {
       const body = init?.body ? JSON.parse(init.body as string) : {};
-      capturedSql = body.sql;
+      // Skip the fetchTableMax probe — capture only the cohort/rows queries.
+      if (!/ AS t,/.test(String(body.sql))) capturedSql = body.sql;
       return new Response(JSON.stringify({ success: true, results: [] }), { status: 200 });
     });
     const env = makeEnv(fetcher);

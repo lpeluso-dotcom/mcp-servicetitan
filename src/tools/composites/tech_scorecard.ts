@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
-import { stampMirrorFreshness } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -58,7 +58,7 @@ export const tech_scorecard: ToolDef<Args> = {
       binds.push(args.technicianId);
     }
 
-    const { rows } = await readD1<Row>(
+    const [{ rows }, tableMax] = await Promise.all([readD1<Row>(
       env,
       `SELECT ts.technician_id,
               t.name          AS name,
@@ -73,7 +73,7 @@ export const tech_scorecard: ToolDef<Args> = {
         GROUP BY ts.technician_id, t.name, t.business_unit
         ORDER BY jobs DESC`,
       binds,
-    );
+    ), fetchTableMax(env, ['job_timesheets'])]);
 
     const techs = rows.map((r) => {
       const total = r.drive_minutes + r.working_minutes;
@@ -92,8 +92,10 @@ export const tech_scorecard: ToolDef<Args> = {
     // MB-1 / QUA-1141: `job_timesheets` has been frozen since 2026-07-01, so
     // any recent week returns zero-filled scorecards that look like real
     // "this tech did nothing" data. Zeroed metrics are the most believable
-    // wrong answer this tool can give — disclose the mirror's age.
-    const freshness = stampMirrorFreshness(rows, { table: 'job_timesheets' });
+    // wrong answer this tool can give — disclose the mirror's age via the
+    // table-level MAX(synced_at) probe (F1 redesign: row-derived age lies on
+    // incrementally-synced mirrors).
+    const freshness = stampMirrorFreshness(rows, { table: 'job_timesheets', tableMax });
 
     return {
       window: { weekStart: args.weekStart, weekEnd: args.weekEnd },

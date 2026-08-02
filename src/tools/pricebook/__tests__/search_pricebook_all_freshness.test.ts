@@ -15,11 +15,22 @@ import { search_pricebook_all } from '../search_pricebook_all';
 const CTX = { actor: 'vitest', correlation: 'test-corr' };
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
 
-function makeD1Env(results: unknown[]) {
+type TableMaxMap = { pb_services?: string | null; pb_materials?: string | null; pb_equipment?: string | null };
+
+function makeD1Env(results: unknown[], tableMax: TableMaxMap = {}) {
+  const fresh = hoursAgo(1);
   const bodies: Array<{ sql: string; params: unknown[] }> = [];
   const fetcher = vi.fn(async (_url: any, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(init.body as string) : { sql: '', params: [] };
     bodies.push(body);
+    // fetchTableMax probe (MB-1 / QUA-1141 v2) — matched on `AS t,`;
+    // per-table MAX defaults fresh unless the test overrides it.
+    if (/ AS t,/.test(String(body.sql))) {
+      const results = (['pb_services', 'pb_materials', 'pb_equipment'] as const).map((t) => ({
+        t, m: tableMax[t] !== undefined ? tableMax[t] : fresh,
+      }));
+      return new Response(JSON.stringify({ success: true, results }), { status: 200 });
+    }
     return new Response(JSON.stringify({ success: true, results }), { status: 200 });
   });
   return {
@@ -27,6 +38,8 @@ function makeD1Env(results: unknown[]) {
     bodies,
   };
 }
+
+const dataBodies = (bodies: Array<{ sql: string }>) => bodies.filter((b) => !/ AS t,/.test(String(b.sql)));
 
 const SVC_ROW = (synced_at: string) => ({
   code: 'FLU-150', name: 'Flush', description: '', category: 'Drain', price: 150,
@@ -37,13 +50,24 @@ describe('search_pricebook_all freshness disclosure (MB-1 / QUA-1141)', () => {
   it('every SELECT it issues carries synced_at — the rows must be able to prove their age', async () => {
     const { env, bodies } = makeD1Env([]);
     await search_pricebook_all.handler(env, { query: 'flush' }, CTX);
-    expect(bodies.length).toBe(3);
+    expect(dataBodies(bodies).length).toBe(3);
     for (const { sql } of bodies) {
       expect(sql).toContain('synced_at');
     }
   });
 
-  it('code hit: stamps the matched table fresh off row-level synced_at', async () => {
+  it('issues ONE fetchTableMax probe covering all three pricebook tables', async () => {
+    const { env, bodies } = makeD1Env([]);
+    await search_pricebook_all.handler(env, { query: 'flush' }, CTX);
+    const probes = bodies.filter((b) => / AS t,/.test(String(b.sql)));
+    expect(probes).toHaveLength(1);
+    expect(probes[0].sql).toMatch(/MAX\(synced_at\)/);
+    expect(probes[0].sql).toMatch(/FROM pb_services/);
+    expect(probes[0].sql).toMatch(/FROM pb_materials/);
+    expect(probes[0].sql).toMatch(/FROM pb_equipment/);
+  });
+
+  it('code hit: stamps the matched table via its table-level MAX(synced_at)', async () => {
     const { env } = makeD1Env([SVC_ROW(hoursAgo(2))]);
     const out: any = await search_pricebook_all.handler(env, { code: 'FLU-150' }, CTX);
     expect(out.status).toBe('success');
@@ -52,21 +76,52 @@ describe('search_pricebook_all freshness disclosure (MB-1 / QUA-1141)', () => {
     expect(out._warning).toBeUndefined();
   });
 
-  it('code hit on a frozen mirror is flagged stale', async () => {
-    const { env } = makeD1Env([SVC_ROW(hoursAgo(24 * 23))]);
+  it('code hit: strips synced_at from emitted items (stamp plumbing, not payload)', async () => {
+    const { env } = makeD1Env([SVC_ROW(hoursAgo(2))]);
+    const out: any = await search_pricebook_all.handler(env, { code: 'FLU-150' }, CTX);
+    expect(out.items[0]).not.toHaveProperty('synced_at');
+  });
+
+  it('code hit on a frozen mirror (table MAX weeks old) is flagged stale', async () => {
+    const { env } = makeD1Env([SVC_ROW(hoursAgo(24 * 23))], { pb_services: hoursAgo(24 * 23) });
     const out: any = await search_pricebook_all.handler(env, { code: 'FLU-150' }, CTX);
     expect(out._freshness).toBe('stale');
     expect(out._warning).toMatch(/STALE DATA/);
+    expect(out._warning).toMatch(/pb_services/);
   });
 
-  it('query miss: not_found is a claim about the MIRROR — empty is flagged, never silent', async () => {
+  it('code hit with OLD rows on a live mirror is NOT called stale — the probe decides (F1)', async () => {
+    const { env } = makeD1Env([SVC_ROW(hoursAgo(24 * 90))]);
+    const out: any = await search_pricebook_all.handler(env, { code: 'FLU-150' }, CTX);
+    expect(out._freshness).toBe('fresh');
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('query miss on LIVE tables is an honest "no matches as of the last sync" (F5)', async () => {
     const { env } = makeD1Env([]);
     const out: any = await search_pricebook_all.handler(env, { query: 'zzz-nothing' }, CTX);
     expect(out.status).toBe('not_found');
     expect(out._mirror_table).toBe('pb_services+pb_materials+pb_equipment');
+    expect(out._freshness).toBe('fresh');
+    expect(out._empty).toBe(true);
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('query miss on an UNPROVABLE mirror is flagged, never silent', async () => {
+    const { env } = makeD1Env([], { pb_services: null, pb_materials: null, pb_equipment: null });
+    const out: any = await search_pricebook_all.handler(env, { query: 'zzz-nothing' }, CTX);
+    expect(out.status).toBe('not_found');
     expect(out._freshness).toBe('unknown');
     expect(out._empty).toBe(true);
     expect(out._warning).toMatch(/not proof/i);
+  });
+
+  it('a frozen pb_equipment cannot hide behind a fresh pb_services on the query path (F2)', async () => {
+    const { env } = makeD1Env([SVC_ROW(hoursAgo(1))], { pb_equipment: hoursAgo(24 * 7) });
+    const out: any = await search_pricebook_all.handler(env, { query: 'flush' }, CTX);
+    expect(out._freshness).toBe('stale');
+    expect(out._warning).toMatch(/pb_equipment/);
+    expect(out._tables.pb_services.freshness).toBe('fresh');
   });
 
   // ── QUA-1108 regression: outputSchema must declare every emitted key ──
