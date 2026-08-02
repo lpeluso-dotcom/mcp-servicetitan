@@ -14,7 +14,8 @@ export const search_pricebook_templates: ToolDef<Args> = {
   description:
     'Search QSC estimate templates and proposals by name/keyword. Returns template & proposal hits ' +
     'with item counts, tier/proposal context, and a reference total. ' +
-    'Note: total_price_ref may be null — QSC uses dynamic pricing computed at invoice time.',
+    'Note: total_price_ref may be null — QSC uses dynamic pricing computed at invoice time. ' +
+    'Returns up to `limit` matches (default 12, max 25).',
   zodSchema: {
     query: z.string().min(1).max(300).describe('Template or proposal name/keyword'),
     limit: z.number().int().min(1).max(25).default(12).optional().describe('Max results (default 12, max 25)'),
