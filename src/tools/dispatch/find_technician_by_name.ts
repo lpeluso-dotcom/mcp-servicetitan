@@ -18,6 +18,7 @@ import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
 import { resolveTechnician } from '../../name-resolver';
 import { queryD1First } from '../../d1-proxy';
+import { stampMirrorFreshness, type FreshnessStamp } from '../../mirror-freshness';
 import type { Env } from '../../env';
 
 interface Args {
@@ -42,9 +43,16 @@ interface AmbiguousResult {
 interface NotFoundResult {
   status: 'not_found';
   resolved_id: number;
+  /** MB-1 / QUA-1141: a miss is a claim about the MIRROR, not ServiceTitan. */
+  _not_found_caveat: string;
 }
 
-type Result = FoundResult | AmbiguousResult | NotFoundResult;
+// The hydration read hits the `technicians` D1 mirror, so found/not_found
+// carry the mirror-freshness stamp; ambiguous never reaches that read.
+type Result =
+  | (FoundResult & FreshnessStamp)
+  | AmbiguousResult
+  | (NotFoundResult & FreshnessStamp);
 
 export const find_technician_by_name: ToolDef<Args> = {
   name: 'find_technician_by_name',
@@ -71,15 +79,27 @@ export const find_technician_by_name: ToolDef<Args> = {
       name: string;
       business_unit: string | null;
       role: string | null;
+      synced_at: string | null;
     }>(
       env,
-      `SELECT tech_id, name, business_unit, role FROM technicians WHERE tech_id = ? AND active = 1`,
+      `SELECT tech_id, name, business_unit, role, synced_at FROM technicians WHERE tech_id = ? AND active = 1`,
       [r.id],
       { correlation, tag: 'find_technician_by_name' },
     );
 
     if (!row) {
-      return { status: 'not_found', resolved_id: r.id };
+      // MB-1 / QUA-1141: not_found means "not in the MIRROR" — a new hire is
+      // absent until the next technicians sync, so a miss is not proof the
+      // tech doesn't exist in ServiceTitan.
+      return {
+        status: 'not_found',
+        resolved_id: r.id,
+        ...stampMirrorFreshness([], { table: 'technicians' }),
+        _not_found_caveat:
+          `No active row for technician ${r.id} in the taylor-ai D1 mirror. This does NOT prove ` +
+          `the tech does not exist in ServiceTitan — new hires are missing until the next ` +
+          `technicians sync. Confirm against live ST before acting on this.`,
+      };
     }
 
     return {
@@ -89,6 +109,8 @@ export const find_technician_by_name: ToolDef<Args> = {
       business_unit: row.business_unit,
       role: row.role,
       resolved: r.resolved,
+      // MB-1 / QUA-1141: a hit off a frozen mirror may be an ex-tech.
+      ...stampMirrorFreshness([row], { table: 'technicians' }),
     };
   },
   transformResult: defaultShaper,

@@ -228,23 +228,30 @@ describe('outputSchema — lenient fixture validation (top-10 tools)', () => {
 
   // Envelope per job_cost_actuals composite (composites/job_cost_actuals.ts)
   // — real numbers pinned by v15_composites.test.ts's Brooks/77423990 probe.
+  // Carries the MB-1 / QUA-1141 freshness stamp on every path (its _warning
+  // rides in _warnings, so no top-level _warning field).
   it('job_cost_actuals: full composite envelope (Brooks/77423990 probe shape)', () => {
     expectValid(job_cost_actuals, {
       jobId: 77423990,
       job: { job_id: 77423990, customer_id: 9001, business_unit: 'Plumbing Service Residential', job_type: 'Service Call', job_status: 'Completed', completed_date: '2026-02-20', revenue: 850.0, project_id: null, modified_at: '2026-02-20T19:34:00Z' },
       summary: {
         total_drive_minutes: 24, total_working_minutes: 152, total_minutes: 176,
-        burden_rate_per_hour: 45, 'labor_burden_$': 132, revenue: 850,
+        burden_rate_per_hour: 45, 'labor_burden_$': 132, labor_burden_basis: 'timesheets',
+        metrics_are_authoritative: true, revenue: 850,
         'gross_profit_$': 718, gross_margin_pct: 84.5,
       },
       per_technician: [{ technician_id: 75766687, technician_name: 'Brooks Hunsucker', drive_minutes: 24, working_minutes: 152, timesheet_count: 1 }],
-      timesheets: [{ timesheet_id: 1, job_id: 77423990, appointment_id: 200, technician_id: 75766687, dispatched_on: '2026-02-20T16:38:00Z', arrived_on: '2026-02-20T17:02:00Z', canceled_on: null, done_on: '2026-02-20T19:34:00Z', drive_minutes: 24, working_minutes: 152, active: true }],
+      timesheets: [{ timesheet_id: 1, job_id: 77423990, appointment_id: 200, technician_id: 75766687, dispatched_on: '2026-02-20T16:38:00Z', arrived_on: '2026-02-20T17:02:00Z', canceled_on: null, done_on: '2026-02-20T19:34:00Z', drive_minutes: 24, working_minutes: 152, active: true, synced_at: '2026-07-30T05:00:00Z' }],
       appointments: [],
       assignments: [],
       estimates: [],
       invoice: null,
       _partial: false,
       _failures: [],
+      _mirror_table: 'job_timesheets',
+      _stale_hours: 3.2,
+      _freshness: 'fresh',
+      _empty: false,
       _composite: 'job_cost_actuals',
       _source: 'mixed',
       correlation: 'c1',

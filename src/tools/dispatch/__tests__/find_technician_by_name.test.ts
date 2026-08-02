@@ -100,3 +100,51 @@ describe('find_technician_by_name', () => {
     expect(out.resolved_id).toBe(75766687);
   });
 });
+
+// ── MB-1 / QUA-1141: mirror-freshness disclosure ─────────────────
+// The hydration read hits the `technicians` D1 mirror: a hit must prove its
+// age via synced_at, and a not_found means "not in the MIRROR" — new hires
+// are absent until the next sync, so a miss is not proof the tech doesn't
+// exist in ServiceTitan.
+describe('find_technician_by_name freshness disclosure (MB-1 / QUA-1141)', () => {
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+
+  it('the hydration SELECT carries synced_at', async () => {
+    const env = fakeEnv([ROSTER, []]);
+    await find_technician_by_name.handler(env, { name: 'Brooks Hunsucker' }, ctx);
+    const body = JSON.parse((env.ST_PROXY.fetch as any).mock.calls[1][1].body);
+    expect(body.sql).toContain('synced_at');
+  });
+
+  it('stamps a found row with row-level mirror freshness', async () => {
+    const env = fakeEnv([
+      ROSTER,
+      [{ tech_id: 75766687, name: 'Brooks Hunsucker', business_unit: 'Electrical Service Residential', role: 'Service', synced_at: hoursAgo(2) }],
+    ]);
+    const out = (await find_technician_by_name.handler(env, { name: 'Brooks Hunsucker' }, ctx)) as any;
+    expect(out.status).toBe('found');
+    expect(out._mirror_table).toBe('technicians');
+    expect(out._freshness).toBe('fresh');
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('flags a hit off a frozen roster mirror as stale', async () => {
+    const env = fakeEnv([
+      ROSTER,
+      [{ tech_id: 75766687, name: 'Brooks Hunsucker', business_unit: 'Electrical Service Residential', role: 'Service', synced_at: hoursAgo(24 * 30) }],
+    ]);
+    const out = (await find_technician_by_name.handler(env, { name: 'Brooks Hunsucker' }, ctx)) as any;
+    expect(out._freshness).toBe('stale');
+    expect(out._warning).toMatch(/STALE DATA/);
+  });
+
+  it('not_found carries the mirror caveat — new hires are absent until the next sync', async () => {
+    const env = fakeEnv([ROSTER, []]);
+    const out = (await find_technician_by_name.handler(env, { name: 'Brooks Hunsucker' }, ctx)) as any;
+    expect(out.status).toBe('not_found');
+    expect(out._not_found_caveat).toMatch(/mirror/i);
+    expect(out._not_found_caveat).toMatch(/sync/i);
+    expect(out._freshness).toBe('unknown');
+    expect(out._empty).toBe(true);
+  });
+});

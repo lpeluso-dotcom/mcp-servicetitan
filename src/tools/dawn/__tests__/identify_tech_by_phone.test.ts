@@ -143,3 +143,62 @@ describe('identify_tech_by_phone (QUA-267 binding fix)', () => {
     expect(init.method).toBe('POST');
   });
 });
+
+// ── MB-1 / QUA-1141: mirror-freshness disclosure ─────────────────
+// Tier 2 reads the `technicians` ST mirror — a hit proves its age via
+// synced_at and a miss is a claim about the MIRROR, not ServiceTitan.
+// Tier 1 (voice_registry) is a LEARNED table with no synced_at column
+// (pragma-verified 2026-08-02) — it is not an ST mirror, so it is not
+// stamped.
+describe('identify_tech_by_phone freshness disclosure (MB-1 / QUA-1141)', () => {
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+
+  it('the tier-2 technicians SELECT carries synced_at', async () => {
+    const env = fakeEnv([[], []]);
+    await identify_tech_by_phone.handler(env, { phone: '8435365603' }, ctx);
+    const tier2Body = JSON.parse((env.ST_PROXY.fetch as any).mock.calls[1][1].body);
+    expect(tier2Body.sql).toContain('synced_at');
+  });
+
+  it('stamps a tier-2 hit with row-level mirror freshness', async () => {
+    const env = fakeEnv([
+      [],
+      [{ tech_id: '222', name: 'AH Tech', business_unit: null, role: 'DummyTech', synced_at: hoursAgo(1) }],
+    ]);
+    const out = (await identify_tech_by_phone.handler(env, { phone: '8435365603' }, ctx)) as any;
+    expect(out.status).toBe('found');
+    expect(out._mirror_table).toBe('technicians');
+    expect(out._freshness).toBe('fresh');
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('flags a tier-2 hit off a frozen mirror as stale — the row may be an ex-tech', async () => {
+    const env = fakeEnv([
+      [],
+      [{ tech_id: '222', name: 'AH Tech', business_unit: null, role: 'DummyTech', synced_at: hoursAgo(24 * 30) }],
+    ]);
+    const out = (await identify_tech_by_phone.handler(env, { phone: '8435365603' }, ctx)) as any;
+    expect(out.status).toBe('found');
+    expect(out._freshness).toBe('stale');
+    expect(out._warning).toMatch(/STALE DATA/);
+  });
+
+  it('not_found is a claim about the MIRROR, not ServiceTitan', async () => {
+    const env = fakeEnv([[], []]);
+    const out = (await identify_tech_by_phone.handler(env, { phone: '5555555555' }, ctx)) as any;
+    expect(out.status).toBe('not_found');
+    expect(out._not_found_caveat).toMatch(/mirror/i);
+    expect(out._freshness).toBe('unknown');
+    expect(out._empty).toBe(true);
+  });
+
+  it('does NOT stamp a voice_registry hit — learned table, no sync to disclose', async () => {
+    const env = fakeEnv([
+      [{ name: 'Brooks Hunsucker', tech_id: '111', role: 'Service', confidence: 0.9 }],
+    ]);
+    const out = (await identify_tech_by_phone.handler(env, { phone: '8434963573' }, ctx)) as any;
+    expect(out.status).toBe('found');
+    expect(out.source).toBe('voice_registry');
+    expect(out._mirror_table).toBeUndefined();
+  });
+});

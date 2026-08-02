@@ -18,6 +18,7 @@ import { z } from 'zod';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
 import { queryD1First } from '../../d1-proxy';
+import { stampMirrorFreshness, type FreshnessStamp } from '../../mirror-freshness';
 import type { Env } from '../../env';
 
 interface Args {
@@ -35,6 +36,8 @@ interface FoundResult {
 
 interface NotFoundResult {
   status: 'not_found';
+  /** MB-1 / QUA-1141: a miss is a claim about the MIRROR, not ServiceTitan. */
+  _not_found_caveat: string;
 }
 
 interface ParseErrorResult {
@@ -42,7 +45,13 @@ interface ParseErrorResult {
   message?: string;
 }
 
-type Result = FoundResult | NotFoundResult | ParseErrorResult;
+// Tier-2 hits and misses carry the mirror-freshness stamp; tier-1
+// (voice_registry) hits do not — see the comment at that return site.
+type Result =
+  | FoundResult
+  | (FoundResult & FreshnessStamp)
+  | (NotFoundResult & FreshnessStamp)
+  | ParseErrorResult;
 
 function normalizePhone(phone: string): string {
   if (!phone) return '';
@@ -85,6 +94,10 @@ export const identify_tech_by_phone: ToolDef<Args> = {
       );
 
       if (registry && registry.name && registry.name !== 'Unknown Tech') {
+        // MB-1 / QUA-1141: deliberately NOT stamped. voice_registry is a
+        // LEARNED association table, not an ST mirror — it has no synced_at
+        // column (pragma-verified 2026-08-02) and no sync whose failure a
+        // stamp could disclose.
         return {
           status: 'found',
           tech_id: registry.tech_id,
@@ -100,9 +113,10 @@ export const identify_tech_by_phone: ToolDef<Args> = {
         name: string;
         business_unit: string | null;
         role: string | null;
+        synced_at: string | null;
       }>(
         env,
-        `SELECT tech_id, name, business_unit, role FROM technicians
+        `SELECT tech_id, name, business_unit, role, synced_at FROM technicians
          WHERE REPLACE(REPLACE(REPLACE(REPLACE(phone, '-', ''), ' ', ''), '(', ''), ')', '') = ?
          AND active = 1 LIMIT 1`,
         [normalized],
@@ -117,10 +131,20 @@ export const identify_tech_by_phone: ToolDef<Args> = {
           role: row.role,
           business_unit: row.business_unit,
           source: 'technicians',
+          // MB-1 / QUA-1141: a hit off a frozen mirror may be an ex-tech.
+          ...stampMirrorFreshness([row], { table: 'technicians' }),
         };
       }
 
-      return { status: 'not_found' };
+      // MB-1 / QUA-1141: a miss is a claim about the MIRROR, not ServiceTitan
+      // — a new hire or changed number is absent until the next sync.
+      return {
+        status: 'not_found',
+        ...stampMirrorFreshness([], { table: 'technicians' }),
+        _not_found_caveat:
+          'No match in the taylor-ai D1 mirror. This does NOT prove the caller is not a QSC tech — ' +
+          'new hires and changed numbers are absent until the next technicians sync.',
+      };
     } catch (err) {
       return { status: 'parse_error', message: `Lookup error: ${String(err)}` };
     }

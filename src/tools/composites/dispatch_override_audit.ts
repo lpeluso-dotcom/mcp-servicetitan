@@ -4,6 +4,7 @@ import { readST } from '../../st';
 import { readD1 } from '../../d1';
 import { resolveBusinessUnit, resolveTechnician } from '../../name-resolver';
 import { defaultShaper } from '../../response-shape';
+import { stampMirrorFreshness, type FreshnessStamp } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface AssignmentRow {
@@ -11,6 +12,8 @@ interface AssignmentRow {
   technician_id: number;
   technician_name: string | null;
   status: string | null;
+  /** Row-level sync timestamp — feeds the mirror-freshness stamp, stripped from output. */
+  synced_at: string | null;
 }
 
 interface Args {
@@ -77,17 +80,31 @@ export const dispatch_override_audit: ToolDef<Args> = {
     // ST /jpm/v2/appointments does NOT carry technician assignments, so join the
     // synced D1 appointment_assignments table to populate `technicians` per
     // appointment (previously `appt.technicians` was always undefined → []).
-    const techsByAppt = new Map<number, AssignmentRow[]>();
+    const techsByAppt = new Map<number, Omit<AssignmentRow, 'synced_at'>[]>();
     const apptIds = appointments.map((a) => a.id).filter((id: unknown): id is number => typeof id === 'number');
+    // MB-1 / QUA-1141: HYBRID tool — the appointments above are live ST and
+    // already authoritative; only this mirror-sourced join is stamped, and
+    // `_mirror_table` scopes the stamp to `appointment_assignments`. With the
+    // mirror empty/frozen every appointment shows `technicians: []`, which
+    // reads as "nobody assigned" rather than "the sync is broken" — disclose.
+    // When there are no appointments, no mirror read runs and no stamp is
+    // emitted: there is no mirror claim to disclose. The stamp's warning is
+    // concatenated into the existing _warnings array.
+    let freshness: Omit<FreshnessStamp, '_warning'> | null = null;
     if (apptIds.length > 0) {
       const placeholders = apptIds.map(() => '?').join(',');
       const { rows } = await readD1<AssignmentRow>(
         env,
-        `SELECT appointment_id, technician_id, technician_name, status
+        `SELECT appointment_id, technician_id, technician_name, status, synced_at
          FROM appointment_assignments WHERE appointment_id IN (${placeholders})`,
         apptIds,
       );
-      for (const r of rows) {
+      const { _warning: freshnessWarning, ...stamp } = stampMirrorFreshness(rows, {
+        table: 'appointment_assignments',
+      });
+      if (freshnessWarning) warnings.push(freshnessWarning);
+      freshness = stamp;
+      for (const { synced_at: _synced_at, ...r } of rows) {
         const arr = techsByAppt.get(r.appointment_id) ?? [];
         arr.push(r);
         techsByAppt.set(r.appointment_id, arr);
@@ -129,6 +146,7 @@ export const dispatch_override_audit: ToolDef<Args> = {
       _composite: 'dispatch_override_audit',
       _source: 'live',
       ...(includeAutoDispatchedFlag ? { _autoDispatchedJoin: autoDispatchedByJobId ? 'applied' : 'no_appointments' } : {}),
+      ...(freshness ?? {}),
       ...(warnings.length > 0 ? { _warnings: warnings } : {}),
     };
   },

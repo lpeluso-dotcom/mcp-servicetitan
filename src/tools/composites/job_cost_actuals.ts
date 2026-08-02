@@ -18,6 +18,7 @@ import { authHeaders } from '../../auth';
 import { gatherFetches, stRead } from '../../composite-helpers';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -49,6 +50,8 @@ interface TimesheetRow {
   drive_minutes: number | null;
   working_minutes: number | null;
   active: number;
+  /** Row-level sync timestamp — feeds the mirror-freshness stamp. */
+  synced_at: string | null;
 }
 
 interface AppointmentRow {
@@ -125,6 +128,15 @@ export const job_cost_actuals: ToolDef<Args> = {
     _partial: z.boolean().optional(),
     _failures: z.array(z.unknown()).optional(),
     _warnings: z.array(z.string()).optional(),
+    // MB-1 / QUA-1141 freshness stamp (job_timesheets read) — always emitted.
+    // MUST stay declared: structuredContent is validated against this schema
+    // at runtime on every call (QUA-1108), so an undeclared field fails in
+    // production while unit tests stay green. The stamp's _warning is routed
+    // into _warnings above rather than emitted as its own field.
+    _mirror_table: z.string(),
+    _stale_hours: z.number().nullable(),
+    _freshness: z.string(),
+    _empty: z.boolean(),
     _composite: z.string().optional(),
     _source: z.string().optional(),
     correlation: z.string().optional(),
@@ -149,7 +161,7 @@ export const job_cost_actuals: ToolDef<Args> = {
         env,
         `SELECT timesheet_id, job_id, appointment_id, technician_id,
                 dispatched_on, arrived_on, canceled_on, done_on,
-                drive_minutes, working_minutes, active
+                drive_minutes, working_minutes, active, synced_at
          FROM job_timesheets WHERE job_id = ? ORDER BY arrived_on ASC`,
         [jobId],
       ),
@@ -257,6 +269,15 @@ export const job_cost_actuals: ToolDef<Args> = {
       );
     }
 
+    // MB-1 / QUA-1141: the timesheet read is the one that drives money —
+    // stamp its freshness. This tool already carries a _warnings array
+    // (QUA-1066), so the stamp's warning is concatenated into it rather than
+    // emitted as a colliding top-level _warning.
+    const { _warning: freshnessWarning, ...freshness } = stampMirrorFreshness(tsRows.rows, {
+      table: 'job_timesheets',
+    });
+    if (freshnessWarning) warnings.push(freshnessWarning);
+
     // Pull technician names for any per-tech row missing one (assignments may
     // miss a tech that's on a timesheet but not on appointment_assignments).
     const missingTechIds = [...perTech.values()].filter((p) => p.technician_name === null).map((p) => p.technician_id);
@@ -286,6 +307,8 @@ export const job_cost_actuals: ToolDef<Args> = {
         labor_burden_$: laborBurden$,
         // 'none' means the $0 burden reflects missing timesheets, not free labor.
         labor_burden_basis: hasTimesheets ? 'timesheets' : 'none',
+        // False whenever the burden rests on absent or unproven-fresh mirror rows.
+        metrics_are_authoritative: hasTimesheets && freshness._freshness === 'fresh',
         revenue,
         gross_profit_$:
           hasTimesheets && revenue !== null ? Number((revenue - laborBurden$).toFixed(2)) : null,
@@ -305,6 +328,7 @@ export const job_cost_actuals: ToolDef<Args> = {
       _partial: invoiceFanout.partial,
       _failures: invoiceFanout.failures,
       ...(warnings.length > 0 ? { _warnings: warnings } : {}),
+      ...freshness,
       _composite: 'job_cost_actuals',
       _source: 'mixed',
       correlation,

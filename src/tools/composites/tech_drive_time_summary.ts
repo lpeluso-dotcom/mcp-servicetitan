@@ -10,6 +10,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -26,6 +27,8 @@ interface DayRow {
   drive_minutes: number;
   working_minutes: number;
   first_call_drive_minutes: number | null;
+  /** MAX(synced_at) for the day — GROUP BY would otherwise hide row age. */
+  synced_at: string | null;
 }
 
 interface TechRow {
@@ -87,7 +90,7 @@ export const tech_drive_time_summary: ToolDef<Args> = {
       `WITH base AS (
          SELECT timesheet_id, job_id, technician_id,
                 dispatched_on, arrived_on, done_on,
-                drive_minutes, working_minutes,
+                drive_minutes, working_minutes, synced_at,
                 date(arrived_on) AS day
          FROM job_timesheets
          WHERE technician_id = ?
@@ -100,6 +103,7 @@ export const tech_drive_time_summary: ToolDef<Args> = {
               COUNT(DISTINCT job_id)                                   AS jobs,
               COALESCE(SUM(drive_minutes), 0)                          AS drive_minutes,
               COALESCE(SUM(working_minutes), 0)                        AS working_minutes,
+              MAX(synced_at)                                           AS synced_at,
               (SELECT b2.drive_minutes
                  FROM base b2
                  WHERE b2.day = b.day
@@ -133,10 +137,17 @@ export const tech_drive_time_summary: ToolDef<Args> = {
     const windshieldCost = Number(((totalDrive / 60) * windshieldRate).toFixed(2));
     const laborBurden = Number(((totalMinutes / 60) * burdenRate).toFixed(2));
 
+    // MB-1 / QUA-1141: same frozen-mirror trap as tech_scorecard —
+    // `job_timesheets` has been frozen since 2026-07-01, so a recent window
+    // returns zero-filled day rollups that read as "this tech barely worked".
+    // Disclose the mirror's age instead of serving the zeros as truth.
+    const freshness = stampMirrorFreshness(dayRows, { table: 'job_timesheets' });
+
     return {
       technicianId: args.technicianId,
       technician,
       window: { startDate: args.startDate, endDate: args.endDate },
+      metrics_are_authoritative: freshness._freshness === 'fresh',
       totals: {
         days_worked: days,
         jobs: totalJobs,
@@ -151,9 +162,11 @@ export const tech_drive_time_summary: ToolDef<Args> = {
         burden_rate_per_hour: burdenRate,
         labor_burden_$: laborBurden,
       },
-      by_day: dayRows,
+      // synced_at is stamp plumbing, not part of the per-day shape.
+      by_day: dayRows.map(({ synced_at: _synced_at, ...d }) => d),
       _composite: 'tech_drive_time_summary',
       _source: 'd1',
+      ...freshness,
     };
   },
   transformResult: defaultShaper,
