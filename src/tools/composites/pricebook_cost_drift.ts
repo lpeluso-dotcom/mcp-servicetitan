@@ -30,6 +30,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
+import { shapePriceRow } from '../../supabase';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -93,16 +94,24 @@ export const pricebook_cost_drift: ToolDef<Args> = {
 
     const { rows } = await readD1<CostDriftRow>(env, SQL, [dateParam, dateParam, RESULT_CAP]);
 
-    const items = rows.map((r) => ({
-      id: r.id,
-      code: r.code,
-      name: r.name,
-      kind: r.kind,
-      category: r.category_name && r.category_name.trim() !== '' ? r.category_name : 'Uncategorized',
-      cost: r.cost,
-      price: r.price,
-      updated_at: r.updated_at,
-    }));
+    // shapePriceRow: QSC runs dynamic pricing, so a stored price of 0 is NOT
+    // "free" — it means the price is computed at invoice time. D1 stores a
+    // literal 0 for 16,322 of 16,543 pb_materials rows, so an unshaped
+    // `price: r.price` reported almost the whole pricebook as $0. The shaper
+    // maps 0 -> null and tags every row with price_basis. `cost` is a real
+    // vendor cost and is deliberately not a price field, so it survives as-is.
+    const items = rows.map((r) =>
+      shapePriceRow({
+        id: r.id,
+        code: r.code,
+        name: r.name,
+        kind: r.kind,
+        category: r.category_name && r.category_name.trim() !== '' ? r.category_name : 'Uncategorized',
+        cost: r.cost,
+        price: r.price,
+        updated_at: r.updated_at,
+      }),
+    );
 
     return {
       window_days: windowDays,

@@ -16,8 +16,16 @@ enabled = true
 binding = "MCP_METRICS"
 dataset = "mcp_servicetitan_metrics"
 
+[ai]
+binding = "AI"
+
+[[workflows]]
+name = "pricebook-embed"
+binding = "EMBED_WORKFLOW"
+class_name = "PricebookEmbedWorkflow"
+
 [triggers]
-crons = []
+crons = ["0 10 * * *"]
 
 # Replace placeholder IDs with resources from your own Cloudflare account.
 [[d1_databases]]
@@ -49,7 +57,7 @@ ST_TENANT_ID = "000000000"
 # allow-list. ACCESS_CLIENT_ID/ISSUER/SECRET are wrangler SECRETS (not committed — keeps the
 # 64-hex client id out of git / gitleaks).
 SELF_ORIGIN = "https://mcp-servicetitan.lpeluso.workers.dev"
-ALLOWED_EMAILS = "office@qualityservicecompany.net,lpeluso@qualityservicecompany.net,awilliams@qualityservicecompany.net,ssusor@qualityservicecompany.net"
+ALLOWED_EMAILS = "office@qualityservicecompany.net,lpeluso@qualityservicecompany.net,awilliams@qualityservicecompany.net,ssusor@qualityservicecompany.net,talexander@qualityservicecompany.net,gcox@qualityservicecompany.net,ejohnson@qualityservicecompany.net,jkinard@qualityservicecompany.net"
 
 # Secrets (set with `wrangler secret put`):
 # MCP_SYNC_KEY - shared bearer between mcp-servicetitan and the upstream proxy
@@ -57,6 +65,8 @@ ALLOWED_EMAILS = "office@qualityservicecompany.net,lpeluso@qualityservicecompany
 # ST_WEBHOOK_SECRET - ServiceTitan webhook HMAC-SHA256 secret
 # JWT_SECRET - JWT signing secret for dual-mode auth
 # ACCESS_CLIENT_ID / ACCESS_ISSUER / ACCESS_CLIENT_SECRET - Cloudflare Access SaaS-OIDC (Phase-2 OAuth)
+# SUPABASE_URL - Supabase project URL (https://nlaaliehqpgskjmiuzze.supabase.co)
+# SUPABASE_PB_KEY - dedicated connector Supabase secret key (read + embedding-column write)
 
 [[durable_objects.bindings]]
 name = "ST_RATE_LIMITER"
@@ -86,7 +96,7 @@ MCP_SERVICE_VERSION = "1.7.0-dev"
 ST_TENANT_ID = "000000000"
 # Phase-2 OAuth (dev): SELF_ORIGIN = dev worker origin; ACCESS_* are wrangler secrets (see prod).
 SELF_ORIGIN = "https://mcp-servicetitan-dev.lpeluso.workers.dev"
-ALLOWED_EMAILS = "office@qualityservicecompany.net,lpeluso@qualityservicecompany.net,awilliams@qualityservicecompany.net,ssusor@qualityservicecompany.net"
+ALLOWED_EMAILS = "office@qualityservicecompany.net,lpeluso@qualityservicecompany.net,awilliams@qualityservicecompany.net,ssusor@qualityservicecompany.net,talexander@qualityservicecompany.net,gcox@qualityservicecompany.net,ejohnson@qualityservicecompany.net,jkinard@qualityservicecompany.net"
 
 [[env.dev.durable_objects.bindings]]
 name = "ST_RATE_LIMITER"
@@ -103,6 +113,14 @@ new_classes = ["StRateLimiter", "CustomerSnapshotSingleflight"]
 [[env.dev.analytics_engine_datasets]]
 binding = "MCP_METRICS"
 dataset = "mcp_servicetitan_metrics_dev"
+
+[env.dev.ai]
+binding = "AI"
+
+[[env.dev.workflows]]
+name = "pricebook-embed-dev"
+binding = "EMBED_WORKFLOW"
+class_name = "PricebookEmbedWorkflow"
 
 [[env.dev.d1_databases]]
 binding = "DB"
@@ -121,6 +139,12 @@ id = "d7fb3c58f8604a43a57df60206638a3b"
 [[env.dev.services]]
 binding = "ST_PROXY"
 service = "your-servicetitan-proxy-dev"
+
+# Intentional: dev cron shares the same idempotent backstop target (prod Supabase) as the
+# prod worker's PricebookEmbedWorkflow cron — same predicate/model/projection, first writer
+# wins, safe by design (harmless no-op if dev secrets are unset).
+[env.dev.triggers]
+crons = ["0 10 * * *"]
 
 # Dev secrets (same command, add --env dev):
 # wrangler secret put MCP_SYNC_KEY --env dev

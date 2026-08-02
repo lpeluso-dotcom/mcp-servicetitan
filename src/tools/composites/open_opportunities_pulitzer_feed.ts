@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -51,6 +52,13 @@ interface FeedRow {
   latest_estimate_modified_at: string | null;
 }
 
+/** Cohort-wide aggregate, computed in SQL so it is not capped by LIMIT. */
+interface CohortAgg {
+  cohort_count: number;
+  cohort_estimate_amount: number;
+  cohort_sold_amount: number;
+}
+
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
 
@@ -70,7 +78,9 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
     'Cohort feed of open Opportunities (status NOT IN (Won, Dismissed) AND active=1) joined to the ' +
     'most-recent linked estimate and the customer. Same shape Pulitzer’s `open-opportunities` daily ' +
     'report ships, exposed for other MCP callers. Sorted by follow_up_date ASC so overdue rows lead. ' +
-    'Source: D1 opportunities + estimates. Result cap `limit`, default 100, max 500.',
+    'summary.count is the FULL cohort size and may exceed the rows returned (see _truncated); summary totals ' +
+    'always cover the whole cohort, not just the returned page. Source: D1 opportunities + estimates. ' +
+    'Result cap `limit`, default 100, max 500.',
   stEndpoint: { method: 'GET', path: 'd1://opportunities+estimates+customers', source: 'd1' },
   zodSchema: {
     businessUnit: z.string().optional().describe('Filter to one business unit.'),
@@ -116,7 +126,7 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
               o.estimate_amount, o.sold_estimate_amount, o.open_estimates_count,
               o.job_type_name, o.business_unit, o.technicians_json,
               o.location_name, o.location_address,
-              o.created_date, o.modified_date, o.job_completed_on,
+              o.created_date, o.modified_date, o.job_completed_on, o.synced_at,
               e.estimate_id      AS latest_estimate_id,
               e.summary          AS latest_estimate_name,
               e.status           AS latest_estimate_status,
@@ -132,16 +142,43 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
        ORDER BY o.follow_up_date ASC NULLS LAST, o.modified_date DESC
        LIMIT ?`;
 
-    const { rows } = await readD1<FeedRow>(env, sql, [...params, limit]);
+    // QUA-1109: the cohort aggregate is computed in SQL over the FULL filtered
+    // set, deliberately NOT by reducing the returned rows. Reducing them meant
+    // `summary` silently described whatever slice `LIMIT` happened to admit —
+    // with 347 open opportunities and the default cap the caller got
+    // count: 100 and a dollar total summed over 100 arbitrary rows, presented
+    // as cohort totals. A figure that is wrong in a way that looks right is
+    // worse than no figure, and this feed exists to be read as a summary.
+    //
+    // Same WHERE clause and the same bound params as the rows query, so the
+    // totals describe exactly the cohort the rows are drawn from.
+    const aggSql =
+      `SELECT COUNT(*) AS cohort_count,
+              COALESCE(SUM(o.estimate_amount), 0) AS cohort_estimate_amount,
+              COALESCE(SUM(o.sold_estimate_amount), 0) AS cohort_sold_amount
+       FROM opportunities o
+       WHERE ${where.join(' AND ')}`;
+
+    const [{ rows: aggRows }, { rows }] = await Promise.all([
+      readD1<CohortAgg>(env, aggSql, params),
+      readD1<FeedRow>(env, sql, [...params, limit]),
+    ]);
+
+    const agg = aggRows[0] ?? { cohort_count: 0, cohort_estimate_amount: 0, cohort_sold_amount: 0 };
 
     const out = rows.map((r) => ({
       ...r,
       technicians: parseJsonArray(r.technicians_json),
     }));
 
-    // Cohort summary — useful for a caller deciding whether to fan out.
-    const totalEstimateAmount = out.reduce((acc, r) => acc + (r.estimate_amount ?? 0), 0);
-    const totalSoldAmount = out.reduce((acc, r) => acc + (r.sold_estimate_amount ?? 0), 0);
+    const cohortCount = Number(agg.cohort_count ?? 0);
+    const truncated = cohortCount > out.length;
+
+    // MB-1 / QUA-1141: this feed drives Pulitzer's daily report. Reading the
+    // mirror raw meant an EMPTY `opportunities` table rendered as a confident
+    // `count: 0` — "clean board" — which is what happened in production. The
+    // count is only meaningful alongside the freshness of what produced it.
+    const freshness = stampMirrorFreshness(rows, { table: 'opportunities' });
 
     return {
       filters: {
@@ -150,13 +187,29 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
         daysOverdue: args.daysOverdue ?? null,
       },
       summary: {
-        count: out.length,
-        total_estimate_amount: Number(totalEstimateAmount.toFixed(2)),
-        total_sold_amount: Number(totalSoldAmount.toFixed(2)),
+        // `count` is the cohort size and MAY EXCEED `returned` — that
+        // inequality is the disclosure, not a bug.
+        count: cohortCount,
+        returned: out.length,
+        limit,
+        total_estimate_amount: Number(Number(agg.cohort_estimate_amount ?? 0).toFixed(2)),
+        total_sold_amount: Number(Number(agg.cohort_sold_amount ?? 0).toFixed(2)),
+        // A zero here is NOT self-evidently "no open opportunities" — say so
+        // in the summary itself, where a report generator will actually see
+        // it, rather than only in a sibling field it may never read.
+        count_is_authoritative: freshness._freshness === 'fresh',
       },
       opportunities: out,
+      _truncated: truncated,
+      ...(truncated ? {
+        _warning:
+          `showing ${out.length} of ${cohortCount} open opportunities (limit ${limit}). ` +
+          `summary totals cover ALL ${cohortCount}; raise limit (max ${MAX_LIMIT}) or narrow ` +
+          `with businessUnit / jobTypeName / daysOverdue to see the rest.`,
+      } : {}),
       _composite: 'open_opportunities_pulitzer_feed',
       _source: 'd1',
+      ...freshness,
     };
   },
   transformResult: defaultShaper,

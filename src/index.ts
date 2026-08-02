@@ -19,7 +19,7 @@ import { registerTool, type RequestContext } from './tool-registry';
 import { registerPrompts } from './prompts/index';
 import { registerResultResource } from './resources/results';
 import { registerCatalogResources } from './resources/catalogs';
-import { resolveAuth, verifyConnectorToken } from './auth';
+import { resolveAuth } from './auth';
 import { requireAdminKey } from './routes/admin-guard';
 import { auditHealthHandler } from './routes/admin-health-audit';
 import { unackedErrorsHandler } from './routes/admin-errors';
@@ -30,23 +30,26 @@ import { createOAuthProvider, handleOAuthRoute } from './oauth';
 // Durable Object classes must be exported from the worker entry point.
 export { StRateLimiter } from './durable/st-rate-limiter';
 export { CustomerSnapshotSingleflight } from './durable/customer-snapshot-flight';
+export { PricebookEmbedWorkflow } from './workflows/pricebook-embed';
 
 // ─── Hono app for non-MCP routes ──────────────────────────────
 const app = new Hono<{ Bindings: Env }>();
 
-app.get('/health', (c) => {
-  const lockdown = c.env.MCP_LOCKDOWN === 'true';
-  return c.json({
+export function healthPayload(env: Env): Record<string, unknown> {
+  return {
     ok: true,
     service: 'mcp-servicetitan',
-    version: c.env.MCP_SERVICE_VERSION,
+    version: env.MCP_SERVICE_VERSION,
     toolCount: TOOLS.length,
-    tools: TOOLS.map((t) => t.name),
+    // tool NAMES intentionally omitted (QUA-519): unauthenticated enumeration
+    // aids targeting. Full per-tool inventory lives on admin-gated /admin/endpoints.
     transport: 'agents-sdk createMcpHandler (Streamable HTTP)',
     stProxy: 'service-binding',
-    lockdown,
-  });
-});
+    lockdown: env.MCP_LOCKDOWN === 'true',
+  };
+}
+
+app.get('/health', (c) => c.json(healthPayload(c.env)));
 
 // List roles — requires X-Sync-Key matching env secret.
 app.get('/admin/roles', async (c) => {
@@ -148,17 +151,38 @@ app.post('/webhooks/st', (c) => handleWebhook(c.env, c.req.raw));
 app.notFound((c) => c.json({ error: 'not found' }, 404));
 
 // ─── CORS for MCP Inspector + remote MCP clients ──────────────
-// Inspector at localhost:5173 requires mcp-session-id in both allowed
-// request headers AND exposeHeaders for session resumption.
-const CORS_OPTIONS = {
-  origin: '*', // F1 dev-friendly; tighten for prod in H13
+// Browser-enforced only: non-browser clients (Claude Desktop/Code, Dawn,
+// server-side MCP clients) send no Origin and ignore ACAO. The allowlist
+// reflects known browser surfaces; anything else gets the claude.ai value,
+// which the requesting page cannot match — the browser blocks the read.
+// QUA-519 hardening (was origin:'*').
+const ALLOWED_BROWSER_ORIGINS: ReadonlySet<string> = new Set([
+  'https://claude.ai',
+  'https://claude.com',
+  'http://localhost:5173',   // MCP Inspector (vite dev UI)
+  'http://127.0.0.1:5173',
+  'http://localhost:6274',   // MCP Inspector ≥0.13 default UI port
+  'http://127.0.0.1:6274',
+]);
+
+export function corsOriginFor(request: Request): string {
+  const origin = request.headers.get('origin');
+  return origin && ALLOWED_BROWSER_ORIGINS.has(origin) ? origin : 'https://claude.ai';
+}
+
+const CORS_BASE = {
   methods: 'GET, POST, OPTIONS, DELETE',
   headers: 'content-type, mcp-session-id, authorization, x-sync-key, x-mcp-role, x-actor, x-correlation-id',
   exposeHeaders: 'mcp-session-id',
   maxAge: 86400,
 };
 
-function unauthorizedMcpResponse(): Response {
+export function corsOptionsFor(request: Request) {
+  return { ...CORS_BASE, origin: corsOriginFor(request) };
+}
+
+function unauthorizedMcpResponse(request: Request): Response {
+  const corsOptions = corsOptionsFor(request);
   return new Response(
     JSON.stringify({
       error: 'unauthorized',
@@ -168,10 +192,14 @@ function unauthorizedMcpResponse(): Response {
       status: 401,
       headers: {
         'content-type': 'application/json',
-        'access-control-allow-origin': CORS_OPTIONS.origin,
-        'access-control-allow-methods': CORS_OPTIONS.methods,
-        'access-control-allow-headers': CORS_OPTIONS.headers,
-        'access-control-expose-headers': CORS_OPTIONS.exposeHeaders,
+        'access-control-allow-origin': corsOptions.origin,
+        'access-control-allow-methods': corsOptions.methods,
+        'access-control-allow-headers': corsOptions.headers,
+        'access-control-expose-headers': corsOptions.exposeHeaders,
+        // ACAO is now per-request-reflected (not '*') — tell any intermediary
+        // cache the response varies by Origin so one origin's reflected value
+        // is never served to another (final-review finding, QUA-519).
+        vary: 'origin',
       },
     }
   );
@@ -233,30 +261,11 @@ export function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: Request
   return server;
 }
 
-// Plain 401 for the connector route — deliberately NO www-authenticate header (a challenge
-// would make Claude attempt an OAuth flow). CORS headers included so claude.ai surfaces the
-// error rather than a CORS failure. The token is never echoed or logged.
-function unauthorizedConnectorResponse(): Response {
-  return new Response(
-    JSON.stringify({ error: 'unauthorized', message: 'invalid or expired connector token' }),
-    {
-      status: 401,
-      headers: {
-        'content-type': 'application/json',
-        'access-control-allow-origin': CORS_OPTIONS.origin,
-        'access-control-allow-methods': CORS_OPTIONS.methods,
-        'access-control-allow-headers': CORS_OPTIONS.headers,
-        'access-control-expose-headers': CORS_OPTIONS.exposeHeaders,
-      },
-    }
-  );
-}
-
 // ─── Export ───────────────────────────────────────────────────
 // defaultHandler for the OAuthProvider: the worker's existing router. The provider serves
 // /.well-known/oauth-authorization-server + /token + /register and Bearer-gates /mcp-oauth via the
-// apiHandler; every other path (Hono /health|/admin|/webhooks, keyed /mcp, disabled /c/<token>/mcp)
-// falls through here unchanged.
+// apiHandler; every other path (Hono /health|/admin|/webhooks, keyed /mcp) falls through here
+// unchanged. `/c/<token>/mcp` was DELETED 2026-08-01 (QUA-1117) — see the note at its old site.
 async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
@@ -266,29 +275,25 @@ async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContex
     const oauthRoute = await handleOAuthRoute(request, env, url);
     if (oauthRoute) return oauthRoute;
 
-    // ── /c/<token>/mcp — Claude Desktop custom-connector entry (QUA, Jessica Hunt, READ-ONLY). ──
-    // Desktop's connector UI accepts only a URL (no custom header), so the secret lives in the URL
-    // path and IS the credential. A valid token resolves to its role (Jessica = 'readonly', which
-    // registers ZERO write tools) and dispatches through the SAME per-request McpServer flow after
-    // rewriting the path to /mcp (the SDK handler is bound to that route). Invalid/expired token →
-    // plain 401 with NO www-authenticate (so Claude does not attempt OAuth). Token is never logged.
-    const connMatch = url.pathname.match(/^\/c\/([A-Za-z0-9_-]+)\/mcp$/);
-    if (connMatch) {
-      let reqCtx: RequestContext;
-      if (request.method === 'OPTIONS') {
-        reqCtx = { actor: 'preflight', role: 'readonly' };
-      } else {
-        const conn = await verifyConnectorToken(connMatch[1], env);
-        if (!conn) return unauthorizedConnectorResponse();
-        reqCtx = { actor: conn.owner, role: conn.role };
-      }
-      const runtimeEnv = env; // tenant placeholder resolution is done at each data-helper call site (readST/stRead/write-factory)
-      const server = buildServer(runtimeEnv, execCtx, reqCtx);
-      const handler = createMcpHandler(server, { route: '/mcp', corsOptions: CORS_OPTIONS });
-      const rewrittenUrl = new URL(request.url);
-      rewrittenUrl.pathname = '/mcp';
-      return handler(new Request(rewrittenUrl.toString(), request), runtimeEnv, execCtx);
-    }
+    // ── /c/<token>/mcp — DELETED 2026-08-01 (QUA-1117 item 3). ──
+    // This was the Claude Desktop custom-connector entry: Desktop's UI accepts only a URL, so the
+    // secret lived in the path and WAS the credential. It is gone rather than secret-gated, and
+    // the distinction matters. The route stayed compiled and reachable, disabled only by an unset
+    // secret — the 2026-08-01 audit probed it and got 401, not 404, on both this worker and
+    // qsc-hopper. Worse, a URL token carried its OWN role: a row minted role:'default' reached all
+    // 24 write tools, so the read-only guarantee the connector existed to provide could be
+    // bypassed by whoever minted the token. A credential in a URL also lands in browser history,
+    // proxy logs and referrer headers, none of which the worker controls.
+    //
+    // There is no replacement path here: use the header-authenticated /mcp door, or /mcp-oauth,
+    // both of which resolve role from a credential the caller cannot choose.
+    //
+    // Falls through to Hono below (the path does not start with /mcp) → 404, which is what
+    // scripts/probe-connector-guards.sh section 1 asserts.
+    //
+    // The D1 table `mcp_auth_tokens` (migration 0004) is deliberately LEFT IN PLACE — dropping a
+    // prod D1 table needs an R2 backup and Luke's approval per protected-modules.md. Nothing reads
+    // it now; removing it is a separate, gated cleanup.
 
     // Dispatch non-MCP routes to Hono.
     if (
@@ -310,7 +315,7 @@ async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContex
       ? { authenticated: true, role: 'default' as const, actor: 'preflight' }
       : await resolveAuth(request, env);
     if (!auth.authenticated) {
-      return unauthorizedMcpResponse();
+      return unauthorizedMcpResponse(request);
     }
     const reqCtx: RequestContext = { actor: auth.actor, role: auth.role };
     const runtimeEnv = env; // tenant placeholder resolution is done at each data-helper call site (readST/stRead/write-factory)
@@ -318,7 +323,7 @@ async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContex
     const server = buildServer(runtimeEnv, execCtx, reqCtx);
     const handler = createMcpHandler(server, {
       route: '/mcp',
-      corsOptions: CORS_OPTIONS,
+      corsOptions: corsOptionsFor(request),
     });
     return handler(request, runtimeEnv, execCtx);
 }
@@ -327,16 +332,42 @@ async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContex
 // The OAuthProvider validated the downstream token before this runs and set the authenticated
 // identity on ctx.props. OAuth callers are always 'readonly' (the grant is only ever minted for an
 // allow-listed user in /callback). route MUST equal apiRoute ('/mcp-oauth') or the transport 404s.
+// This handler never routes through resolveAuth, so MCP_LOCKDOWN never touches it directly — it
+// relies on toolsForRole() filtering 'readonly' identically to 'lockdown' (src/tools/index.ts).
+// If that equivalence ever changes, this hardcoded 'readonly' would silently stop being covered
+// by the incident switch — keep the two roles' tool filters identical, or gate this path too.
 const oauthApiHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const props = (ctx as unknown as { props?: { email?: string } }).props;
     const reqCtx: RequestContext = { actor: props?.email ?? 'oauth', role: 'readonly' };
     const runtimeEnv = env; // tenant placeholder resolution is done at each data-helper call site (readST/stRead/write-factory)
     const server = buildServer(runtimeEnv, ctx, reqCtx);
-    const handler = createMcpHandler(server, { route: '/mcp-oauth', corsOptions: CORS_OPTIONS });
+    const handler = createMcpHandler(server, { route: '/mcp-oauth', corsOptions: corsOptionsFor(request) });
     return handler(request, runtimeEnv, ctx);
   },
 };
+
+// ─── Cron: kick the pricebook embedding-refresh Workflow (daily 10:00 UTC) ──────
+// Overlap guard: skip if the last instance is still running. Instance id in KV.
+async function scheduled(_event: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+  const KEY = 'embed_workflow:last_instance';
+  try {
+    const lastId = await env.PROXY_STATE.get(KEY);
+    if (lastId) {
+      const prev = await env.EMBED_WORKFLOW.get(lastId).catch(() => null);
+      const status = prev ? await prev.status().catch(() => null) : null;
+      // Only proceed if the previous instance is in a terminal state.
+      // Any non-terminal state (running, queued, waiting, paused, waitingForPause) → skip.
+      if (status && !['complete', 'errored', 'terminated', 'unknown'].includes(status.status as any)) {
+        return; // still working
+      }
+    }
+    const inst = await env.EMBED_WORKFLOW.create();
+    await env.PROXY_STATE.put(KEY, inst.id, { expirationTtl: 60 * 60 * 24 * 2 });
+  } catch (err) {
+    console.error('[scheduled] embed workflow kick failed:', err);
+  }
+}
 
 // ─── Default export (Phase-2 OAuth) ───────────────────────────────────────────────────────────
 // Delegate ONLY fetch to the provider; the named Durable Object exports above are independent and
@@ -345,4 +376,5 @@ const oauthProvider = createOAuthProvider(defaultFetch, oauthApiHandler);
 
 export default {
   fetch: oauthProvider.fetch.bind(oauthProvider),
+  scheduled,
 } satisfies ExportedHandler<Env>;

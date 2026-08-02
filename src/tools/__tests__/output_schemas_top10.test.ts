@@ -241,11 +241,28 @@ describe('outputSchema — lenient fixture validation (top-10 tools)', () => {
     });
   });
 
-  // Envelope per list_unpaid_invoices's `return { invoices, _source: 'live' }`.
-  it('list_unpaid_invoices: unpaid invoices envelope', () => {
+  // Envelope per list_unpaid_invoices's return. The scan-disclosure fields
+  // became part of the contract in QUA-1108 — the tool drains ST pages and must
+  // tell the caller whether it exhausted the source, because an empty list from
+  // a budget-capped scan means "stopped looking", not "nothing outstanding".
+  it('list_unpaid_invoices: unpaid invoices envelope (complete scan)', () => {
     expectValid(list_unpaid_invoices, {
       invoices: [{ id: 1, balance: 50.0, jobId: 100 }],
       _source: 'live',
+      _scan_complete: true,
+      _pages_scanned: 1,
+      _unpaid_found: 1,
+    });
+  });
+
+  it('list_unpaid_invoices: unpaid invoices envelope (budget-capped scan)', () => {
+    expectValid(list_unpaid_invoices, {
+      invoices: [],
+      _source: 'live',
+      _scan_complete: false,
+      _pages_scanned: 25,
+      _unpaid_found: 0,
+      _warning: 'page budget reached: scanned 25 ST pages …',
     });
   });
 });

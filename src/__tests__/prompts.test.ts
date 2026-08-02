@@ -1,5 +1,5 @@
 // ============================================================
-// prompts.test.ts — Phase 2 Task 2.3
+// prompts.test.ts — Phase 2 Task 2.3 / TAI-STv2 guided-surface rebuild
 //
 // TDD for the 5 QSC workflow MCP prompts. Two layers:
 //   1. Unit: PROMPTS array shape + build() orchestration text (fast, no
@@ -16,13 +16,8 @@ import { PROMPTS } from '../prompts/index';
 describe('PROMPTS — unit', () => {
   it('has exactly 5 prompts with the expected names', () => {
     expect(PROMPTS.length).toBe(5);
-    const names = PROMPTS.map((p) => p.name);
-    expect(names).toEqual([
-      'morning-dispatch-brief',
-      'job-closeout-review',
-      'ar-chase',
-      'quote-follow-up',
-      'membership-outreach',
+    expect(PROMPTS.map((p) => p.name)).toEqual([
+      'job-cost-margin', 'daily-review', 'pricebook-health', 'weekly-tech-review', 'drive-time',
     ]);
   });
 
@@ -42,64 +37,36 @@ describe('PROMPTS — unit', () => {
     }
   });
 
-  it('morning-dispatch-brief orchestrates list_jobs_today, get_capacity, dispatch_pro_alerts_list', () => {
-    const p = PROMPTS.find((p) => p.name === 'morning-dispatch-brief')!;
-    const text = p.build({ date: '2026-07-09' })[0].content.text;
-    expect(text).toContain('list_jobs_today');
-    expect(text).toContain('get_capacity');
-    expect(text).toContain('dispatch_pro_alerts_list');
-    expect(text).toContain('2026-07-09');
+  it('job-cost-margin job mode names job_cost_actuals; BU mode names gold_margin_by_bu', () => {
+    const p = PROMPTS.find((p) => p.name === 'job-cost-margin')!;
+    expect(p.build({ jobId: 123 })[0].content.text).toContain('job_cost_actuals');
+    const bu = p.build({ businessUnitId: 10, from: '2026-06-01', to: '2026-06-30' })[0].content.text;
+    expect(bu).toContain('gold_margin_by_bu');
   });
 
-  it('job-closeout-review orchestrates job_closeout_report, payroll_job_timesheets_list, job_cost_actuals and includes jobId', () => {
-    const p = PROMPTS.find((p) => p.name === 'job-closeout-review')!;
-    const text = p.build({ jobId: 123 })[0].content.text;
-    expect(text).toContain('job_closeout_report');
-    expect(text).toContain('payroll_job_timesheets_list');
-    expect(text).toContain('job_cost_actuals');
-    expect(text).toContain('123');
+  it('daily-review orchestrates list_jobs_today, get_capacity, dispatch_pro_alerts_list', () => {
+    const t = PROMPTS.find((p) => p.name === 'daily-review')!.build({ date: '2026-07-09' })[0].content.text;
+    expect(t).toContain('list_jobs_today');
+    expect(t).toContain('get_capacity');
+    expect(t).toContain('dispatch_pro_alerts_list');
+    expect(t).toContain('2026-07-09');
   });
 
-  it('ar-chase orchestrates list_unpaid_invoices and get_customer', () => {
-    const p = PROMPTS.find((p) => p.name === 'ar-chase')!;
-    const text = p.build({ businessUnitId: 456 })[0].content.text;
-    expect(text).toContain('list_unpaid_invoices');
-    expect(text).toContain('get_customer');
-    expect(text).toContain('456');
+  it('pricebook-health orchestrates the four pricebook composites', () => {
+    const t = PROMPTS.find((p) => p.name === 'pricebook-health')!.build({})[0].content.text;
+    for (const tool of ['pricebook_health_check_services', 'pricebook_markup_drift', 'pricebook_cost_drift', 'pricebook_vendor_part_gaps'])
+      expect(t).toContain(tool);
   });
 
-  it('quote-follow-up orchestrates open_opportunities_pulitzer_feed and assigned_vs_sold_estimate_audit', () => {
-    const p = PROMPTS.find((p) => p.name === 'quote-follow-up')!;
-    const text = p.build({ daysBack: 30 })[0].content.text;
-    expect(text).toContain('open_opportunities_pulitzer_feed');
-    expect(text).toContain('assigned_vs_sold_estimate_audit');
-    expect(text).toContain('30');
+  it('weekly-tech-review names tech_scorecard', () => {
+    expect(PROMPTS.find((p) => p.name === 'weekly-tech-review')!.build({})[0].content.text).toContain('tech_scorecard');
   });
 
-  it('membership-outreach orchestrates list_memberships_expiring and get_customer_membership', () => {
-    const p = PROMPTS.find((p) => p.name === 'membership-outreach')!;
-    const text = p.build({ window: '60d' })[0].content.text;
-    expect(text).toContain('list_memberships_expiring');
-    expect(text).toContain('get_customer_membership');
-    expect(text).toContain('60d');
-  });
-
-  it('quote-follow-up defaults daysBack to 14 when omitted', () => {
-    const p = PROMPTS.find((p) => p.name === 'quote-follow-up')!;
-    const text = p.build({})[0].content.text;
-    expect(text).toContain('14');
-  });
-
-  it('membership-outreach defaults window to "30d" when omitted', () => {
-    const p = PROMPTS.find((p) => p.name === 'membership-outreach')!;
-    const text = p.build({})[0].content.text;
-    expect(text).toContain('30d');
-  });
-
-  it('morning-dispatch-brief defaults date to "today" when omitted', () => {
-    const p = PROMPTS.find((p) => p.name === 'morning-dispatch-brief')!;
-    const text = p.build({})[0].content.text;
-    expect(text.toLowerCase()).toContain('today');
+  it('drive-time names tech_drive_time_summary and includes the tech id', () => {
+    const t = PROMPTS.find((p) => p.name === 'drive-time')!
+      .build({ technicianId: 7, startDate: '2026-07-01', endDate: '2026-07-07' })[0].content.text;
+    expect(t).toContain('tech_drive_time_summary');
+    expect(t).toContain('7');
   });
 });
 
@@ -152,31 +119,34 @@ describe('MCP protocol layer — prompts via buildServer', () => {
 
     const names = listed.prompts.map((p) => p.name).sort();
     expect(names).toEqual(
-      ['ar-chase', 'job-closeout-review', 'membership-outreach', 'morning-dispatch-brief', 'quote-follow-up'].sort()
+      ['daily-review', 'drive-time', 'job-cost-margin', 'pricebook-health', 'weekly-tech-review'].sort()
     );
 
-    const closeout = listed.prompts.find((p) => p.name === 'job-closeout-review')!;
-    expect(closeout.arguments).toBeDefined();
-    const argNames = closeout.arguments!.map((a) => a.name);
+    const jobCostMargin = listed.prompts.find((p) => p.name === 'job-cost-margin')!;
+    expect(jobCostMargin.arguments).toBeDefined();
+    const argNames = jobCostMargin.arguments!.map((a) => a.name);
     expect(argNames).toContain('jobId');
   });
 
-  it('prompts/get on ar-chase returns a messages array with the orchestration text', async () => {
+  it('prompts/get on job-cost-margin returns a messages array with the orchestration text', async () => {
     const client = await connectedClient();
-    const result = await client.getPrompt({ name: 'ar-chase', arguments: {} });
+    const result = await client.getPrompt({ name: 'job-cost-margin', arguments: { jobId: '999' } });
 
     expect(result.messages.length).toBeGreaterThan(0);
     const text = (result.messages[0].content as { type: 'text'; text: string }).text;
-    expect(text).toContain('list_unpaid_invoices');
-    expect(text).toContain('get_customer');
+    expect(text).toContain('job_cost_actuals');
+    expect(text).toContain('999');
   });
 
-  it('prompts/get on job-closeout-review with jobId arg reflects it in the returned text', async () => {
+  it('prompts/get on drive-time with technicianId/startDate/endDate args reflects them in the returned text', async () => {
     const client = await connectedClient();
-    const result = await client.getPrompt({ name: 'job-closeout-review', arguments: { jobId: '999' } });
+    const result = await client.getPrompt({
+      name: 'drive-time',
+      arguments: { technicianId: '7', startDate: '2026-07-01', endDate: '2026-07-07' },
+    });
 
     const text = (result.messages[0].content as { type: 'text'; text: string }).text;
-    expect(text).toContain('999');
-    expect(text).toContain('job_closeout_report');
+    expect(text).toContain('7');
+    expect(text).toContain('tech_drive_time_summary');
   });
 });

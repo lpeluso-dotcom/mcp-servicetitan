@@ -27,6 +27,13 @@ const COVERAGE_EXEMPT = new Set<string>([
   'save_tech_debrief',
   // Vectorize semantic search — proxies to taylor-ai worker, not a ServiceTitan endpoint.
   'search_pricebook_semantic',
+  // Supabase-backed pricebook tools — hit Supabase, not ServiceTitan.
+  'search_pricebook_templates',
+  'get_proposal_tiers',
+  'find_packages_with_item',
+  'get_service_breakout',
+  // Supabase-backed Woz gold vector search (TAI-STV2) — hits Supabase, not ServiceTitan.
+  'semantic_search_gold',
 ]);
 
 describe('stEndpoint coverage gate', () => {

@@ -9,6 +9,7 @@ import { siroFetch } from '../siro';
 import { cacheGet } from '../cache';
 import { McpError } from '../errors';
 import type { ToolDef } from './index';
+import { defaultShaper } from '../response-shape';
 
 const NAMESPACE = 'siro:engagement';
 const CACHE_TTL_SEC = 600;
@@ -31,4 +32,5 @@ export const siro_get_engagement: ToolDef<Args> = {
     const path = `/v1/integrations/engagements/${encodeURIComponent(args.engagementId)}`;
     return cacheGet(env, NAMESPACE, args.engagementId, CACHE_TTL_SEC, () => siroFetch(env, path, correlation));
   },
+  transformResult: defaultShaper,
 };

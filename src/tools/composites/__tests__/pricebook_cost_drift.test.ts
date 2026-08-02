@@ -90,6 +90,45 @@ describe('pricebook_cost_drift', () => {
     expect(out.items[1].kind).toBe('equipment');
   });
 
+  // ── Dynamic-pricing honesty ────────────────────────────────
+  // QSC runs Pricebook Pro: a stored price of 0 does NOT mean "free", it means
+  // "computed at invoice time from rules/BU/membership/labor". D1 stores a
+  // literal 0 for 16,322 of 16,543 pb_materials rows (0 NULLs — verified live
+  // 2026-07-28), so passing r.price through emitted `price: 0` on essentially
+  // every row. Contrary to the original defect report, nothing here coalesced
+  // null->0; the tool simply never applied the shaper the other pricebook tools
+  // use (shapePriceRow in src/supabase.ts).
+  it('never emits price: 0 — a zero stored price becomes null with a dynamic price_basis', async () => {
+    readD1Mock.mockResolvedValueOnce({
+      rows: [
+        { id: 10, code: 'M1', name: 'PEX Clamp', category_name: null, cost: 0.32, price: 0, updated_at: '2026-07-27T14:00:00Z', kind: 'material' },
+        { id: 20, code: 'E1', name: 'Condenser', category_name: 'HVAC Equip', cost: 3021.7, price: 0, updated_at: '2026-07-27T12:28:00Z', kind: 'equipment' },
+      ],
+    });
+
+    const out: any = await pricebook_cost_drift.handler(makeEnv(), {}, CTX);
+
+    for (const item of out.items) {
+      expect(item.price, `item ${item.code} emitted a literal $0 price`).toBeNull();
+      expect(item.price_basis).toBe('dynamic — computed at invoice');
+      // cost is a real vendor cost and must survive untouched.
+      expect(item.cost).toBeGreaterThan(0);
+    }
+  });
+
+  it('keeps a genuine non-zero price and tags it as a stored reference', async () => {
+    readD1Mock.mockResolvedValueOnce({
+      rows: [
+        { id: 30, code: 'M2', name: 'Priced Item', category_name: 'Plumbing', cost: 12.5, price: 20, updated_at: '2026-07-05T10:00:00Z', kind: 'material' },
+      ],
+    });
+
+    const out: any = await pricebook_cost_drift.handler(makeEnv(), {}, CTX);
+
+    expect(out.items[0].price).toBe(20);
+    expect(out.items[0].price_basis).toBe('reference (stored ST price)');
+  });
+
   it('carries the honest "modifiedOn is any-field-change, not a verified cost delta" _note', async () => {
     readD1Mock.mockResolvedValueOnce({ rows: [] });
 

@@ -20,6 +20,7 @@ import type { ToolDef } from './tools/index';
 import { newCorrelationId } from './auth';
 import { McpError } from './errors';
 import * as obs from './obs';
+import { traceTool } from './observability/tracing';
 import { offloadIfLarge } from './resources/results';
 
 export interface RequestContext {
@@ -106,6 +107,53 @@ function deriveAnnotations(tool: ToolDef): {
 }
 
 /**
+ * The annotations actually put on the wire: method-derived defaults with the
+ * per-tool `annotations` override layered on top.
+ *
+ * Exported because `readOnlyHint` is load-bearing for CI safety (QUA-1044) —
+ * the all-tools smoke sweep decides what it may invoke against a live deploy
+ * target from this value, so it is asserted in tests, not merely advertised.
+ */
+export function mergedAnnotations(tool: ToolDef): {
+  title: string;
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+} {
+  return { ...deriveAnnotations(tool), ...(tool.annotations ?? {}) };
+}
+
+/**
+ * The shape the smoke sweep sees: a `tools/list` entry off the wire.
+ * `annotations` carries title/destructiveHint/idempotentHint/openWorldHint
+ * alongside the hint we gate on, so the bag is left open deliberately.
+ */
+interface WireToolLike {
+  name?: string;
+  annotations?: { readOnlyHint?: unknown; [key: string]: unknown } | null;
+}
+
+/**
+ * May CI invoke this tool with EMPTY ARGS against a live deploy target?
+ *
+ * DENY BY DEFAULT (QUA-1044 / audit S-4). The predecessor subtracted a
+ * hand-maintained 16-name list from `tools/list` and swept everything else —
+ * so every write tool added after the list was written became CI-invocable on
+ * prod by default. It rotted twice (9 real write tools uncovered, including
+ * two invoice money-writes, plus one phantom entry that was a filename).
+ * Only Zod required-field rejection stood between that sweep and a live
+ * write; an all-optional schema on any mutating tool would have been enough.
+ *
+ * So: the ONLY admissible answer is an explicit `readOnlyHint === true`.
+ * Missing annotations, an undefined hint, or a truthy-but-not-true value all
+ * refuse — a tool that forgets to declare itself is never swept.
+ */
+export function isSweepEligible(tool: WireToolLike | null | undefined): boolean {
+  return tool?.annotations?.readOnlyHint === true;
+}
+
+/**
  * Register a tool on the McpServer, wrapping its handler with the full
  * observability + error-handling envelope.
  */
@@ -119,7 +167,7 @@ export function registerTool(
   // Compute the merged annotations ONCE: method-derived defaults, then the
   // per-tool overrides (tool.annotations) layered on top. The wire `title`
   // reuses annotations.title so it can't drift from the annotation copy.
-  const annotations = { ...deriveAnnotations(tool), ...(tool.annotations ?? {}) };
+  const annotations = mergedAnnotations(tool);
 
   server.registerTool(
     tool.name,
@@ -182,6 +230,18 @@ export function registerTool(
         );
         emitMetric(env, execCtx, tool.name, 'ok', latency, reqCtx);
 
+        // Phoenix tracing: one root span per call, ids/flags only — never raw
+        // args/results (this worker's whole reason to exist is serving ST PII).
+        execCtx.waitUntil(
+          traceTool(
+            env,
+            tool.name,
+            reqCtx.actor,
+            { correlation, role: reqCtx.role, actor: reqCtx.actor, partial: isPartial },
+            async () => ({ status: isPartial ? 'error' : 'ok', latencyMs: latency })
+          )
+        );
+
         // Gated offload: below RESULT_THRESHOLD chars this is byte-identical
         // to the prior inline behavior (same text content block + same
         // structuredContent wrapping rule, now factored into
@@ -228,6 +288,18 @@ export function registerTool(
           obs.heartbeat(env, `mcp-servicetitan:${tool.name}`, { ok: false })
         );
         emitMetric(env, execCtx, tool.name, 'error', latency, reqCtx);
+
+        // Phoenix tracing: one root span per call, ids/flags only — never raw
+        // args/results (this worker's whole reason to exist is serving ST PII).
+        execCtx.waitUntil(
+          traceTool(
+            env,
+            tool.name,
+            reqCtx.actor,
+            { correlation, role: reqCtx.role, actor: reqCtx.actor, code: mcpErr.code },
+            async () => ({ status: 'error', latencyMs: latency })
+          )
+        );
 
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(mcpErr.toResponse()) }],

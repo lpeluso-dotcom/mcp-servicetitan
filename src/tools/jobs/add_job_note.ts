@@ -18,7 +18,8 @@ export const add_job_note = defineWriteTool<Args>({
   },
   endpoint: ({ jobId }) => `/jpm/v2/tenant/000000000/jobs/${jobId}/notes`,
   method: 'POST',
-  payload: ({ note }) => ({ note }),
+  // ST JPM notes API expects { text, pinToTop } — NOT { note } (the latter 400s). Fixed 2026-07-15.
+  payload: ({ note }) => ({ text: note, pinToTop: false }),
   businessArgs: ({ jobId, note }) => ({ jobId, note }),
   stEndpointTemplate: '/jpm/v2/tenant/{tid}/jobs/{jobId}/notes',
 });

@@ -62,6 +62,28 @@ for f in src/index.ts src/tool-registry.ts src/tools/index.ts src/obs.ts src/env
   [[ -f "$f" ]] && pass "$f present" || fail "$f missing"
 done
 
+# ── 2b. Smoke-sweep denylist integrity (QUA-1044) ───────────
+# all-tools-smoke.sh invokes each selected tool with EMPTY ARGS against a live
+# deploy target (prod included), so its selection is a safety boundary. It used
+# to subtract a hand-maintained WRITES name list and sweep the remainder, which
+# meant every write tool added after that list was written became CI-invocable
+# on prod by default — it rotted twice (9 uncovered write tools, incl. two
+# invoice money-writes and save_tech_debrief which bypasses the write gate;
+# plus a phantom entry that was a filename). Pin the wire-derived,
+# deny-by-default replacement so nobody reintroduces the pattern.
+echo ""
+echo "[2b] Smoke-sweep denylist (deny-by-default)"
+SMOKE="scripts/all-tools-smoke.sh"
+grep -qE 'annotations\.readOnlyHint\s*==\s*true' "$SMOKE" \
+  && pass "sweep selects only readOnlyHint:true tools (wire-derived)" \
+  || fail "$SMOKE no longer derives its read set from .annotations.readOnlyHint == true"
+grep -qE '^WRITES=' "$SMOKE" \
+  && fail "$SMOKE reintroduced a hand-maintained WRITES name list — derive from the registry annotation instead" \
+  || pass "no hand-maintained WRITES list"
+grep -q 'update_estimate_status' "$SMOKE" \
+  && fail "$SMOKE references update_estimate_status — that is a FILENAME, not a tool name; it never matched anything" \
+  || pass "no phantom update_estimate_status entry"
+
 # ── 3. wrangler.toml config ─────────────────────────────────
 echo ""
 echo "[3] wrangler.toml config"

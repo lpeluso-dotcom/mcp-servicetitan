@@ -36,6 +36,11 @@ import { list_service_categories } from './pricebook/list_service_categories';
 import { search_pricebook_all } from './pricebook/search_pricebook_all';
 // Vectorize semantic search — natural-language pricebook lookup
 import { search_pricebook_semantic } from './pricebook/search_pricebook_semantic';
+// Supabase-backed estimate template search
+import { search_pricebook_templates } from './pricebook/search_pricebook_templates';
+import { get_proposal_tiers } from './pricebook/get_proposal_tiers';
+import { find_packages_with_item } from './pricebook/find_packages_with_item';
+import { get_service_breakout } from './pricebook/get_service_breakout';
 // C10-C12 — L5 Composites
 import { customer_snapshot } from './composites/customer_snapshot';
 import { pricebook_health_check_services } from './composites/pricebook_health_check_services';
@@ -77,6 +82,7 @@ import { get_capacity } from './dispatch/get_capacity';
 import { list_technicians_available } from './dispatch/list_technicians_available';
 import { get_technician_shifts } from './dispatch/get_technician_shifts';
 import { list_non_job_events } from './dispatch/list_non_job_events';
+import { find_technician_by_name } from './dispatch/find_technician_by_name';
 // v1.2 F.1.a — Dispatch (slot finder)
 import { st_get_capacity_slots } from './dispatch/st_get_capacity_slots';
 // T7 — Marketing
@@ -92,6 +98,8 @@ import { get_invoice } from './invoicing/get_invoice';
 import { list_invoices_job } from './invoicing/list_invoices_job';
 import { get_invoice_balance } from './invoicing/get_invoice_balance';
 import { list_unpaid_invoices } from './invoicing/list_unpaid_invoices';
+import { st_add_invoice_line_item } from './invoicing/st_add_invoice_line_item';
+import { st_create_adjustment_invoice } from './invoicing/st_create_adjustment_invoice';
 // T5 — Jobs & Appointments
 import { get_job } from './jobs/get_job';
 import { list_jobs_today } from './jobs/list_jobs_today';
@@ -131,6 +139,10 @@ import { get_job_history } from './jobs/get_job_history';
 // Dawn — SMS support (v1.6.0)
 import { identify_tech_by_phone } from './dawn/identify_tech_by_phone';
 import { save_tech_debrief } from './dawn/save_tech_debrief';
+// TAI-STV2 — semantic search over the Woz gold vector index (Supabase vec schema)
+import { semantic_search_gold } from './gold/semantic_search_gold';
+import { gold_margin_by_bu } from './gold/gold_margin_by_bu';
+import { tech_scorecard } from './composites/tech_scorecard';
 
 export interface ToolContext {
   actor: string;
@@ -207,9 +219,10 @@ export const TOOLS: readonly ToolDef<any>[] = [
   // T6 Pricebook
   search_pricebook_services, get_service_details, search_materials,
   get_configurable_equipment_children, list_service_categories,
-  search_pricebook_all, search_pricebook_semantic,
+  search_pricebook_all, search_pricebook_semantic, search_pricebook_templates, get_proposal_tiers, find_packages_with_item, get_service_breakout,
   // T6 Invoicing
   get_invoice, list_invoices_job, get_invoice_balance, list_unpaid_invoices,
+  st_add_invoice_line_item, st_create_adjustment_invoice,
   // T7 Estimates
   list_estimates_job, get_estimate, dismiss_estimate, sell_estimate, unsell_estimate,
   // Phase 4 Estimate templates
@@ -217,7 +230,7 @@ export const TOOLS: readonly ToolDef<any>[] = [
   update_estimate_template, delete_estimate_template,
   // T7 Dispatch
   get_capacity, list_technicians_available, get_technician_shifts, list_non_job_events,
-  st_get_capacity_slots,
+  st_get_capacity_slots, find_technician_by_name,
   // T7 Marketing
   list_campaigns, get_campaign_performance, create_call_with_campaign,
   // T12 Marketing-attribution (v1.2)
@@ -255,6 +268,10 @@ export const TOOLS: readonly ToolDef<any>[] = [
   save_tech_debrief,
   // QUA-739 — Pricebook margin-discipline composites (D1 pb_ tables)
   pricebook_markup_drift, pricebook_cost_drift, pricebook_vendor_part_gaps,
+  // TAI-STV2 — Woz gold vector search (Supabase vec schema)
+  semantic_search_gold,
+  // TAI-STV2 rebuild — guided-surface backing tools
+  gold_margin_by_bu, tech_scorecard,
 ] as const;
 
 export function findTool(name: string): ToolDef<any> | undefined {
@@ -265,8 +282,15 @@ export function findTool(name: string): ToolDef<any> | undefined {
  * Filter tools by caller role.
  *   - 'readonly' (QUA, Jessica Hunt Desktop connector): read-only reporting surface. Strips
  *     every isWrite=true tool and adminOnly tools — identical safe set as 'lockdown', but a
- *     PER-CONNECTOR role (not the global incident switch). The 18 write tools are never
+ *     PER-CONNECTOR role (not the global incident switch). The 24 write tools are never
  *     registered, so a readonly caller cannot write to ServiceTitan (removal, not gating).
+ *     Count corrected 2026-08-01 (was "18" — stale since at least v1.7.0). Do not hand-maintain
+ *     this number: src/__tests__/role-write-invariant.test.ts asserts the arithmetic and logs a
+ *     live census (total / readonly / stripped / isWrite / adminOnly) on every run.
+ *
+ *     NOTE the fail-open hazard this filter sits on: `isWrite?` is OPTIONAL, so a new write tool
+ *     that forgets the flag is served to readonly OAuth callers. That test's invariant 4
+ *     cross-checks the flag against each tool's declared ST HTTP method to catch exactly that.
  *   - 'lockdown' (v1.5.2): same read-only filter, applied GLOBALLY via MCP_LOCKDOWN.
  *   - 'admin':   full catalog including st_call escape hatch.
  *   - 'default': everything except adminOnly tools.

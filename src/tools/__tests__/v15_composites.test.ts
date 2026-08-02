@@ -237,6 +237,13 @@ describe('assigned_vs_sold_estimate_audit', () => {
 describe('open_opportunities_pulitzer_feed', () => {
   it('returns the open cohort sorted oldest-follow-up-first', async () => {
     const fetcher = multiRouter([
+      // QUA-1109: the cohort aggregate is a SECOND query over the same FROM
+      // clause, so it must be routed first — the totals now come from SQL over
+      // the full filtered set rather than a reduce over the capped rows.
+      {
+        matches: (sql) => sql.includes('COUNT(*)'),
+        rows: [{ cohort_count: 1, cohort_estimate_amount: 5000, cohort_sold_amount: 0 }],
+      },
       {
         matches: (sql) => sql.includes('FROM opportunities o'),
         rows: [

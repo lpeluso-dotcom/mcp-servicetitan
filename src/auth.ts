@@ -46,21 +46,21 @@ export async function hasValidSyncKey(request: Request, env: Env): Promise<boole
 
 // Resolve caller role for this request.
 // Dual-mode auth: JWT first, then fall back to X-Sync-Key (constant-time).
-// JWT flow: extract Authorization: Bearer <JWT>, verify signature, return role from claim.
-// Fallback: validate X-Sync-Key → opt-in check (X-MCP-Role: admin) → D1 lookup.
-// Returns 'admin' only when the caller presents valid credentials and has admin role.
-// Degrades to 'default' silently (D1 error, key mismatch, missing header) so the MCP
-// session stays alive with the safe tool set.
+// MCP_LOCKDOWN (v1.5.2; ordering fixed 2026-07-13): when 'true', every
+// AUTHENTICATED caller is forced into the lockdown role — toolsForRole()
+// then strips all writes + st_call. Lockdown must never waive
+// authentication itself: credentials are still required; the switch only
+// narrows what they grant.
 export async function resolveAuth(request: Request, env: Env): Promise<AuthResult> {
-  const fallbackActor = safeActorHeader(request.headers.get('x-actor'));
-
-  // Lockdown short-circuit (v1.5.2). MCP_LOCKDOWN=true forces every caller into
-  // the lockdown role regardless of credentials — toolsForRole() then strips
-  // all writes + st_call. Use this when the server is fronting an untrusted
-  // network or when you want defence-in-depth during an incident.
-  if (env.MCP_LOCKDOWN === 'true') {
-    return { authenticated: true, role: 'lockdown', actor: fallbackActor, authMode: 'none' };
+  const auth = await resolveCredentials(request, env);
+  if (env.MCP_LOCKDOWN === 'true' && auth.authenticated) {
+    return { ...auth, role: 'lockdown' };
   }
+  return auth;
+}
+
+async function resolveCredentials(request: Request, env: Env): Promise<AuthResult> {
+  const fallbackActor = safeActorHeader(request.headers.get('x-actor'));
 
   // JWT path first
   const authHeader = request.headers.get('authorization');
@@ -111,51 +111,11 @@ export async function resolveRole(request: Request, env: Env): Promise<Role> {
   return (await resolveAuth(request, env)).role;
 }
 
-export interface ConnectorAuth {
-  role: Role;
-  owner: string;
-}
-
-/**
- * Resolve a Claude Desktop connector token (the `/c/<token>/mcp` route). Desktop's connector
- * UI accepts only a URL — it cannot send X-Sync-Key — so the secret lives in the URL path and
- * IS the credential. We SHA-256 the presented token and look it up in mcp_auth_tokens (same
- * hash-in-D1 pattern as mcp_roles); a hit that hasn't expired returns its role + owner.
- *
- * Fail-closed: unknown/expired token, missing table, or any D1 error ⇒ null (deny). The role
- * is constrained to CONNECTOR_ROLES (never 'admin' via this path), defaulting to 'readonly' —
- * so a misconfigured row can only ever GRANT LESS, never escalate to writes.
- */
-export async function verifyConnectorToken(
-  token: string | undefined,
-  env: Env,
-): Promise<ConnectorAuth | null> {
-  if (!token || token.length < 16) return null; // reject empty / too-short tokens
-  let hashHex: string;
-  try {
-    const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
-    hashHex = Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-  } catch {
-    return null;
-  }
-  try {
-    const row = await env.DB.prepare(
-      'SELECT role, owner, expires_at FROM mcp_auth_tokens WHERE token_hash = ?',
-    )
-      .bind(hashHex)
-      .first<{ role: string; owner: string | null; expires_at: number | null }>();
-    if (!row) return null;
-    if (row.expires_at != null && row.expires_at < Date.now()) return null; // expired
-    const role: Role = (CONNECTOR_ROLES as readonly string[]).includes(row.role)
-      ? (row.role as Role)
-      : 'readonly';
-    return { role, owner: safeActorHeader(row.owner) };
-  } catch {
-    return null; // table missing / D1 error ⇒ deny
-  }
-}
+// `verifyConnectorToken` and its ConnectorAuth type were DELETED 2026-08-01 (QUA-1117 item 3)
+// along with the `/c/<token>/mcp` route they served. A URL-path credential carried its own role,
+// so a token minted role:'default' bypassed the read-only guarantee and reached every write tool.
+// See the note at the old route site in src/index.ts. The `mcp_auth_tokens` D1 table (migration
+// 0004) is intentionally left in place — dropping a prod table is a separately gated action.
 
 export function authHeaders(env: Env, correlation: string, actor: string): Record<string, string> {
   return {

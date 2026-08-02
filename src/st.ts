@@ -77,7 +77,11 @@ export async function readST<T = unknown>(
     const body = await resp.text().catch(() => '');
     throw new McpError(
       mapUpstreamStatus(resp.status),
-      `readST ${resp.status} on ${resolved}: ${body.slice(0, 200)}`,
+      // 600, not 200: ST's RFC7231 validation envelope spends ~180 chars on
+      // type/title/status/traceId before it reaches `errors`, so a 200-char
+      // slice truncates the actual message mid-word. That is exactly how the
+      // ids-batch cap got misdiagnosed — "Simple IDs lookup should n…".
+      `readST ${resp.status} on ${resolved}: ${body.slice(0, 600)}`,
       { correlation: ctx.correlation },
     );
   }

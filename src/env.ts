@@ -24,12 +24,26 @@ export interface Env {
   MCP_SERVICE_VERSION: string;
   ST_TENANT_ID: string;
   MCP_LOCKDOWN?: string; // "true" → server enters lockdown / read-only mode (v1.5.2)
+  // Post-write verify-read backoff schedule, in ms, for read-after-write lag
+  // (see src/tools/invoicing/invoice-verify.ts). Defaults to [2000, 10000].
+  // Present as an override/test seam only — production leaves it unset.
+  VERIFY_BACKOFF_MS?: number[];
 
   // Secrets
   MCP_SYNC_KEY: string; // For servicetitan-proxy /api/st/read proxy
   SIRO_API_TOKEN: string; // Siro org API token (Bearer auth)
   ST_WEBHOOK_SECRET: string; // ServiceTitan webhook HMAC-SHA256 secret
   JWT_SECRET: string; // JWT signing secret for dual-mode auth
+
+  // Workers AI (native binding) — pricebook query + row embeddings
+  AI: unknown; // Ai binding; typed as unknown to avoid @cloudflare/workers-types Ai coupling in helpers
+
+  // Supabase pricebook vector store (project nlaaliehqpgskjmiuzze)
+  SUPABASE_URL: string;      // secret — https://<ref>.supabase.co
+  SUPABASE_PB_KEY: string;   // secret — dedicated connector service key
+
+  // Embedding-refresh Workflow binding
+  EMBED_WORKFLOW: Workflow;  // cloudflare Workflows binding
 
   // F3 Durable Objects
   ST_RATE_LIMITER: DurableObjectNamespace;

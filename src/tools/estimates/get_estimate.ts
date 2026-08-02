@@ -8,7 +8,9 @@ interface Args { estimateId: number }
 // verified 2026-07-09: /sales/v2 estimates/{id} route EXISTS (logical 404 "Estimate ID = X was not found" on missing ids) — not in the no-by-id-route class.
 export const get_estimate: ToolDef<Args> = {
   name: 'get_estimate',
-  description: 'Get full details for a single estimate including line items and status. Source: live ST.',
+  description:
+    'Get full details for a single estimate including line items and status. ' +
+    'Source: live ST — fetched by id via /sales/v2 estimates/{id} (a valid by-id route; missing ids return a logical 404).',
   zodSchema: {
     estimateId: z.number().int().positive().describe('ST estimate ID'),
   },

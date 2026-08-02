@@ -8,6 +8,7 @@ import type { Env } from '../env';
 import { siroFetch } from '../siro';
 import { cacheGet } from '../cache';
 import type { ToolDef } from './index';
+import { defaultShaper } from '../response-shape';
 
 const NAMESPACE = 'siro:mobile_events';
 const CACHE_TTL_SEC = 120;
@@ -46,4 +47,5 @@ export const siro_list_mobile_events: ToolDef<Args> = {
     const cacheKey = qs.toString();
     return cacheGet(env, NAMESPACE, cacheKey, CACHE_TTL_SEC, () => siroFetch(env, path, correlation));
   },
+  transformResult: defaultShaper,
 };
