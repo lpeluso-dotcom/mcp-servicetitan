@@ -224,7 +224,7 @@ describe('pricebook_markup_drift freshness disclosure (MB-1 / QUA-1141)', () => 
     expect(out._warning).toBeUndefined();
   });
 
-  it('a frozen table is flagged stale by name and authority is withheld (F2)', async () => {
+  it('a frozen table is flagged unknown (quiet-or-frozen) by name and authority is withheld (F2)', async () => {
     wire({
       markup: [
         { id: 1, code: 'M1', name: 'A', category_name: 'Plumbing', cost: 10, price: 20, kind: 'material', synced_at: hoursAgo(24 * 25) },
@@ -234,9 +234,9 @@ describe('pricebook_markup_drift freshness disclosure (MB-1 / QUA-1141)', () => 
 
     const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
 
-    expect(out._freshness).toBe('stale');
+    expect(out._freshness).toBe('unknown');
     expect(out.summary.metrics_are_authoritative).toBe(false);
-    expect(out._warning).toMatch(/STALE DATA/);
+    expect(out._warning).toMatch(/no row change in|indistinguishable/);
     expect(out._warning).toMatch(/pb_equipment/);
     expect(out._tables.pb_materials.freshness).toBe('fresh');
   });

@@ -110,10 +110,10 @@ describe('job_cost_actuals freshness disclosure (MB-1 / QUA-1141)', () => {
   it('concatenates a stale-mirror warning into _warnings — never a colliding top-level _warning', async () => {
     const { fetcher } = multiRouter(routes([tsRow(hoursAgo(24 * 30))], hoursAgo(24 * 30)));
     const out: any = await job_cost_actuals.handler(makeEnv(fetcher), { jobId: 77423990 }, CTX);
-    expect(out._freshness).toBe('stale');
+    expect(out._freshness).toBe('unknown');
     expect(out.summary.metrics_are_authoritative).toBe(false);
     expect(out._warning).toBeUndefined();
-    expect(out._warnings.join(' ')).toMatch(/STALE DATA/);
+    expect(out._warnings.join(' ')).toMatch(/no row change in|indistinguishable/);
     // The stale burden figure is still computed — the disclosure rides alongside.
     expect(out.summary.labor_burden_$).toBeCloseTo(132, 2);
   });

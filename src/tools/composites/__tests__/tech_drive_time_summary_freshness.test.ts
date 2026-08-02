@@ -85,12 +85,12 @@ describe('tech_drive_time_summary freshness disclosure (MB-1 / QUA-1141)', () =>
     expect(out.metrics_are_authoritative).toBe(true);
   });
 
-  it('flags the frozen-mirror failure mode (table MAX weeks old) as stale', async () => {
+  it('flags the frozen-mirror failure mode (table MAX weeks old) as unknown', async () => {
     primeMirror([day('2026-07-01', hoursAgo(24 * 30))], hoursAgo(24 * 30));
     const out: any = await tech_drive_time_summary.handler({} as any, ARGS, ctx);
-    expect(out._freshness).toBe('stale');
+    expect(out._freshness).toBe('unknown');
     expect(out.metrics_are_authoritative).toBe(false);
-    expect(out._warning).toMatch(/STALE DATA/);
+    expect(out._warning).toMatch(/no row change in|indistinguishable/);
     expect(out._stale_hours).toBeGreaterThan(48);
   });
 

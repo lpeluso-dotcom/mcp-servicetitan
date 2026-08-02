@@ -72,9 +72,9 @@ describe('dispatch_override_audit freshness disclosure (MB-1 / QUA-1141)', () =>
   it('concatenates a stale-mirror warning into the existing _warnings array — never a top-level _warning', async () => {
     const { env } = makeEnv([APPT], [asg(hoursAgo(24 * 30))], hoursAgo(24 * 30));
     const out: any = await dispatch_override_audit.handler(env, ARGS, CTX);
-    expect(out._freshness).toBe('stale');
+    expect(out._freshness).toBe('unknown');
     expect(out._warning).toBeUndefined();
-    expect(out._warnings.join(' ')).toMatch(/STALE DATA/);
+    expect(out._warnings.join(' ')).toMatch(/no row change in|indistinguishable/);
   });
 
   it('old assignment rows on a LIVE mirror are not called stale — the table probe decides (F1)', async () => {

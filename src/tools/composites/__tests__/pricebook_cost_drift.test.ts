@@ -214,7 +214,7 @@ describe('pricebook_cost_drift freshness disclosure (MB-1 / QUA-1141)', () => {
     expect(out._warning).toBeUndefined();
   });
 
-  it('does NOT conflate updated_at with mirror age: recently-modified rows off a frozen table are STALE', async () => {
+  it('does NOT conflate updated_at with mirror age: recently-modified rows off a frozen table are NOT fresh (updated_at is not sync evidence)', async () => {
     wireFreshness(
       [{ id: 10, code: 'M1', name: 'Copper Fitting', category_name: 'Plumbing', cost: 12.5, price: 20, updated_at: hoursAgo(2), synced_at: hoursAgo(24 * 30), kind: 'material' }],
       { pb_materials: hoursAgo(24 * 30) },
@@ -222,9 +222,9 @@ describe('pricebook_cost_drift freshness disclosure (MB-1 / QUA-1141)', () => {
 
     const out: any = await pricebook_cost_drift.handler(makeEnv(), {}, CTX);
 
-    expect(out._freshness).toBe('stale');
+    expect(out._freshness).toBe('unknown');
     expect(out.count_is_authoritative).toBe(false);
-    expect(out._warning).toMatch(/STALE DATA/);
+    expect(out._warning).toMatch(/no row change in|indistinguishable/);
     expect(out._warning).toMatch(/pb_materials/);
     expect(out._stale_hours).toBeGreaterThan(48);
   });
@@ -234,10 +234,10 @@ describe('pricebook_cost_drift freshness disclosure (MB-1 / QUA-1141)', () => {
 
     const out: any = await pricebook_cost_drift.handler(makeEnv(), {}, CTX);
 
-    expect(out._freshness).toBe('stale');
+    expect(out._freshness).toBe('unknown');
     expect(out._warning).toMatch(/pb_equipment/);
     expect(out._tables.pb_materials.freshness).toBe('fresh');
-    expect(out._tables.pb_equipment.freshness).toBe('stale');
+    expect(out._tables.pb_equipment.freshness).toBe('unknown');
   });
 
   it('an empty window on LIVE tables is an honest "nothing changed lately" (F5)', async () => {

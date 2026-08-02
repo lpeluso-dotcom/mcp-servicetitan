@@ -82,11 +82,11 @@ describe('search_pricebook_all freshness disclosure (MB-1 / QUA-1141)', () => {
     expect(out.items[0]).not.toHaveProperty('synced_at');
   });
 
-  it('code hit on a frozen mirror (table MAX weeks old) is flagged stale', async () => {
+  it('code hit on a frozen mirror (table MAX weeks old) is flagged unknown (quiet-or-frozen)', async () => {
     const { env } = makeD1Env([SVC_ROW(hoursAgo(24 * 23))], { pb_services: hoursAgo(24 * 23) });
     const out: any = await search_pricebook_all.handler(env, { code: 'FLU-150' }, CTX);
-    expect(out._freshness).toBe('stale');
-    expect(out._warning).toMatch(/STALE DATA/);
+    expect(out._freshness).toBe('unknown');
+    expect(out._warning).toMatch(/no row change in|indistinguishable/);
     expect(out._warning).toMatch(/pb_services/);
   });
 
@@ -119,7 +119,7 @@ describe('search_pricebook_all freshness disclosure (MB-1 / QUA-1141)', () => {
   it('a frozen pb_equipment cannot hide behind a fresh pb_services on the query path (F2)', async () => {
     const { env } = makeD1Env([SVC_ROW(hoursAgo(1))], { pb_equipment: hoursAgo(24 * 7) });
     const out: any = await search_pricebook_all.handler(env, { query: 'flush' }, CTX);
-    expect(out._freshness).toBe('stale');
+    expect(out._freshness).toBe('unknown');
     expect(out._warning).toMatch(/pb_equipment/);
     expect(out._tables.pb_services.freshness).toBe('fresh');
   });

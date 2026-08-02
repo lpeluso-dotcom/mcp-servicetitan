@@ -52,7 +52,7 @@ describe('stampMirrorFreshness — tableMax mode: per-table verdicts', () => {
   // Pinned behavior (a): the F2 fix. Prod MAXes on 2026-08-02: pb_equipment
   // 04:28 vs pb_services 13:21 — a frozen table must never hide behind a
   // fresh sibling.
-  it('one frozen table of three → headline stale, warning NAMES the frozen table', () => {
+  it('one frozen table of three → headline unknown (quiet-or-frozen), warning NAMES the table', () => {
     const s = stampMirrorFreshness([{ id: 1 }], {
       table: 'pb_services+pb_materials+pb_equipment',
       now: NOW,
@@ -62,13 +62,13 @@ describe('stampMirrorFreshness — tableMax mode: per-table verdicts', () => {
         pb_equipment: hoursAgo(24 * 7), // frozen a week
       },
     });
-    expect(s._freshness).toBe('stale');
-    expect(s._warning).toMatch(/STALE DATA/);
+    expect(s._freshness).toBe('unknown');
+    expect(s._warning).toMatch(/no row change in|indistinguishable/);
     expect(s._warning).toMatch(/pb_equipment/);
     // The fresh siblings are NOT blamed in the stale warning.
     expect(s._warning).not.toMatch(/`pb_services`.*threshold/);
     expect(s._stale_hours).toBe(168);
-    expect(s._tables!.pb_equipment.freshness).toBe('stale');
+    expect(s._tables!.pb_equipment.freshness).toBe('unknown');
     expect(s._tables!.pb_services.freshness).toBe('fresh');
   });
 
@@ -98,18 +98,20 @@ describe('stampMirrorFreshness — tableMax mode: per-table verdicts', () => {
     expect(s._tables!.a.freshness).toBe('fresh');
     expect(s._tables!.b.freshness).toBe('unknown');
     expect(s._freshness).toBe('unknown');
-    expect(s._stale_hours).toBeNull();
+    // Worst observed age is factual and reported even under an 'unknown'
+    // headline (only ever null when NO table produced a timestamp).
+    expect(s._stale_hours).toBe(1);
     expect(s._warning).toMatch(/`b`/);
   });
 
-  it('stale beats unknown in the headline', () => {
+  it('a quiet-or-frozen table forces the headline to unknown', () => {
     const s = stampMirrorFreshness([{ id: 1 }], {
       table: 'a+b',
       now: NOW,
       tableMax: { a: hoursAgo(24 * 10), b: null },
     });
-    expect(s._freshness).toBe('stale');
-    expect(s._warning).toMatch(/STALE DATA/);
+    expect(s._freshness).toBe('unknown');
+    expect(s._warning).toMatch(/no row change in|indistinguishable/);
     // The unknown table is still called out.
     expect(s._warning).toMatch(/`b`/);
     expect(s._stale_hours).toBe(240);
@@ -152,7 +154,7 @@ describe('stampMirrorFreshness — tableMax mode: per-table verdicts', () => {
     expect(s._stale_hours).toBe(2);
   });
 
-  it('exactly-at-threshold table MAX is fresh, past it is stale', () => {
+  it('exactly-at-threshold table MAX is fresh, past it is unknown (quiet-or-frozen)', () => {
     const at = stampMirrorFreshness([], {
       table: 't', now: NOW, tableMax: { t: hoursAgo(STALE_THRESHOLD_HOURS) },
     });
@@ -160,7 +162,7 @@ describe('stampMirrorFreshness — tableMax mode: per-table verdicts', () => {
     const past = stampMirrorFreshness([], {
       table: 't', now: NOW, tableMax: { t: hoursAgo(STALE_THRESHOLD_HOURS + 0.5) },
     });
-    expect(past._freshness).toBe('stale');
+    expect(past._freshness).toBe('unknown');
   });
 
   it('an empty tableMax object degrades to row-level mode (fetchTableMax failure contract)', () => {

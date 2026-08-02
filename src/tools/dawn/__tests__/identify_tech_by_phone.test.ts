@@ -193,15 +193,15 @@ describe('identify_tech_by_phone freshness disclosure (MB-1 / QUA-1141)', () => 
     expect(out._warning).toBeUndefined();
   });
 
-  it('flags a tier-2 hit off a frozen mirror as stale — the row may be an ex-tech', async () => {
+  it('flags a tier-2 hit off a frozen mirror as unknown — the row may be an ex-tech', async () => {
     const env = fakeEnv([
       [],
       [{ tech_id: '222', name: 'AH Tech', business_unit: null, role: 'DummyTech', synced_at: hoursAgo(24 * 30) }],
     ], hoursAgo(24 * 30));
     const out = (await identify_tech_by_phone.handler(env, { phone: '8435365603' }, ctx)) as any;
     expect(out.status).toBe('found');
-    expect(out._freshness).toBe('stale');
-    expect(out._warning).toMatch(/STALE DATA/);
+    expect(out._freshness).toBe('unknown');
+    expect(out._warning).toMatch(/no row change in|indistinguishable/);
   });
 
   it('not_found on a LIVE mirror is an honest "not in the mirror as of the last sync" (F5)', async () => {

@@ -155,8 +155,15 @@ export function stampMirrorFreshness(
     opts.tableMax && Object.keys(opts.tableMax).length > 0 ? Object.entries(opts.tableMax) : null;
   if (tableEntries) {
     const tables: Record<string, TableFreshness> = {};
-    const staleTables: Array<[string, number]> = [];
-    const unknownTables: string[] = [];
+    // Tables whose newest row is over-threshold. NOT called "stale": the
+    // syncs are stamp-on-change, so an old MAX(synced_at) means "no ST row
+    // has changed since then" OR "the sync is frozen" — indistinguishable
+    // from synced_at alone (pb_categories legitimately sits >80h quiet on a
+    // healthy estate). Claiming 'stale' here is exactly the unprovable claim
+    // this module's contract forbids; only a sync-run heartbeat could prove
+    // frozenness, and the mirror does not expose one across the proxy.
+    const quietTables: Array<[string, number]> = [];
+    const emptyTables: string[] = [];
     let worst: number | null = null;
 
     for (const [t, v] of tableEntries) {
@@ -165,40 +172,45 @@ export function stampMirrorFreshness(
         // An empty (or never-synced) table has MAX(synced_at) = NULL — it
         // cannot prove its sync is alive, so it cannot vouch for a zero.
         tables[t] = { stale_hours: null, freshness: 'unknown' };
-        unknownTables.push(t);
+        emptyTables.push(t);
         continue;
       }
       const age = ageHours(now, parsed);
-      const f: Freshness = age > STALE_THRESHOLD_HOURS ? 'stale' : 'fresh';
+      const f: Freshness = age > STALE_THRESHOLD_HOURS ? 'unknown' : 'fresh';
       tables[t] = { stale_hours: age, freshness: f };
-      if (f === 'stale') staleTables.push([t, age]);
+      if (f === 'unknown') quietTables.push([t, age]);
       if (worst === null || age > worst) worst = age;
     }
 
-    // ALL fresh → fresh; ANY stale → stale (a frozen table must never hide
-    // behind a fresh sibling — F2); else → unknown.
+    // ALL fresh → fresh; anything else → unknown. A quiet-or-frozen table
+    // must never hide behind a fresh sibling (F2), and 'stale' is never
+    // emitted from synced_at evidence alone — it is not provable.
     const headline: Freshness =
-      staleTables.length > 0 ? 'stale' : unknownTables.length > 0 ? 'unknown' : 'fresh';
+      quietTables.length === 0 && emptyTables.length === 0 ? 'fresh' : 'unknown';
 
     let warning: string | undefined;
-    if (headline === 'stale') {
-      const named = staleTables
-        .map(([t, age]) => `\`${t}\` (last synced ${age}h ago)`)
-        .join(', ');
+    if (headline === 'unknown') {
+      const parts: string[] = [];
+      if (quietTables.length > 0) {
+        const named = quietTables
+          .map(([t, age]) => `\`${t}\` (no row change in ${age}h)`)
+          .join(', ');
+        parts.push(
+          `no row in ${named} has changed within the ${STALE_THRESHOLD_HOURS}h threshold — ` +
+            `from synced_at alone a quiet mirror and a frozen sync are indistinguishable, so ` +
+            `these results may be current or may be missing recent changes entirely`
+        );
+      }
+      if (emptyTables.length > 0) {
+        parts.push(
+          `${emptyTables.map((t) => `\`${t}\``).join(', ')} returned no MAX(synced_at) — an ` +
+            `empty table cannot prove its sync is alive, and a zero or miss from it is NOT ` +
+            `proof that zero matching records exist`
+        );
+      }
       warning =
-        `STALE DATA: D1 mirror table(s) ${named} are past the ${STALE_THRESHOLD_HOURS}h sync ` +
-        `threshold. These results reflect the mirror, not live ServiceTitan, and may be missing ` +
-        `recent changes entirely.` +
-        (unknownTables.length > 0
-          ? ` Additionally, ${unknownTables.map((t) => `\`${t}\``).join(', ')} returned no ` +
-            `MAX(synced_at) at all and could not prove liveness.`
-          : '');
-    } else if (headline === 'unknown') {
-      warning =
-        `Freshness unknown for \`${table}\`: mirror table(s) ` +
-        `${unknownTables.map((t) => `\`${t}\``).join(', ')} returned no MAX(synced_at) — an ` +
-        `empty table cannot prove its sync is alive. A zero or miss from it is NOT proof that ` +
-        `zero matching records exist; confirm against live ServiceTitan before trusting it.`;
+        `Freshness unknown for \`${table}\`: ${parts.join('; ')}. ` +
+        `Confirm against live ServiceTitan before treating counts as authoritative.`;
     }
     // headline === 'fresh': no warning — even when rows are empty. A live
     // mirror returning zero matching rows is a real zero as of the last
@@ -206,7 +218,9 @@ export function stampMirrorFreshness(
 
     return {
       ...base,
-      _stale_hours: headline === 'unknown' ? null : worst,
+      // Worst observed age is factual and useful even under an 'unknown'
+      // headline (null only when no table produced any timestamp at all).
+      _stale_hours: worst,
       _freshness: headline,
       _tables: tables,
       ...(warning !== undefined ? { _warning: warning } : {}),
@@ -294,16 +308,21 @@ export async function fetchTableMax(
   try {
     if (tables.length === 0) return {};
     if (tables.some((t) => !TABLE_NAME_RE.test(t))) return {};
-    const sql = tables
-      .map((t) => `SELECT '${t}' AS t, MAX(synced_at) AS m FROM ${t}`)
-      .join(' UNION ALL ');
-    const { rows } = await readD1<{ t: string; m: unknown }>(env, sql);
     const out: Record<string, unknown> = {};
     // Pre-seed null so a table the query somehow failed to report reads as
     // 'unknown' downstream instead of silently dropping out of the verdict.
     for (const t of tables) out[t] = null;
-    for (const r of rows ?? []) {
-      if (r && typeof r.t === 'string' && r.t in out) out[r.t] = r.m ?? null;
+    // D1's compound-SELECT ceiling is 5 terms (verified empirically:
+    // a 6-term UNION ALL fails with SQLITE_ERROR) — chunk to stay under it.
+    for (let i = 0; i < tables.length; i += 5) {
+      const chunk = tables.slice(i, i + 5);
+      const sql = chunk
+        .map((t) => `SELECT '${t}' AS t, MAX(synced_at) AS m FROM ${t}`)
+        .join(' UNION ALL ');
+      const { rows } = await readD1<{ t: string; m: unknown }>(env, sql);
+      for (const r of rows ?? []) {
+        if (r && typeof r.t === 'string' && r.t in out) out[r.t] = r.m ?? null;
+      }
     }
     return out;
   } catch {

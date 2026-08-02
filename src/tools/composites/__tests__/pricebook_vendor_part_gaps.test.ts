@@ -224,7 +224,7 @@ describe('pricebook_vendor_part_gaps freshness disclosure (MB-1 / QUA-1141)', ()
     expect(out._warning).toMatch(/not proof/i);
   });
 
-  it('a frozen table is flagged stale by name even when its sibling is fresh (F2)', async () => {
+  it('a frozen table is flagged unknown (quiet-or-frozen) by name even when its sibling is fresh (F2)', async () => {
     wire({
       materialsNoVendor: [{ id: 1, code: 'M1', name: 'Widget', cost: 40, synced_at: hoursAgo(24 * 20) }],
       tableMax: { pb_equipment: hoursAgo(24 * 20) },
@@ -232,9 +232,9 @@ describe('pricebook_vendor_part_gaps freshness disclosure (MB-1 / QUA-1141)', ()
 
     const out: any = await pricebook_vendor_part_gaps.handler(makeEnv(), {}, CTX);
 
-    expect(out._freshness).toBe('stale');
+    expect(out._freshness).toBe('unknown');
     expect(out.summary.metrics_are_authoritative).toBe(false);
-    expect(out._warning).toMatch(/STALE DATA/);
+    expect(out._warning).toMatch(/no row change in|indistinguishable/);
     expect(out._warning).toMatch(/pb_equipment/);
     expect(out._tables.pb_materials.freshness).toBe('fresh');
   });

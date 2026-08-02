@@ -118,7 +118,7 @@ describe('freshness is judged by the TABLE, not the returned rows (F1)', () => {
     expect(r._warning).toBeUndefined();
   });
 
-  it('flags a frozen mirror (table MAX weeks old) as stale and withholds authority', async () => {
+  it('flags a frozen mirror (table MAX weeks old) as unknown and withholds authority', async () => {
     primeMirror(
       [{ opportunity_id: 1, estimate_amount: 0, sold_estimate_amount: 0, synced_at: hoursAgo(24 * 30) }],
       hoursAgo(24 * 30),
@@ -126,9 +126,9 @@ describe('freshness is judged by the TABLE, not the returned rows (F1)', () => {
 
     const r: any = await feed.handler(makeEnv(), {}, CTX);
 
-    expect(r._freshness).toBe('stale');
+    expect(r._freshness).toBe('unknown');
     expect(r.summary.count_is_authoritative).toBe(false);
-    expect(r._warning).toMatch(/STALE DATA/);
+    expect(r._warning).toMatch(/no row change in|indistinguishable/);
     expect(r._warning).toMatch(/opportunities/);
     expect(r._stale_hours).toBeGreaterThan(48);
   });

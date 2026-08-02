@@ -123,12 +123,12 @@ describe('dispatch-pro freshness disclosure (MB-1 / QUA-1141)', () => {
     expect(out._warning).toBeUndefined();
   });
 
-  it('utilization: a frozen mirror (table MAX weeks old) is flagged stale and authority is withheld', async () => {
+  it('utilization: a frozen mirror (table MAX weeks old) is flagged unknown and authority is withheld', async () => {
     const env = envWith(() => ({ success: true, results: [utilizationRow(hoursAgo(24 * 20))] }), hoursAgo(24 * 20));
     const out: any = await dispatch_pro_utilization_list.handler(env, {}, { actor: 'test', correlation: 'c1' });
-    expect(out._freshness).toBe('stale');
+    expect(out._freshness).toBe('unknown');
     expect(out.count_is_authoritative).toBe(false);
-    expect(out._warning).toMatch(/STALE DATA/);
+    expect(out._warning).toMatch(/no row change in|indistinguishable/);
     expect(out._stale_hours).toBeGreaterThan(48);
   });
 

@@ -303,8 +303,8 @@ describe('get_form_submission', () => {
         : { success: true, results: [hitRow] });
     const result: any = await get_form_submission.handler(env, { formSubmissionId: 8479 }, CTX);
     expect(result._source).toBe('d1');
-    expect(result._freshness).toBe('stale');
-    expect(result._warning).toMatch(/STALE DATA/);
+    expect(result._freshness).toBe('unknown');
+    expect(result._warning).toMatch(/no row change in|indistinguishable/);
     expect(result._stale_hours).toBeGreaterThan(48);
   });
 

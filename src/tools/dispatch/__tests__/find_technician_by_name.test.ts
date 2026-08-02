@@ -182,7 +182,7 @@ describe('find_technician_by_name freshness disclosure (MB-1 / QUA-1141)', () =>
     expect(out._warning).toBeUndefined();
   });
 
-  it('flags a hit off a frozen roster mirror as stale (table MAX weeks old)', async () => {
+  it('flags a hit off a frozen roster mirror as unknown (table MAX weeks old)', async () => {
     const env = fakeEnv(
       [
         ROSTER,
@@ -191,8 +191,8 @@ describe('find_technician_by_name freshness disclosure (MB-1 / QUA-1141)', () =>
       hoursAgo(24 * 30),
     );
     const out = (await find_technician_by_name.handler(env, { name: 'Brooks Hunsucker' }, ctx)) as any;
-    expect(out._freshness).toBe('stale');
-    expect(out._warning).toMatch(/STALE DATA/);
+    expect(out._freshness).toBe('unknown');
+    expect(out._warning).toMatch(/no row change in|indistinguishable/);
   });
 
   it('an old ROW on a live roster is not called stale — the table probe decides (F1)', async () => {

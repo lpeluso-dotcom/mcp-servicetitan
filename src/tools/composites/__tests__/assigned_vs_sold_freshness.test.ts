@@ -92,13 +92,13 @@ describe('assigned_vs_sold_estimate_audit freshness disclosure (MB-1 / QUA-1141)
     expect(out._warning).toBeUndefined();
   });
 
-  it('flags a frozen mirror (table MAX weeks old) as stale and withholds authority', async () => {
+  it('flags a frozen mirror (table MAX weeks old) as unknown and withholds authority', async () => {
     primeMirror([clean(hoursAgo(24 * 30)), flagged(hoursAgo(24 * 30))], hoursAgo(24 * 30));
     const out: any = await assigned_vs_sold_estimate_audit.handler({} as any, ARGS, ctx);
     expect(out.summary.flagged).toBe(1);
     expect(out.summary.count_is_authoritative).toBe(false);
-    expect(out._freshness).toBe('stale');
-    expect(out._warning).toMatch(/STALE DATA/);
+    expect(out._freshness).toBe('unknown');
+    expect(out._warning).toMatch(/no row change in|indistinguishable/);
   });
 
   it('keeps synced_at out of the emitted mismatch rows (stamp-only plumbing)', async () => {

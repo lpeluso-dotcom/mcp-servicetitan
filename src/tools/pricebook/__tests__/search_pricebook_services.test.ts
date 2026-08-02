@@ -202,8 +202,8 @@ describe('search_pricebook_services freshness disclosure (MB-1 / QUA-1141)', () 
     ], hoursAgo(24 * 23));
     const out = (await search_pricebook_services.handler(env, { code: 'P1HL22' }, ctx)) as any;
     expect(out._source).toBe('d1-exact');
-    expect(out._freshness).toBe('stale');
-    expect(out._warning).toMatch(/STALE DATA/);
+    expect(out._freshness).toBe('unknown');
+    expect(out._warning).toMatch(/no row change in|indistinguishable/);
   });
 
   it('an old ROW on a live mirror is not called stale — the table probe decides (F1)', async () => {
