@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -23,6 +24,8 @@ interface Row {
   jobs: number;
   drive_minutes: number;
   working_minutes: number;
+  /** MAX(ts.synced_at) for the group — GROUP BY would otherwise hide row age. */
+  synced_at: string | null;
 }
 
 const DEFAULT_BURDEN_RATE = 45;
@@ -62,7 +65,8 @@ export const tech_scorecard: ToolDef<Args> = {
               t.business_unit AS business_unit,
               COUNT(DISTINCT ts.job_id)          AS jobs,
               COALESCE(SUM(ts.drive_minutes), 0)  AS drive_minutes,
-              COALESCE(SUM(ts.working_minutes), 0) AS working_minutes
+              COALESCE(SUM(ts.working_minutes), 0) AS working_minutes,
+              MAX(ts.synced_at) AS synced_at
          FROM job_timesheets ts
          LEFT JOIN technicians t ON t.tech_id = ts.technician_id
         WHERE ${where.join(' AND ')}
@@ -85,12 +89,20 @@ export const tech_scorecard: ToolDef<Args> = {
       };
     });
 
+    // MB-1 / QUA-1141: `job_timesheets` has been frozen since 2026-07-01, so
+    // any recent week returns zero-filled scorecards that look like real
+    // "this tech did nothing" data. Zeroed metrics are the most believable
+    // wrong answer this tool can give — disclose the mirror's age.
+    const freshness = stampMirrorFreshness(rows, { table: 'job_timesheets' });
+
     return {
       window: { weekStart: args.weekStart, weekEnd: args.weekEnd },
       count: techs.length,
+      metrics_are_authoritative: freshness._freshness === 'fresh',
       techs,
       _composite: 'tech_scorecard',
       _source: 'd1',
+      ...freshness,
     };
   },
   transformResult: defaultShaper,

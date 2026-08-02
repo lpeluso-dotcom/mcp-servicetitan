@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { McpError } from '../../errors';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -181,11 +182,17 @@ export const opportunities_list: ToolDef<Args> = {
         technicians: parseJsonArray(r.technicians_json),
         created_by_users: parseJsonArray(r.created_by_users_json),
       }));
+      // MB-1 / QUA-1141: the `opportunities` mirror has been empty in
+      // production, and a raw read reported that as `count: 0` — a confident
+      // "no open opportunities" that was really "we cannot see any".
+      const freshness = stampMirrorFreshness(rows, { table: 'opportunities' });
       return {
         count: opportunities.length,
+        count_is_authoritative: freshness._freshness === 'fresh',
         opportunities,
         has_more: hasMore,
         _source: 'd1',
+        ...freshness,
       };
     } catch (err) {
       throw new McpError(
