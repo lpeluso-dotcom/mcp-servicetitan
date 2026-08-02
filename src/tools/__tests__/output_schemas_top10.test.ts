@@ -185,13 +185,18 @@ describe('outputSchema — lenient fixture validation (top-10 tools)', () => {
 
   // Envelope per search_pricebook_all — two real shapes: 'success' (code or
   // query hit) and 'not_found'. See v12_new_tools.test.ts for real item rows.
+  // Both carry the MB-1 / QUA-1141 freshness stamp on every path.
   it('search_pricebook_all: success envelope (code lookup)', () => {
     expectValid(search_pricebook_all, {
       status: 'success',
       count: 1,
       matched_code: 'FLU-150',
-      items: [{ code: 'FLU-150', name: 'Flush', description: '', category: 'Drain', price: 150, member_price: null, hours: 0.75, type: 'service', calculated_price: 200, pricing: 'dynamic' }],
+      items: [{ code: 'FLU-150', name: 'Flush', description: '', category: 'Drain', price: 150, member_price: null, hours: 0.75, type: 'service', calculated_price: 200, pricing: 'dynamic', synced_at: '2026-07-30T05:00:00Z' }],
       _source: 'd1',
+      _mirror_table: 'pb_services',
+      _stale_hours: 3.2,
+      _freshness: 'fresh',
+      _empty: false,
     });
   });
 
@@ -202,6 +207,11 @@ describe('outputSchema — lenient fixture validation (top-10 tools)', () => {
       count: 0,
       items: [],
       _source: 'd1',
+      _mirror_table: 'pb_services+pb_materials+pb_equipment',
+      _stale_hours: null,
+      _freshness: 'unknown',
+      _empty: true,
+      _warning: '0 rows returned from the taylor-ai D1 mirror table `pb_services+pb_materials+pb_equipment`. This is NOT proof that zero matching records exist.',
     });
   });
 

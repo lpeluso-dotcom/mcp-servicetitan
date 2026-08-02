@@ -152,3 +152,81 @@ describe('pricebook_markup_drift', () => {
     expect(pricebook_markup_drift.annotations?.readOnlyHint).toBe(true);
   });
 });
+
+// ── Mirror-freshness disclosure (MB-1 / QUA-1141) ────────────────────
+// The placeholder query is COUNT(*)-only, which aggregates row age away —
+// it carries MAX(synced_at) alongside the count (the tech_scorecard
+// pattern) so even a rows-empty run can prove the mirror is alive.
+
+const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+
+describe('pricebook_markup_drift freshness disclosure (MB-1 / QUA-1141)', () => {
+  it('all three queries carry synced_at — the COUNT(*) one via MAX(synced_at)', async () => {
+    readD1Mock.mockResolvedValueOnce({ rows: [] });
+    readD1Mock.mockResolvedValueOnce({ rows: [] });
+    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 0, synced_at: null }] });
+
+    await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
+
+    expect(readD1Mock).toHaveBeenCalledTimes(3);
+    for (const [, sql] of readD1Mock.mock.calls) {
+      expect(sql).toContain('synced_at');
+    }
+    const countSql = readD1Mock.mock.calls.map((c) => c[1]).find((s: string) => /COUNT\(\*\)/.test(s));
+    expect(countSql).toMatch(/MAX\(synced_at\)/);
+  });
+
+  it('fresh rows are stamped fresh and summary metrics are authoritative', async () => {
+    readD1Mock.mockResolvedValueOnce({
+      rows: [
+        { id: 1, code: 'M1', name: 'A', category_name: 'Plumbing', cost: 10, price: 20, kind: 'material', synced_at: hoursAgo(2) },
+      ],
+    });
+    readD1Mock.mockResolvedValueOnce({ rows: [] });
+    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 4, synced_at: hoursAgo(2) }] });
+
+    const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
+
+    expect(out._mirror_table).toBe('pb_materials+pb_equipment');
+    expect(out._freshness).toBe('fresh');
+    expect(out.summary.metrics_are_authoritative).toBe(true);
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('a frozen mirror is flagged stale and authority is withheld', async () => {
+    readD1Mock.mockResolvedValueOnce({
+      rows: [
+        { id: 1, code: 'M1', name: 'A', category_name: 'Plumbing', cost: 10, price: 20, kind: 'material', synced_at: hoursAgo(24 * 25) },
+      ],
+    });
+    readD1Mock.mockResolvedValueOnce({ rows: [] });
+    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 4, synced_at: hoursAgo(24 * 25) }] });
+
+    const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
+
+    expect(out._freshness).toBe('stale');
+    expect(out.summary.metrics_are_authoritative).toBe(false);
+    expect(out._warning).toMatch(/STALE DATA/);
+  });
+
+  it('with zero computable rows, MAX(synced_at) on the count row still proves freshness', async () => {
+    readD1Mock.mockResolvedValueOnce({ rows: [] }); // markup rows
+    readD1Mock.mockResolvedValueOnce({ rows: [] }); // equipment cost/no-price
+    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 2074, synced_at: hoursAgo(3) }] });
+
+    const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
+
+    expect(out._freshness).toBe('fresh');
+    expect(out.summary.metrics_are_authoritative).toBe(true);
+  });
+
+  it('marginRisk equipment rows do not leak synced_at — it feeds the stamp, not the payload', async () => {
+    readD1Mock.mockResolvedValueOnce({ rows: [] });
+    readD1Mock.mockResolvedValueOnce({ rows: [{ id: 9, code: 'E9', name: 'Coil', cost: 500, synced_at: hoursAgo(1) }] });
+    readD1Mock.mockResolvedValueOnce({ rows: [{ cnt: 0, synced_at: hoursAgo(1) }] });
+
+    const out: any = await pricebook_markup_drift.handler(makeEnv(), {}, CTX);
+
+    expect(out.marginRisk.equipmentCostNoPrice[0]).not.toHaveProperty('synced_at');
+  });
+});

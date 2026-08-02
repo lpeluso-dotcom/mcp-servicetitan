@@ -79,3 +79,44 @@ describe('search_materials (QUA-267 code param)', () => {
     expect(out._matched_code).toBe('PIP-100');
   });
 });
+
+// ── Mirror-freshness disclosure (MB-1 / QUA-1141) ────────────────────
+// The exact-code path serves a raw pb_materials mirror row; a stale hit
+// used to be served silently. The SELECT must carry synced_at and the
+// response must carry the stamp.
+
+const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+
+describe('search_materials freshness disclosure (MB-1 / QUA-1141)', () => {
+  it('the exact-code SELECT includes synced_at so the row can prove its age', async () => {
+    let capturedSql = '';
+    const fetcher = vi.fn(async (_url: any, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(init.body as string) : {};
+      capturedSql = body.sql ?? '';
+      return new Response(JSON.stringify({ success: true, results: [{ code: 'PRV-075', synced_at: hoursAgo(1) }] }), { status: 200 });
+    });
+    const env = { ST_TENANT_ID: '000000000', ST_PROXY: { fetch: fetcher }, MCP_SYNC_KEY: 'k' } as any;
+    await search_materials.handler(env, { code: 'PRV-075' }, ctx);
+    expect(capturedSql).toContain('synced_at');
+  });
+
+  it('a fresh D1 hit is stamped fresh with no warning', async () => {
+    const env = fakeEnv([
+      { urlContains: '/api/sql/read', body: { success: true, results: [{ code: 'PRV-075', name: 'PRV', synced_at: hoursAgo(2) }] } },
+    ]);
+    const out = (await search_materials.handler(env, { code: 'PRV-075' }, ctx)) as any;
+    expect(out._mirror_table).toBe('pb_materials');
+    expect(out._freshness).toBe('fresh');
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('a stale D1 hit is disclosed, not served silently', async () => {
+    const env = fakeEnv([
+      { urlContains: '/api/sql/read', body: { success: true, results: [{ code: 'PRV-075', name: 'PRV', synced_at: hoursAgo(24 * 23) }] } },
+    ]);
+    const out = (await search_materials.handler(env, { code: 'PRV-075' }, ctx)) as any;
+    expect(out._source).toBe('d1-exact');
+    expect(out._freshness).toBe('stale');
+    expect(out._warning).toMatch(/STALE DATA/);
+  });
+});

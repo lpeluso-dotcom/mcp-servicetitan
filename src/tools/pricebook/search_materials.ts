@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { readST } from '../../st';
 import { codeVariants } from './search_pricebook_all';
 import { queryD1First } from '../../d1-proxy';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
@@ -21,7 +22,7 @@ const TENANT_ID = '000000000';
 const SQL_BY_CODE = `SELECT
   id, code, name, description, category_name, price, member_price, cost,
   active, unit_of_measure, taxable, account, primary_vendor_name,
-  primary_vendor_id, is_inventory
+  primary_vendor_id, is_inventory, synced_at
 FROM pb_materials
 WHERE code = ?
 LIMIT 1`;
@@ -83,7 +84,16 @@ export const search_materials: ToolDef<Args> = {
     if (args.code) {
       const exact = await lookupExactCode(env, args.code, correlation);
       if (exact) {
-        return { materials: [exact], _source: 'd1-exact', _matched_code: args.code };
+        // MB-1 / QUA-1141: this serves a raw pb_materials mirror row — stamp
+        // it so a stale hit is disclosed instead of served silently. (Voice-
+        // facing: the stamp only adds a warning when the row can't prove it's
+        // current.)
+        return {
+          materials: [exact],
+          _source: 'd1-exact',
+          _matched_code: args.code,
+          ...stampMirrorFreshness([exact], { table: 'pb_materials' }),
+        };
       }
     }
 

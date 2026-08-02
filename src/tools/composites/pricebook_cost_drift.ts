@@ -31,6 +31,7 @@ import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
 import { shapePriceRow } from '../../supabase';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -45,6 +46,8 @@ interface CostDriftRow {
   cost: number;
   price: number;
   updated_at: string | null;
+  // Mirror sync time — NOT updated_at (ST's modifiedOn). Feeds the stamp.
+  synced_at: string | null;
   kind: 'material' | 'equipment';
 }
 
@@ -58,11 +61,11 @@ function clampWindowDays(raw: number | undefined): number {
   return Math.min(Math.max(Math.trunc(v), MIN_WINDOW_DAYS), MAX_WINDOW_DAYS);
 }
 
-const SQL = `SELECT id, code, name, category_name, cost, price, updated_at, 'material' AS kind
+const SQL = `SELECT id, code, name, category_name, cost, price, updated_at, synced_at, 'material' AS kind
    FROM pb_materials
    WHERE active = 1 AND cost > 0 AND substr(updated_at, 1, 10) >= date('now', ?)
    UNION ALL
-   SELECT id, code, name, category_name, cost, price, updated_at, 'equipment' AS kind
+   SELECT id, code, name, category_name, cost, price, updated_at, synced_at, 'equipment' AS kind
    FROM pb_equipment
    WHERE active = 1 AND cost > 0 AND substr(updated_at, 1, 10) >= date('now', ?)
    ORDER BY updated_at DESC
@@ -113,12 +116,20 @@ export const pricebook_cost_drift: ToolDef<Args> = {
       }),
     );
 
+    // MB-1 / QUA-1141: synced_at (mirror sync time) drives the stamp —
+    // updated_at is ST's modifiedOn and says nothing about the mirror's age.
+    // An empty window is 'unknown' by design: "nothing changed lately" and
+    // "the mirror is dead" are indistinguishable from zero rows.
+    const freshness = stampMirrorFreshness(rows, { table: 'pb_materials+pb_equipment' });
+
     return {
       window_days: windowDays,
       count: items.length,
+      count_is_authoritative: freshness._freshness === 'fresh',
       items,
       _composite: 'pricebook_cost_drift',
       _source: 'd1',
+      ...freshness,
       _note:
         'updated_at is ST modifiedOn (any-field change), so this surfaces recently-MODIFIED cost-bearing ' +
         'items, not verified cost changes — true old→new cost delta needs a cost-history snapshot (deferred).',

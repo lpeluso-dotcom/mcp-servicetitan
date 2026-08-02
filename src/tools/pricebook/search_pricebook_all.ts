@@ -15,6 +15,7 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
 import { queryD1 as d1ProxyQuery } from '../../d1-proxy';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
@@ -38,30 +39,43 @@ interface PricebookItem {
   // ST's most-recent computed sell price for services (dynamic pricing).
   // NULL for materials/equipment — only pb_services has this column.
   calculated_price: number | null;
+  // Mirror sync timestamp — feeds stampMirrorFreshness (MB-1 / QUA-1141).
+  synced_at: string | null;
 }
 
 const SQL_BY_CODE_SVC =
-  `SELECT code, name, description, category_name as category, price, member_price, hours, calculated_price, 'service' as type
+  `SELECT code, name, description, category_name as category, price, member_price, hours, calculated_price, 'service' as type, synced_at
    FROM pb_services WHERE code = ? LIMIT 1`;
 const SQL_BY_CODE_MAT =
-  `SELECT code, name, description, category_name as category, cost as price, NULL as member_price, NULL as hours, NULL as calculated_price, 'material' as type
+  `SELECT code, name, description, category_name as category, cost as price, NULL as member_price, NULL as hours, NULL as calculated_price, 'material' as type, synced_at
    FROM pb_materials WHERE code = ? LIMIT 1`;
 const SQL_BY_CODE_EQUIP =
-  `SELECT code, name, description, category_name as category, price, member_price, hours, NULL as calculated_price, 'equipment' as type
+  `SELECT code, name, description, category_name as category, price, member_price, hours, NULL as calculated_price, 'equipment' as type, synced_at
    FROM pb_equipment WHERE code = ? LIMIT 1`;
 
 const SQL_BY_NAME_SVC =
-  `SELECT code, name, description, category_name as category, price, member_price, hours, calculated_price, 'service' as type
+  `SELECT code, name, description, category_name as category, price, member_price, hours, calculated_price, 'service' as type, synced_at
    FROM pb_services WHERE active = 1 AND (name LIKE ? OR description LIKE ? OR category_name LIKE ?)
    ORDER BY COALESCE(calculated_price, price) DESC LIMIT 5`;
 const SQL_BY_NAME_MAT =
-  `SELECT code, name, description, category_name as category, cost as price, NULL as member_price, NULL as hours, NULL as calculated_price, 'material' as type
+  `SELECT code, name, description, category_name as category, cost as price, NULL as member_price, NULL as hours, NULL as calculated_price, 'material' as type, synced_at
    FROM pb_materials WHERE active = 1 AND (name LIKE ? OR description LIKE ? OR category_name LIKE ?)
    ORDER BY cost DESC LIMIT 3`;
 const SQL_BY_NAME_EQUIP =
-  `SELECT code, name, description, category_name as category, price, member_price, hours, NULL as calculated_price, 'equipment' as type
+  `SELECT code, name, description, category_name as category, price, member_price, hours, NULL as calculated_price, 'equipment' as type, synced_at
    FROM pb_equipment WHERE active = 1 AND (name LIKE ? OR description LIKE ? OR category_name LIKE ?)
    ORDER BY price DESC LIMIT 3`;
+
+// Code lookups walk the three tables in order — pair each SQL with its
+// table name so the freshness stamp can say which mirror the hit came from.
+const CODE_LOOKUPS: ReadonlyArray<readonly [string, string]> = [
+  [SQL_BY_CODE_SVC, 'pb_services'],
+  [SQL_BY_CODE_MAT, 'pb_materials'],
+  [SQL_BY_CODE_EQUIP, 'pb_equipment'],
+];
+
+// Query-path (and code-miss) reads span all three mirrors at once.
+const ALL_TABLES = 'pb_services+pb_materials+pb_equipment';
 
 /**
  * Generate code variants to try in order. Spoken input like "flu150" resolves
@@ -126,7 +140,10 @@ export const search_pricebook_all: ToolDef<Args> = {
   // only on a code-lookup hit, message only on not_found). `items` rows come
   // from withPricing() over pb_services/pb_materials/pb_equipment — kept
   // permissive (record) so a D1 schema/column change doesn't fail runtime
-  // structuredContent validation.
+  // structuredContent validation. The _mirror_table/_stale_hours/_freshness/
+  // _empty/_warning block is the MB-1 / QUA-1141 freshness stamp — emitted on
+  // every path, so declared here (undeclared fields fail runtime
+  // structuredContent validation — the QUA-1108 trap).
   outputSchema: {
     status: z.string(),
     count: z.number(),
@@ -134,6 +151,11 @@ export const search_pricebook_all: ToolDef<Args> = {
     matched_code: z.string().optional(),
     message: z.string().optional(),
     _source: z.string(),
+    _mirror_table: z.string(),
+    _stale_hours: z.number().nullable(),
+    _freshness: z.string(),
+    _empty: z.boolean(),
+    _warning: z.string().optional(),
   },
   async handler(env, args, { correlation }) {
     const code = args.code?.trim();
@@ -157,7 +179,7 @@ export const search_pricebook_all: ToolDef<Args> = {
       if (code) {
         const variants = codeVariants(code);
         for (const variant of variants) {
-          for (const sql of [SQL_BY_CODE_SVC, SQL_BY_CODE_MAT, SQL_BY_CODE_EQUIP]) {
+          for (const [sql, table] of CODE_LOOKUPS) {
             const rows = await queryD1(env, sql, [variant], correlation);
             if (rows.length > 0) {
               return {
@@ -166,11 +188,22 @@ export const search_pricebook_all: ToolDef<Args> = {
                 matched_code: variant,
                 items: rows.map(withPricing),
                 _source: 'd1',
+                // MB-1 / QUA-1141: raw mirror row — disclose its age.
+                ...stampMirrorFreshness(rows, { table }),
               };
             }
           }
         }
-        return { status: 'not_found', message: `No pricebook item with code "${code}" (also tried ${variants.slice(1).join(', ')}).`, count: 0, items: [], _source: 'd1' };
+        // MB-1 / QUA-1141: a miss is a claim about the MIRROR, not ServiceTitan
+        // — the empty stamp says so instead of a silent not_found.
+        return {
+          status: 'not_found',
+          message: `No pricebook item with code "${code}" (also tried ${variants.slice(1).join(', ')}).`,
+          count: 0,
+          items: [],
+          _source: 'd1',
+          ...stampMirrorFreshness([], { table: ALL_TABLES }),
+        };
       }
 
       // Query path — fuzzy search across all 3 tables, merge + rank by price desc, top 8
@@ -181,16 +214,22 @@ export const search_pricebook_all: ToolDef<Args> = {
         queryD1(env, SQL_BY_NAME_EQUIP, [q, q, q], correlation),
       ]);
 
-      const merged = [...services, ...materials, ...equipment]
+      const all = [...services, ...materials, ...equipment];
+      const merged = all
         .map(withPricing)
         .sort((a, b) => ((b.calculated_price ?? b.price) || 0) - ((a.calculated_price ?? a.price) || 0))
         .slice(0, 8);
 
+      // MB-1 / QUA-1141: stamp over everything fetched (pre-cap) — the newest
+      // synced_at across all three mirrors dates the answer; an all-empty
+      // fan-out is flagged, never served as a silent not_found.
+      const freshness = stampMirrorFreshness(all, { table: ALL_TABLES });
+
       if (merged.length === 0) {
-        return { status: 'not_found', message: `Nothing found for "${query}". Try a different term.`, count: 0, items: [], _source: 'd1' };
+        return { status: 'not_found', message: `Nothing found for "${query}". Try a different term.`, count: 0, items: [], _source: 'd1', ...freshness };
       }
 
-      return { status: 'success', count: merged.length, items: merged, _source: 'd1' };
+      return { status: 'success', count: merged.length, items: merged, _source: 'd1', ...freshness };
     } catch (err) {
       throw new McpError('upstream_error', `search_pricebook_all failed: ${(err as Error).message}`, { correlation });
     }

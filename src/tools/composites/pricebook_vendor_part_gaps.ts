@@ -28,6 +28,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -39,6 +40,8 @@ interface NoVendorLinkRow {
   code: string | null;
   name: string | null;
   cost: number;
+  // Feeds the freshness stamp only — stripped from the output gap rows.
+  synced_at: string | null;
 }
 
 interface VendorJsonRow {
@@ -49,6 +52,7 @@ interface VendorJsonRow {
   primary_vendor_id: number | null;
   primary_vendor_name: string | null;
   vendors_json: string | null;
+  synced_at: string | null;
 }
 
 interface VendorEntry {
@@ -81,15 +85,15 @@ interface NoPartNumberOut {
 
 const EXAMPLE_CAP = 100;
 
-const MATERIALS_NO_VENDOR_SQL = `SELECT id, code, name, cost
+const MATERIALS_NO_VENDOR_SQL = `SELECT id, code, name, cost, synced_at
    FROM pb_materials
    WHERE active = 1 AND cost > 0 AND (primary_vendor_id IS NULL OR primary_vendor_id = 0)`;
 
-const EQUIPMENT_NO_VENDOR_SQL = `SELECT id, code, name, cost
+const EQUIPMENT_NO_VENDOR_SQL = `SELECT id, code, name, cost, synced_at
    FROM pb_equipment
    WHERE active = 1 AND cost > 0 AND (primary_vendor_name IS NULL OR trim(primary_vendor_name) = '')`;
 
-const VENDORED_MATERIALS_SQL = `SELECT id, code, name, cost, primary_vendor_id, primary_vendor_name, vendors_json
+const VENDORED_MATERIALS_SQL = `SELECT id, code, name, cost, primary_vendor_id, primary_vendor_name, vendors_json, synced_at
    FROM pb_materials
    WHERE active = 1 AND cost > 0 AND primary_vendor_id > 0`;
 
@@ -133,15 +137,17 @@ export const pricebook_vendor_part_gaps: ToolDef<Args> = {
       readD1<NoVendorLinkRow>(env, EQUIPMENT_NO_VENDOR_SQL, []),
     ]);
 
+    // synced_at feeds the stamp below; keep it out of the emitted gap rows.
     const noVendorLink: NoVendorLinkOut[] = [
-      ...materialsNoVendor.rows.map((r) => ({ ...r, kind: 'material' as const, gap_type: 'no_vendor_link' as const })),
-      ...equipmentNoVendor.rows.map((r) => ({ ...r, kind: 'equipment' as const, gap_type: 'no_vendor_link' as const })),
+      ...materialsNoVendor.rows.map(({ synced_at: _, ...r }) => ({ ...r, kind: 'material' as const, gap_type: 'no_vendor_link' as const })),
+      ...equipmentNoVendor.rows.map(({ synced_at: _, ...r }) => ({ ...r, kind: 'equipment' as const, gap_type: 'no_vendor_link' as const })),
     ].sort((a, b) => b.cost - a.cost);
 
     let noPartNumber: NoPartNumberOut[] = [];
+    let vendoredMaterials: VendorJsonRow[] = [];
 
     if (includeMissingPartNumber) {
-      const { rows: vendoredMaterials } = await readD1<VendorJsonRow>(env, VENDORED_MATERIALS_SQL, []);
+      ({ rows: vendoredMaterials } = await readD1<VendorJsonRow>(env, VENDORED_MATERIALS_SQL, []));
       for (const m of vendoredMaterials) {
         const vendors = parseVendors(m.vendors_json);
         const primary = vendors.find((v) => v.vendorId === m.primary_vendor_id) ?? vendors[0];
@@ -161,11 +167,21 @@ export const pricebook_vendor_part_gaps: ToolDef<Args> = {
       noPartNumber = noPartNumber.sort((a, b) => b.cost - a.cost);
     }
 
+    // MB-1 / QUA-1141: one stamp across every row read from both tables —
+    // "zero gaps" from an empty or frozen mirror must not read as a clean
+    // audit. An all-empty read is 'unknown' by design: this tool only ever
+    // SELECTs gap rows, so emptiness alone can't prove the mirror is alive.
+    const freshness = stampMirrorFreshness(
+      [...materialsNoVendor.rows, ...equipmentNoVendor.rows, ...vendoredMaterials],
+      { table: 'pb_materials+pb_equipment' },
+    );
+
     return {
       filters: { includeMissingPartNumber },
       summary: {
         no_vendor_link_count: noVendorLink.length,
         no_part_number_count: includeMissingPartNumber ? noPartNumber.length : null,
+        metrics_are_authoritative: freshness._freshness === 'fresh',
       },
       gaps: {
         no_vendor_link: noVendorLink.slice(0, EXAMPLE_CAP),
@@ -173,6 +189,7 @@ export const pricebook_vendor_part_gaps: ToolDef<Args> = {
       },
       _composite: 'pricebook_vendor_part_gaps',
       _source: 'd1',
+      ...freshness,
       _note:
         'vendor_part_xref is empty in D1, so this detects INTRINSIC ServiceTitan gaps (null primary_vendor_id ' +
         '/ null vendorPart on the linked vendor), not a cross-reference against an external vendor catalog.',

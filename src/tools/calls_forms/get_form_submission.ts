@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
 import { readD1 } from '../../d1';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import { readSTPaged } from '../../st';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
@@ -54,7 +55,11 @@ export const get_form_submission: ToolDef<Args> = {
       [args.formSubmissionId],
     );
     if (rows.length > 0) {
-      return { submission: rows[0], _source: 'd1' };
+      // MB-1 / QUA-1141: a D1 hit used to be served with no freshness signal
+      // — a stale `form_submissions` row looked identical to a current one.
+      // The miss paths below already fall back live / throw, so only the hit
+      // needs the stamp.
+      return { submission: rows[0], _source: 'd1', ...stampMirrorFreshness(rows, { table: 'form_submissions' }) };
     }
 
     if (args.formId === undefined) {

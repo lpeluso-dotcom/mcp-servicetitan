@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { McpError } from '../../errors';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -81,11 +82,17 @@ export const dispatch_pro_utilization_list: ToolDef<Args> = {
       const { rows } = await readD1<Row>(env, sql, [...params, pageSize + 1, offset]);
       const hasMore = rows.length > pageSize;
       const slice = hasMore ? rows.slice(0, pageSize) : rows;
+      // MB-1 / QUA-1141: raw mirror read — disclose the mirror's age so a
+      // frozen or empty `dispatch_pro_utilization` can't pass as current
+      // truth (the sync cron for this table is not yet wired — see above).
+      const freshness = stampMirrorFreshness(rows, { table: 'dispatch_pro_utilization' });
       return {
         count: slice.length,
+        count_is_authoritative: freshness._freshness === 'fresh',
         rows: slice,
         has_more: hasMore,
         _source: 'd1',
+        ...freshness,
       };
     } catch (err) {
       throw new McpError(

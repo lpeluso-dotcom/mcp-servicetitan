@@ -139,3 +139,69 @@ describe('pricebook_vendor_part_gaps', () => {
     expect(pricebook_vendor_part_gaps.annotations?.readOnlyHint).toBe(true);
   });
 });
+
+// ── Mirror-freshness disclosure (MB-1 / QUA-1141) ────────────────────
+// "Zero gaps" from an empty or frozen mirror is the most believable wrong
+// answer this audit can give — the stamp (one, spanning both tables) must
+// say whether the rows could prove their age.
+
+const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+
+describe('pricebook_vendor_part_gaps freshness disclosure (MB-1 / QUA-1141)', () => {
+  it('every gap SELECT carries synced_at so the rows can prove their age', async () => {
+    readD1Mock.mockResolvedValue({ rows: [] });
+
+    await pricebook_vendor_part_gaps.handler(makeEnv(), {}, CTX);
+
+    for (const [, sql] of readD1Mock.mock.calls) {
+      expect(sql).toContain('synced_at');
+    }
+  });
+
+  it('stamps ONCE across both tables and marks fresh rows authoritative', async () => {
+    readD1Mock.mockResolvedValueOnce({ rows: [{ id: 1, code: 'M1', name: 'Widget', cost: 40, synced_at: hoursAgo(2) }] });
+    readD1Mock.mockResolvedValueOnce({ rows: [] });
+    readD1Mock.mockResolvedValueOnce({ rows: [] });
+
+    const out: any = await pricebook_vendor_part_gaps.handler(makeEnv(), {}, CTX);
+
+    expect(out._mirror_table).toBe('pb_materials+pb_equipment');
+    expect(out._freshness).toBe('fresh');
+    expect(out.summary.metrics_are_authoritative).toBe(true);
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('an all-empty read is flagged unknown — zero gaps is not proof of zero gaps', async () => {
+    readD1Mock.mockResolvedValue({ rows: [] });
+
+    const out: any = await pricebook_vendor_part_gaps.handler(makeEnv(), {}, CTX);
+
+    expect(out.summary.no_vendor_link_count).toBe(0);
+    expect(out.summary.metrics_are_authoritative).toBe(false);
+    expect(out._freshness).toBe('unknown');
+    expect(out._empty).toBe(true);
+    expect(out._warning).toMatch(/not proof/i);
+  });
+
+  it('a frozen mirror is flagged stale and authority is withheld', async () => {
+    readD1Mock.mockResolvedValueOnce({ rows: [{ id: 1, code: 'M1', name: 'Widget', cost: 40, synced_at: hoursAgo(24 * 20) }] });
+    readD1Mock.mockResolvedValueOnce({ rows: [] });
+    readD1Mock.mockResolvedValueOnce({ rows: [] });
+
+    const out: any = await pricebook_vendor_part_gaps.handler(makeEnv(), {}, CTX);
+
+    expect(out._freshness).toBe('stale');
+    expect(out.summary.metrics_are_authoritative).toBe(false);
+    expect(out._warning).toMatch(/STALE DATA/);
+  });
+
+  it('gap rows do not leak synced_at — it feeds the stamp, not the payload', async () => {
+    readD1Mock.mockResolvedValueOnce({ rows: [{ id: 1, code: 'M1', name: 'Widget', cost: 40, synced_at: hoursAgo(1) }] });
+    readD1Mock.mockResolvedValueOnce({ rows: [] });
+    readD1Mock.mockResolvedValueOnce({ rows: [] });
+
+    const out: any = await pricebook_vendor_part_gaps.handler(makeEnv(), {}, CTX);
+
+    expect(out.gaps.no_vendor_link[0]).not.toHaveProperty('synced_at');
+  });
+});

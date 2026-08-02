@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { readST } from '../../st';
 import { codeVariants } from './search_pricebook_all';
 import { queryD1First } from '../../d1-proxy';
+import { stampMirrorFreshness } from '../../mirror-freshness';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
@@ -23,7 +24,7 @@ const TENANT_ID = '000000000';
 const SQL_BY_CODE = `SELECT
   id, code, name, description, category_name, price, member_price, hours,
   is_labor, material_cost, active, cost, use_static_prices, calculated_price,
-  addon_price, addon_member_price, taxable, account
+  addon_price, addon_member_price, taxable, account, synced_at
 FROM pb_services
 WHERE code = ?
 LIMIT 1`;
@@ -86,7 +87,16 @@ export const search_pricebook_services: ToolDef<Args> = {
     if (args.code) {
       const exact = await lookupExactCode(env, args.code, correlation);
       if (exact) {
-        return { services: [exact], _source: 'd1-exact', _matched_code: args.code };
+        // MB-1 / QUA-1141: this serves a raw pb_services mirror row — stamp
+        // it so a stale hit is disclosed instead of served silently. (Voice-
+        // facing: the stamp only adds a warning when the row can't prove it's
+        // current.)
+        return {
+          services: [exact],
+          _source: 'd1-exact',
+          _matched_code: args.code,
+          ...stampMirrorFreshness([exact], { table: 'pb_services' }),
+        };
       }
       // No D1 row — fall through to live ST with the code as a fuzzy name token.
     }

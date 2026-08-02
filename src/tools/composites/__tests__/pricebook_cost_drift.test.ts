@@ -152,3 +152,59 @@ describe('pricebook_cost_drift', () => {
     expect(pricebook_cost_drift.annotations?.readOnlyHint).toBe(true);
   });
 });
+
+// ── Mirror-freshness disclosure (MB-1 / QUA-1141) ────────────────────
+// updated_at is ST's modifiedOn (an ST-side fact); synced_at is the mirror's
+// own sync time. They must never be conflated: a row modified yesterday in ST
+// but synced a month ago is STALE.
+
+const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+
+describe('pricebook_cost_drift freshness disclosure (MB-1 / QUA-1141)', () => {
+  it('BOTH union arms SELECT synced_at so either table can prove its age', async () => {
+    readD1Mock.mockResolvedValueOnce({ rows: [] });
+
+    await pricebook_cost_drift.handler(makeEnv(), {}, CTX);
+
+    const [, sql] = readD1Mock.mock.calls[0];
+    expect((sql.match(/synced_at/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('fresh rows are stamped fresh and the count is authoritative', async () => {
+    readD1Mock.mockResolvedValueOnce({
+      rows: [{ id: 10, code: 'M1', name: 'Copper Fitting', category_name: 'Plumbing', cost: 12.5, price: 20, updated_at: hoursAgo(5), synced_at: hoursAgo(3), kind: 'material' }],
+    });
+
+    const out: any = await pricebook_cost_drift.handler(makeEnv(), {}, CTX);
+
+    expect(out._mirror_table).toBe('pb_materials+pb_equipment');
+    expect(out._freshness).toBe('fresh');
+    expect(out.count_is_authoritative).toBe(true);
+    expect(out._warning).toBeUndefined();
+  });
+
+  it('does NOT conflate updated_at with synced_at: a recently-modified row from a frozen mirror is STALE', async () => {
+    readD1Mock.mockResolvedValueOnce({
+      rows: [{ id: 10, code: 'M1', name: 'Copper Fitting', category_name: 'Plumbing', cost: 12.5, price: 20, updated_at: hoursAgo(2), synced_at: hoursAgo(24 * 30), kind: 'material' }],
+    });
+
+    const out: any = await pricebook_cost_drift.handler(makeEnv(), {}, CTX);
+
+    expect(out._freshness).toBe('stale');
+    expect(out.count_is_authoritative).toBe(false);
+    expect(out._warning).toMatch(/STALE DATA/);
+    expect(out._stale_hours).toBeGreaterThan(48);
+  });
+
+  it('an empty window is flagged unknown — "nothing changed" and "mirror dead" are indistinguishable', async () => {
+    readD1Mock.mockResolvedValueOnce({ rows: [] });
+
+    const out: any = await pricebook_cost_drift.handler(makeEnv(), {}, CTX);
+
+    expect(out.count).toBe(0);
+    expect(out.count_is_authoritative).toBe(false);
+    expect(out._freshness).toBe('unknown');
+    expect(out._empty).toBe(true);
+    expect(out._warning).toMatch(/not proof/i);
+  });
+});
