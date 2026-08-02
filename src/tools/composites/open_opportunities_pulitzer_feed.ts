@@ -79,7 +79,8 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
     'most-recent linked estimate and the customer. Same shape Pulitzer’s `open-opportunities` daily ' +
     'report ships, exposed for other MCP callers. Sorted by follow_up_date ASC so overdue rows lead. ' +
     'summary.count is the FULL cohort size and may exceed the rows returned (see _truncated); summary totals ' +
-    'always cover the whole cohort, not just the returned page. Source: D1 opportunities + estimates.',
+    'always cover the whole cohort, not just the returned page. Source: D1 opportunities + estimates. ' +
+    'Result cap `limit`, default 100, max 500.',
   stEndpoint: { method: 'GET', path: 'd1://opportunities+estimates+customers', source: 'd1' },
   zodSchema: {
     businessUnit: z.string().optional().describe('Filter to one business unit.'),

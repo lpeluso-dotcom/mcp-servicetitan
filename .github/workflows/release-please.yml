@@ -1,0 +1,64 @@
+name: release-please
+
+# release-please automates version bumps + CHANGELOG generation from
+# conventional commits (feat:, fix:, chore:, etc. — see
+# https://www.conventionalcommits.org/) landed on main.
+#
+# (a) On every push to main, this workflow opens/updates a single
+#     aggregating PR titled "chore(main): release X.Y.Z" that bumps
+#     package.json's version and prepends the computed CHANGELOG section.
+#     Merging that PR is what actually cuts the release: release-please
+#     tags the commit and (in manifest mode, as configured here) updates
+#     .release-please-manifest.json to the new version. No new tag or
+#     release is created until that PR is merged — pushes to main just
+#     keep the pending release PR in sync with new conventional commits.
+#
+# (b) Two repo-admin toggles are REQUIRED for this to work and are
+#     Luke's to set in the GitHub UI — they cannot be done from code:
+#       1. Settings -> Actions -> General -> Workflow permissions
+#          = "Read and write permissions"
+#       2. Settings -> Actions -> General -> same page
+#          = check "Allow GitHub Actions to create and approve pull requests"
+#     Without both, the action can't push the release PR or the release
+#     tag/commit back to the repo.
+#
+# (c) This uses the default GITHUB_TOKEN — no PAT/App token needed for
+#     basic operation once (b) is set. One known side effect of using the
+#     default token: commits/tags authored by GITHUB_TOKEN do NOT
+#     re-trigger other workflows (GitHub's loop-prevention). That's fine
+#     here — deploy.yml is `workflow_dispatch`-only (manual), so nothing
+#     downstream depends on the release tag push to auto-fire.
+#
+# config-file / manifest-file: this repo uses release-please's manifest
+# mode (single package at "."). The manifest is seeded to 1.7.0 (the
+# version already shipped) so release-please computes the next bump from
+# there instead of proposing a release from 0.0.0.
+#
+# (d) First-run nuance: because the manifest is seeded to 1.7.0 but no
+#     matching v1.7.0 git tag exists yet, release-please has no tagged
+#     ancestor to diff from — the FIRST release PR it opens may walk the
+#     entire commit history and generate a large catch-up CHANGELOG
+#     instead of just the commits since 1.7.0 shipped. The one-time fix
+#     is to either create a `v1.7.0` git tag on the commit that shipped
+#     that version, or pass `bootstrap-sha` (pointing at that commit) to
+#     the action so it knows where 1.7.0's history starts. Luke's call
+#     on which; not required for the workflow to run, only for a clean
+#     first CHANGELOG.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

@@ -22,7 +22,7 @@ interface Args {
 export const st_list_customers: ToolDef<Args> = {
   name: 'st_list_customers',
   description:
-    'List ServiceTitan customers with optional pagination and modified-after filter. Read-only. Cached 5 min. Calls servicetitan-proxy /api/st/read which handles ST OAuth.',
+    'List ServiceTitan customers with optional pagination and modified-after filter. Read-only. Cached 5 min. Source: live ST via servicetitan-proxy /api/st/read (handles ST OAuth). Default page size 50, max 200.',
   zodSchema: {
     page: z.number().int().positive().optional().describe('Page number, default 1'),
     pageSize: z.number().int().positive().max(200).optional().describe('Page size, default 50, max 200'),

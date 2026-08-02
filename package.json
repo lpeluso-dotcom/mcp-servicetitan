@@ -1,6 +1,7 @@
 {
   "name": "mcp-servicetitan",
   "version": "1.7.0",
+
   "description": "ServiceTitan MCP server for QSC — Streamable HTTP via the Cloudflare Agents SDK. D1-first reads through the taylor-ai proxy with live-ST fallback; two-phase dryRun→HMAC-confirm writes; role gating (admin/default/readonly/lockdown); D1 audit log + Analytics Engine telemetry; response shaper; ST webhook ingest. Tool inventory and version: GET /health (toolCount) and /admin/endpoints — counts are not maintained in this field.",
   "license": "MIT",
   "private": true,
@@ -14,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "preflight": "bash scripts/preflight.sh",
-    "preflight:dev": "bash scripts/preflight.sh --env dev"
+    "preflight:dev": "bash scripts/preflight.sh --env dev",
+    "eval:tools": "tsx scripts/evals/tool-selection.ts"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.8.1",
@@ -26,6 +28,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260713.1",
+    "tsx": "^4.23.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
     "wrangler": "^4.110.0"

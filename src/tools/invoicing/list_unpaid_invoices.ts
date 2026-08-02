@@ -31,7 +31,8 @@ export const list_unpaid_invoices: ToolDef<Args> = {
     'List invoices with an outstanding balance (unpaid or partially paid). Source: live ST (accounting invoices, ' +
     'filtered client-side to balance ≠ 0; cached 120s). ST ignores its own balance filter, so pages are drained and ' +
     'windowed locally. Check `_scan_complete`: when false the scan hit its page budget and the result is NOT ' +
-    'exhaustive — an empty list then means "stopped looking", not "nothing outstanding".',
+    'exhaustive — an empty list then means "stopped looking", not "nothing outstanding". ' +
+    'Default page size 50, max 200.',
   zodSchema: {
     businessUnitId: z.number().int().positive().optional().describe('Filter by business unit ID'),
     customerId: z.number().int().positive().optional().describe('Filter by customer ID'),

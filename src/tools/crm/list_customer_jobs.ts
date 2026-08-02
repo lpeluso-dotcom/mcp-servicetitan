@@ -7,7 +7,7 @@ interface Args { customerId: number; status?: string; page?: number; pageSize?: 
 
 export const list_customer_jobs: ToolDef<Args> = {
   name: 'list_customer_jobs',
-  description: 'List jobs for a customer. Source: live ST (auto-falls-back to live if D1 stale >48h).',
+  description: 'List jobs for a customer. Source: live ST. Optional page/pageSize, max pageSize 200; ST default page size applies when omitted.',
   zodSchema: {
     customerId: z.number().int().positive().describe('ST customer ID'),
     status: z.string().optional().describe('Filter by job status (e.g. "Completed", "InProgress")'),

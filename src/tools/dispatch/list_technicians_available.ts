@@ -15,7 +15,7 @@ interface Args {
 
 export const list_technicians_available: ToolDef<Args> = {
   name: 'list_technicians_available',
-  description: 'List the active technician roster from ST Settings, optionally resolving a business-unit name. NOTE: ST has no dispatch "available technicians by date" operation, so this returns the active roster; the `date` arg does NOT filter by availability and business-unit filtering is not supported by the roster endpoint (both surface as _warnings). Source: live ST (settings/technicians).',
+  description: 'List the active technician roster from ST Settings, optionally resolving a business-unit name. NOTE: ST has no dispatch "available technicians by date" operation, so this returns the active roster; the `date` arg does NOT filter by availability and business-unit filtering is not supported by the roster endpoint (both surface as _warnings). Source: live ST (settings/technicians). Default page size 50, max 200.',
   stEndpoint: { method: 'GET', path: '/settings/v2/tenant/{tid}/technicians', source: 'live' },
   zodSchema: {
     date: z.string().optional().describe('Date to check availability (YYYY-MM-DD, default: today)'),

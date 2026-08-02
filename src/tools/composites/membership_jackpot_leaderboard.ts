@@ -11,7 +11,7 @@ const REVEAL_DATE = new Date('2026-07-04T00:00:00Z');
 
 export const membership_jackpot_leaderboard: ToolDef<Args> = {
   name: 'membership_jackpot_leaderboard',
-  description: 'L5 composite: membership sales leaderboard for the Jackpot Drive. Employee names anonymized until 2026-07-04 per Jackpot Drive rules — only rank and count are shown before that date. 30 min memo. Source: D1 (memberships nightly-synced).',
+  description: 'L5 composite: membership sales leaderboard for the Jackpot Drive. Employee names anonymized until 2026-07-04 per Jackpot Drive rules — only rank and count are shown before that date. Source: live ST (memberships). Returns up to `limit` top performers, default 10, max 50.',
   zodSchema: {
     limit: z.number().int().positive().max(50).default(10).describe('Number of top performers to return (default: 10, max: 50)'),
   },

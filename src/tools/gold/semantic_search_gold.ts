@@ -190,7 +190,7 @@ export const semantic_search_gold: ToolDef<Args> = {
     'locations, trucks, memberships). Embeds the query and returns the closest content chunks ranked by cosine ' +
     'similarity. Cross-entity by default — narrow with entity_key and/or trade. Free-text results are scrubbed of ' +
     'phone numbers, email addresses, street addresses and premises-access details before return; `_redacted_matches` ' +
-    'reports how many were altered.',
+    'reports how many were altered. Source: derived embeddings over Supabase gold (Woz).',
   zodSchema: {
     query: z.string().min(1).max(500).describe('Natural-language search query'),
     entity_key: z.enum(ENTITY_KEYS).optional().describe(

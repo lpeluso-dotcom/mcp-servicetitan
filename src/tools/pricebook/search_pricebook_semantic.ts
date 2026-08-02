@@ -18,7 +18,8 @@ export const search_pricebook_semantic: ToolDef<Args> = {
     'Semantic/hybrid search over the QSC pricebook — services, materials, equipment, fees. ' +
     'Use for natural-language descriptions ("replace capacitor on heat pump") or codes ("CAP-240"). ' +
     'Returns matches ranked by a fusion of exact-code, lexical, and vector similarity, with match_kind. ' +
-    'Note: price may be null — QSC uses dynamic pricing computed at invoice time; never treat null as free.',
+    'Note: price may be null — QSC uses dynamic pricing computed at invoice time; never treat null as free. ' +
+    'Returns up to topK matches (default 10, max 20).',
   zodSchema: {
     query: z.string().min(1).max(500).describe('Natural-language description or a pricebook code'),
     topK: z.number().int().min(1).max(20).default(10).optional().describe('Max results (default 10, max 20)'),

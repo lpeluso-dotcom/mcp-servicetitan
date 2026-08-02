@@ -27,9 +27,10 @@ interface Args {
 export const st_list_jobs: ToolDef<Args> = {
   name: 'st_list_jobs',
   description:
-    'List ServiceTitan jobs. Read-only. NOT cached (jobs change frequently). ' +
+    'List ServiceTitan jobs. Read-only. NOT cached (jobs change frequently). Source: live ST. ' +
     'ST-77: each row includes `isAutoDispatched` (boolean) and `projectId`. ' +
-    'Note: the Jobs API does NOT include the scheduled date — use st_list_appointments with start filter instead.',
+    'Note: the Jobs API does NOT include the scheduled date — use st_list_appointments with start filter instead. ' +
+    'Default page size 50, max 200.',
   zodSchema: {
     page: z.number().int().positive().optional().describe('Page number, default 1'),
     pageSize: z.number().int().positive().max(200).optional().describe('Page size, default 50, max 200'),

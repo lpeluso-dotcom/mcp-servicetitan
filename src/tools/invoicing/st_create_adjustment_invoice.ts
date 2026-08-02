@@ -227,7 +227,7 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
     'write the tool RE-READS the created invoice and asserts the items and the total actually landed (silent_noop / ' +
     'amount_mismatch / verify_unavailable, always naming the created invoice id) — HTTP 200 is not proof. Adjustment ' +
     'invoices are NOT deletable via the API; a mistake has to be corrected in the ServiceTitan UI, so review the dryRun ' +
-    'preview carefully before confirming.',
+    'preview carefully before confirming. Source: live ST.',
   isWrite: true,
   stEndpoint: { method: 'POST', path: '/accounting/v2/tenant/{tid}/invoices', source: 'live' },
   zodSchema: {

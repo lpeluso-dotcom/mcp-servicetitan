@@ -27,7 +27,7 @@ const VALID_ASSET_TYPES = new Set(['services', 'materials', 'equipment']);
 export const st_get_pricebook: ToolDef<Args> = {
   name: 'st_get_pricebook',
   description:
-    'List ServiceTitan pricebook items by asset type (services, materials, or equipment). Read-only. Cached 10 min. The primary source for pricebook data is the pb_services / pb_materials / pb_equipment D1 tables synced nightly — use this tool for live-state verification.',
+    'List ServiceTitan pricebook items by asset type (services, materials, or equipment). Read-only. Cached 10 min. The primary source for pricebook data is the pb_services / pb_materials / pb_equipment D1 tables synced nightly — use this tool for live-state verification. Default page size 50, max 200.',
   stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/{assetType}', source: 'live' },
   zodSchema: {
     assetType: z

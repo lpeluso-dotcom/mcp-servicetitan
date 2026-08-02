@@ -36,7 +36,8 @@ export const st_create_service: ToolDef<Args> = {
     'Create a new ServiceTitan pricebook service. ' +
     'dryRun=true (default) validates and returns a confirmation_token — call again with dryRun=false + token to write. ' +
     'QSC default is dynamic pricing — do NOT set price/memberPrice unless useStaticPrices=true. ' +
-    'Use useStaticPrices: true at create time if this service needs static pricing — that flag cannot be flipped via PATCH post-create (UI-only).',
+    'Use useStaticPrices: true at create time if this service needs static pricing — that flag cannot be flipped via PATCH post-create (UI-only). ' +
+    'Source: live ST.',
   isWrite: true,
   stEndpoint: { method: 'POST', path: '/pricebook/v2/tenant/{tid}/services', source: 'live' },
   zodSchema: {

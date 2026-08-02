@@ -38,7 +38,7 @@ export const dispatch_pro_alerts_list: ToolDef<Args> = {
   description:
     'Dispatch Pro alert rows from the ST native report (id 80769010) — one row per alert event ' +
     '(scheduling conflicts, late arrivals, reassignment requests, etc.) with the linked job, business unit, type, ' +
-    'and DP status. Source: D1 `dispatch_pro_alerts`.',
+    'and DP status. Source: D1 `dispatch_pro_alerts`. Default page size 100, max 500.',
   zodSchema: {
     alertCreatedOnOrAfter: z
       .string()

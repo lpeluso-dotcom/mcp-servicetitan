@@ -74,7 +74,8 @@ export const list_jobs_today: ToolDef<Args> = {
   description:
     "List ST jobs scheduled for TODAY (America/New_York). The ST Jobs API has NO scheduled-date field, " +
     "so this lists today's APPOINTMENTS (by start, in ET) and batch-fetches their parent jobs. " +
-    'v1.5 accepts businessUnitName / technicianName as alternatives to numeric IDs. Source: live ST.',
+    'v1.5 accepts businessUnitName / technicianName as alternatives to numeric IDs. Source: live ST. ' +
+    'page/pageSize args are deprecated and ignored — pagination is automatic (internal appointment drain, up to 20 pages of 200).',
   zodSchema: {
     status: z.string().optional().describe('Filter by job status (e.g. "Scheduled", "InProgress")'),
     businessUnitId: z.number().int().positive().optional().describe('Filter by business unit ID'),

@@ -16,7 +16,7 @@ export const find_packages_with_item: ToolDef<Args> = {
   description:
     'Reverse lookup for a pricebook item: returns the estimate templates/proposals that include it ' +
     'and the services whose breakout contains it. Pass the item `code`; add `itemType` to disambiguate ' +
-    '(codes are not unique across services/materials/equipment).',
+    '(codes are not unique across services/materials/equipment). Source: Supabase pricebook mirror (derived from ST).',
   zodSchema: {
     code: z.string().min(1).max(64).describe('Pricebook item code (e.g. "CAP-240")'),
     itemType: z.enum(['service', 'material', 'equipment', 'fee']).optional()

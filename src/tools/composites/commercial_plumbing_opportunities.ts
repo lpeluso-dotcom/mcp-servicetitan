@@ -5,10 +5,11 @@ import type { ToolDef } from '../index';
 
 interface Args { businessUnitId?: number; lookbackDays?: number }
 
-// 60 min memo. Identifies commercial plumbing customers from jobs + tags D1 table.
+// 60 min memo. Identifies commercial plumbing customers from live ST jobs
+// (jobTypeName='Plumbing' completed before the lookback cutoff).
 export const commercial_plumbing_opportunities: ToolDef<Args> = {
   name: 'commercial_plumbing_opportunities',
-  description: 'L5 composite: commercial plumbing upsell opportunities — customers with commercial plumbing history who haven\'t booked in 90+ days. 60 min memo. Source: D1 (jobs + tags nightly-synced).',
+  description: 'L5 composite: commercial plumbing upsell opportunities — customers with commercial plumbing history who haven\'t booked in 90+ days. 60 min memo. Source: live ST (jobs).',
   zodSchema: {
     businessUnitId: z.number().int().positive().optional().describe('Filter by business unit ID'),
     lookbackDays: z.number().int().positive().default(90).describe('Days without booking to consider an opportunity (default: 90)'),
