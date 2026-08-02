@@ -122,7 +122,7 @@ const STALE_THRESHOLD_HOURS = 6;
 export const payroll_job_timesheets_list: ToolDef<Args> = {
   name: 'payroll_job_timesheets_list',
   description:
-    "List ServiceTitan per-tech-per-job timesheets with drive_minutes + working_minutes (the values that drive the invoice Splits block + Labor Burden column). Source: D1 (`job_timesheets` table, synced every 2h via ST_SYNC) with live ST fallback. Pass jobId/technicianId/appointmentId for filtering; arrivedOnOrAfter/arrivedOnOrBefore for windowing; modifiedOnOrAfter for incremental sync use. Set source='live' to force a live ST read.",
+    "List ServiceTitan per-tech-per-job timesheets with drive_minutes + working_minutes (the values that drive the invoice Splits block + Labor Burden column). Source: D1 (`job_timesheets` table, synced every 2h via ST_SYNC) with live ST fallback. Pass jobId/technicianId/appointmentId for filtering; arrivedOnOrAfter/arrivedOnOrBefore for windowing; modifiedOnOrAfter for incremental sync use. Set source='live' to force a live ST read. Default page size 100, max 500.",
   zodSchema: {
     jobId: z.number().int().positive().optional().describe('Filter to one job.'),
     technicianId: z.number().int().positive().optional().describe('Filter to one technician.'),

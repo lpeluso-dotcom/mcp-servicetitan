@@ -37,7 +37,7 @@ export const jobs_hold_reasons_list: ToolDef<Args> = {
   description:
     'List ServiceTitan Job Hold reasons (ST-77). Returns the enum of reasons available when ' +
     'holding a job/appointment, so a caller can resolve a reason name → ID before invoking ' +
-    'hold_appointment. Source: live ST.',
+    'hold_appointment. Source: live ST. Default page size 50, max 200.',
   zodSchema: {
     active: z
       .boolean()

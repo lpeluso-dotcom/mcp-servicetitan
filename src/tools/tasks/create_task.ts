@@ -33,7 +33,7 @@ export const create_task = defineWriteTool<Args>({
     'Create a task linked to a job. Path: /taskmanagement/ (no hyphen — ST 404s on /task-management/). ' +
     "v1.5: payload now includes the 8 ST-required fields (name/jobId/body/reportedById/businessUnitId/" +
     "employeeTaskTypeId/employeeTaskSourceId + reportedDate/isClosed/priority defaults). " +
-    'dryRun=true (default) → token → dryRun=false to write.',
+    'dryRun=true (default) → token → dryRun=false to write. Source: live ST.',
   zodSchema: {
     name: z.string().min(1).describe('Task name/headline'),
     jobId: z.number().int().positive().describe('ST job ID to link the task to'),

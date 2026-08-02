@@ -1,8 +1,8 @@
 # mcp-servicetitan
 
-ServiceTitan MCP server - a Cloudflare Worker that exposes 87 ST tools (86 default-role + 1 admin-only gateway) to Claude Code via the Model Context Protocol. Tools span reads, write-gated mutations, L5 composites, and raw API access.
+ServiceTitan MCP server - a Cloudflare Worker that exposes 99 ST tools (98 default-role + 1 admin-only gateway) to Claude Code via the Model Context Protocol. Tools span reads, write-gated mutations, L5 composites, and raw API access.
 
-**Status:** v1.5.1 - see [CHANGELOG.md](CHANGELOG.md) for full history. 87 tools (86 default + 1 admin), CI validation for PRs/pushes, manual Cloudflare deploy workflow. Integration guide at [docs/INTEGRATION.md](docs/INTEGRATION.md).
+**Status:** v1.7.0 - see [CHANGELOG.md](CHANGELOG.md) for full history. 99 tools (98 default + 1 admin), CI validation for PRs/pushes, manual Cloudflare deploy workflow. Integration guide at [docs/INTEGRATION.md](docs/INTEGRATION.md).
 
 **Publication note:** this is a single-tenant ServiceTitan integration. Share the code for review, not a live production MCP endpoint or credentials. `POST /mcp` requires either `Authorization: Bearer <JWT>` or `X-Sync-Key`; `/health` is the only intentionally public runtime endpoint.
 
@@ -36,9 +36,9 @@ Claude Code  ──Streamable HTTP/MCP──▶  mcp-servicetitan (Cloudflare Wo
 - **stEndpoint coverage gate (v1.5.1):** every non-exempt tool declares an `stEndpoint` descriptor; `GET /admin/endpoints/coverage` plus a vitest invariant enforce 100% coverage (only `st_call` + 3 Siro tools are exempt).
 - **Filter-preservation test harness (v1.5.1):** `src/tools/__tests__/filter_preservation_helper.ts` exposes `assertFilterPreservation(tool, matrix, baseArgs?)` so each tool can declare which filters must be forwarded as query, path, D1 WHERE, or rejected. Generalizes the payroll auto-fallback regression caught in v1.5.
 
-## Tool catalog (v1.5.1)
+## Tool catalog (v1.7.0)
 
-86 default-role + 1 admin-role (`st_call`) = 87 total. Full breakdown:
+98 default-role + 1 admin-role (`st_call`) = 99 total, per `src/tools/__tests__/schemas.test.ts` (`TOOLS.length`, `toolsForRole`). The tranche breakdown below is a snapshot through v1.5.1 and undercounts the current total by the tranches added since (Dawn SMS tools + `get_job_history` in v1.6.x; estimate-template CRUD, `search_pricebook_semantic`, and the pricebook margin-discipline composites — `pricebook_markup_drift`/`pricebook_cost_drift`/`pricebook_vendor_part_gaps` — in/after v1.7.0). See [CHANGELOG.md](CHANGELOG.md) for those additions pending a full table refresh:
 
 | Tranche | Count | Tools |
 |---|---|---|

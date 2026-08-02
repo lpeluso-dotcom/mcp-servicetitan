@@ -17,7 +17,7 @@ interface Args {
 
 export const reschedule_appointment = defineWriteTool<Args>({
   name: 'reschedule_appointment',
-  description: 'Reschedule an appointment (PATCH start/end/arrivalWindow). Tech assignments stay pinned to the old slot — use assign_technicians separately if you need them to follow. dryRun=true (default) → token → dryRun=false to write.',
+  description: 'Reschedule an appointment (PATCH start/end/arrivalWindow). Tech assignments stay pinned to the old slot — use assign_technicians separately if you need them to follow. dryRun=true (default) → token → dryRun=false to write. Source: live ST.',
   zodSchema: {
     appointmentId: z.number().int().positive().describe('ST appointment ID'),
     start: z.string().describe('New appointment start ISO 8601 datetime'),

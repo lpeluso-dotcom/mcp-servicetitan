@@ -33,7 +33,7 @@ export const dispatch_pro_utilization_list: ToolDef<Args> = {
   description:
     'Daily Dispatch Pro utilization rows from the ST native report (id 80766576). ' +
     'Columns: dispatch_pro_assigned_jobs, manually_assigned_jobs, dispatch_pro_enabled_jobs, utilization_percentage, per completed_on + business_unit_filter. ' +
-    'Source: D1 `dispatch_pro_utilization` (synced via taylor-ai POST /api/cron/dispatch-pro-sync; cron not yet wired).',
+    'Source: D1 `dispatch_pro_utilization` (synced via taylor-ai POST /api/cron/dispatch-pro-sync; cron not yet wired). Default page size 100, max 500.',
   zodSchema: {
     startDate: z.string().optional().describe("ISO date 'YYYY-MM-DD'. Filters completed_on >= value."),
     endDate: z.string().optional().describe("ISO date 'YYYY-MM-DD'. Filters completed_on <= value."),

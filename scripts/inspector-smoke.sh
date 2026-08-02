@@ -3,12 +3,13 @@
 # scripts/inspector-smoke.sh — F1.5 MCP Inspector smoke harness
 #
 # Drives @modelcontextprotocol/inspector --cli against a deployed
-# mcp-servicetitan worker (dev or prod). Three checks:
-#   1. tools/list returns >= 60 tools (62 default-role baseline,
-#      63 admin-role; we skip role-aware count and use a floor)
+# mcp-servicetitan worker (dev or prod). Four checks:
+#   1. tools/list returns >= 60 tools (98 default-role baseline,
+#      99 admin-role; we skip role-aware count and use a floor)
 #   2. read tool round-trip: st_list_customers pageSize=1
 #   3. write tool dryRun envelope: add_customer_note returns a
 #      confirmation_token without touching ServiceTitan
+#   4. prompts/list returns >= 5 prompts (Phase-2 workflow prompts)
 #
 # Usage:  bash scripts/inspector-smoke.sh [dev|prod] [--actor <name>]
 # Returns 0 if all checks pass; 1 on any failure.
@@ -124,6 +125,21 @@ if [[ -n "$WRITE_TEXT" ]] \
 else
   fail "add_customer_note dryRun envelope missing required fields"
   echo "    payload: $(echo "$WRITE_RESULT" | head -c 400)"
+fi
+
+# ── 4. prompts/list — Phase-2 workflow prompts ─────────────
+echo ""
+echo "[4] prompts/list"
+PROMPTS_JSON="$(inspect prompts/list)"
+PROMPT_COUNT="$(echo "$PROMPTS_JSON" | jq '.prompts | length' 2>/dev/null || echo 0)"
+[[ "$PROMPT_COUNT" =~ ^[0-9]+$ ]] || PROMPT_COUNT=0
+PROMPT_FLOOR=5
+if [[ "$PROMPT_COUNT" -ge "$PROMPT_FLOOR" ]]; then
+  pass "prompts/list returned $PROMPT_COUNT prompts (>= $PROMPT_FLOOR floor)"
+else
+  fail "prompts/list returned $PROMPT_COUNT, expected >= $PROMPT_FLOOR"
+  echo "    payload: $(echo "$PROMPTS_JSON" | head -c 300)"
+  echo "    inspector stderr: $STDERR_LOG"
 fi
 
 echo ""

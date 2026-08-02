@@ -18,7 +18,7 @@ export const delete_estimate_template = defineWriteTool<Args>({
     'Soft-deactivates an estimate template (sets active=false) — reversible via ' +
     'update_estimate_template({templateId, active:true}). This is NOT a hard delete. ' +
     'Note: DELETE advances modifiedOn (unlike an item-level PATCH via update_estimate_template, which freezes it). ' +
-    'dryRun=true (default) → token → dryRun=false to write.',
+    'dryRun=true (default) → token → dryRun=false to write. Source: live ST.',
   zodSchema: {
     templateId: z.number().int().positive().describe('ST estimate template ID'),
   },

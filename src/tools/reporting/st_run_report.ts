@@ -38,7 +38,7 @@ interface Args {
 export const st_run_report: ToolDef<Args> = {
   name: 'st_run_report',
   description:
-    'Run or discover ServiceTitan native reports. Modes: list_categories | list_reports (requires categoryId) | describe_report (requires categoryId + reportId — MANDATORY before first run on unknown reportId; parameter schema is dynamic) | run (requires categoryId + reportId, takes parameters[]). POST .../reports/{id}/data is the data fetch (returns rows synchronously). Source: live ST.',
+    'Run or discover ServiceTitan native reports. Modes: list_categories | list_reports (requires categoryId) | describe_report (requires categoryId + reportId — MANDATORY before first run on unknown reportId; parameter schema is dynamic) | run (requires categoryId + reportId, takes parameters[]). POST .../reports/{id}/data is the data fetch (returns rows synchronously). Source: live ST. mode=run: default page size 100, max 5000.',
   zodSchema: {
     mode: ReportMode.describe('Reporting workflow step'),
     categoryId: z

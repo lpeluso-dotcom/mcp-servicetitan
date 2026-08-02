@@ -42,7 +42,7 @@ export const gold_margin_by_bu: ToolDef<Args> = {
     'per lead, and an unsold lead is genuinely $0; (2) test jobs; (3) revenue invoiced through manual ' +
     'bypass batches, which never touches the ST job-invoice grain and therefore can never appear here. ' +
     'Confirm against the linked ST invoice before reporting a gap in the pipeline. ' +
-    'For one job with real labor burden, use job_cost_actuals. Source: Supabase gold.margin_by_bu RPC.',
+    'For one job with real labor burden, use job_cost_actuals. Source: computed from the Supabase gold.margin_by_bu RPC.',
   stEndpoint: { method: 'GET', path: 'supabase://gold/margin_by_bu', source: 'computed' },
   zodSchema: {
     from: z.string().describe("Window start, ISO 'YYYY-MM-DD' (fct_job.completed_date >= from)."),

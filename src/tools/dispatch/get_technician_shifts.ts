@@ -7,7 +7,7 @@ interface Args { technicianId: number; startsOnOrAfter?: string; startsBefore?: 
 
 export const get_technician_shifts: ToolDef<Args> = {
   name: 'get_technician_shifts',
-  description: 'Get scheduled shifts for a technician. Source: live ST (shifts are computed, not in D1).',
+  description: 'Get scheduled shifts for a technician. Source: live ST (shifts are computed, not in D1). Default page size 50, max 200.',
   stEndpoint: { method: 'GET', path: '/dispatch/v2/tenant/{tid}/technician-shifts', source: 'live' },
   zodSchema: {
     technicianId: z.number().int().positive().describe('ST technician ID'),

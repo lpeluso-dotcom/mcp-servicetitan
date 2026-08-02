@@ -7,7 +7,7 @@ interface Args { active?: boolean; page?: number; pageSize?: number }
 
 export const list_campaigns: ToolDef<Args> = {
   name: 'list_campaigns',
-  description: 'List marketing campaigns. Source: D1 (campaigns nightly-synced).',
+  description: 'List marketing campaigns. Source: live ST. Default page size 50, max 200.',
   zodSchema: {
     active: z.boolean().optional().describe('Filter by active status (default: all)'),
     page: z.number().int().positive().default(1).describe('Page number'),

@@ -41,7 +41,7 @@ const MAX_PAGESIZE = 100;
 export const payroll_location_rates_list: ToolDef<Args> = {
   name: 'payroll_location_rates_list',
   description:
-    'List ServiceTitan location-based pay rates. Filter by location or active flag. Source: live ST.',
+    'List ServiceTitan location-based pay rates. Filter by location or active flag. Source: live ST. Default page size 25, max 100.',
   zodSchema: {
     active: z.boolean().optional().describe('Filter to active=true or active=false; omit for both'),
     locationId: z.number().int().positive().optional().describe('Filter by location ID'),

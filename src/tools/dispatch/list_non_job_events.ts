@@ -7,7 +7,7 @@ interface Args { technicianId?: number; startsOnOrAfter?: string; startsBefore?:
 
 export const list_non_job_events: ToolDef<Args> = {
   name: 'list_non_job_events',
-  description: 'List non-job dispatch events (time-off, training, meetings) for technicians. Source: live ST.',
+  description: 'List non-job dispatch events (time-off, training, meetings) for technicians. Source: live ST. Default page size 50, max 200.',
   stEndpoint: { method: 'GET', path: '/dispatch/v2/tenant/{tid}/non-job-appointments', source: 'live' },
   zodSchema: {
     technicianId: z.number().int().positive().optional().describe('Filter by technician ID'),

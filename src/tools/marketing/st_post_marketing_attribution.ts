@@ -57,7 +57,7 @@ const KIND_PATH: Record<KindT, string> = {
 export const st_post_marketing_attribution = defineWriteTool<Args>({
   name: 'st_post_marketing_attribution',
   description:
-    'Post a full marketing attribution payload to ServiceTitan via one of four kind-specific endpoints (job-attributions, web-booking-attributions, web-lead-form-attributions, external-call-attributions). attributionData carries UTM/click/session fields. Distinct from create_call_with_campaign (which POSTs /telecom/v3/.../calls with just a campaignId). dryRun=true (default) → token → dryRun=false to write.',
+    'Post a full marketing attribution payload to ServiceTitan via one of four kind-specific endpoints (job-attributions, web-booking-attributions, web-lead-form-attributions, external-call-attributions). attributionData carries UTM/click/session fields. Distinct from create_call_with_campaign (which POSTs /telecom/v3/.../calls with just a campaignId). dryRun=true (default) → token → dryRun=false to write. Source: live ST.',
   zodSchema: {
     kind: Kind.describe('Which attribution endpoint to target'),
     jobId: z.number().int().positive().optional().describe('Required when kind=job'),

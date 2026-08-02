@@ -310,7 +310,8 @@ export const st_add_invoice_line_item: ToolDef<Args> = {
     'a live write the tool RE-READS the invoice and asserts the money landed (silent_noop / amount_mismatch / ' +
     'verify_unavailable) — HTTP 200 is not proof. Exported invoices are NOT blocked (warn only) — no accounting ' +
     'sign-off exists yet for a hard block; review the dryRun warning before confirming. If item k of N fails ' +
-    'mid-sequence, prior items are already written and NOT rolled back — the error names their item ids for cleanup.',
+    'mid-sequence, prior items are already written and NOT rolled back — the error names their item ids for cleanup. ' +
+    'Source: live ST.',
   isWrite: true,
   stEndpoint: { method: 'PATCH', path: '/accounting/v2/tenant/{tid}/invoices/{invoiceId}/items', source: 'live' },
   zodSchema: {

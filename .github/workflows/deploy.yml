@@ -119,3 +119,20 @@ jobs:
             exit 0
           fi
           bash scripts/all-tools-smoke.sh "$DEPLOY_ENV" --actor ci-post-deploy
+
+      # Post-deploy MCP protocol smoke: drives @modelcontextprotocol/inspector --cli
+      # against the just-deployed worker to validate the MCP surface (tools/list floor,
+      # prompts/list floor, a read round-trip, and a write dryRun envelope). Complements
+      # the read-tool sweep above (that checks data; this checks the protocol surface +
+      # Phase-2 prompts). GATED on the same MCP_SMOKE_* secrets; skips fork-friendly.
+      - name: Post-deploy MCP Inspector smoke
+        if: success()
+        env:
+          MCP_SYNC_KEY: ${{ secrets.MCP_SMOKE_KEY }}
+          MCP_URL: ${{ secrets.MCP_SMOKE_URL }}
+        run: |
+          if [ -z "${MCP_SYNC_KEY:-}" ] || [ -z "${MCP_URL:-}" ]; then
+            echo "::warning::MCP_SMOKE_KEY / MCP_SMOKE_URL secrets not set — skipping Inspector smoke. Add them to enable the gate."
+            exit 0
+          fi
+          bash scripts/inspector-smoke.sh "$DEPLOY_ENV" --actor ci-post-deploy

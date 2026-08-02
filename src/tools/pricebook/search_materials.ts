@@ -63,7 +63,7 @@ export const search_materials: ToolDef<Args> = {
     'Search pricebook materials by exact `code` (e.g. "PRV-075"), or fuzzy `name`/category. ' +
     'Exact-code path hits D1 directly (sub-100ms) and short-circuits on hit. ' +
     'Fuzzy path falls through to live ST. ' +
-    'Source: D1 for exact code (pb_materials may be stale; falls through to live ST on miss); live ST for name/category fuzzy.',
+    'Source: D1 for exact code (pb_materials may be stale; falls through to live ST on miss); live ST for name/category fuzzy. Default page size 50, max 200.',
   zodSchema: {
     code: z
       .string()

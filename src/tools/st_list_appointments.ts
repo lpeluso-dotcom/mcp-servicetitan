@@ -31,10 +31,10 @@ interface Args {
 export const st_list_appointments: ToolDef<Args> = {
   name: 'st_list_appointments',
   description:
-    'List ServiceTitan appointments. Read-only. NOT cached. Use this for scheduled-date queries — ' +
+    'List ServiceTitan appointments. Read-only. NOT cached. Source: live ST. Use this for scheduled-date queries — ' +
     'the ST Jobs API does NOT have a scheduled date field, Appointments does (start). ' +
     'v1.5.1: supports the ST-77 `active` filter — pass true/false; omit for all. ' +
-    'Each row in the response also carries an `active` boolean.',
+    'Each row in the response also carries an `active` boolean. Default page size 50, max 200.',
   zodSchema: {
     page: z.number().int().positive().optional().describe('Page number, default 1'),
     pageSize: z.number().int().positive().max(200).optional().describe('Page size, default 50, max 200'),

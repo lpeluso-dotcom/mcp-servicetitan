@@ -13,7 +13,7 @@ interface Args {
 
 export const create_recurring_service = defineWriteTool<Args>({
   name: 'create_recurring_service',
-  description: 'Create a recurring service under an active membership. ST requires the membership to be Active (returns 400 otherwise). dryRun=true (default) → token → dryRun=false to write.',
+  description: 'Create a recurring service under an active membership. ST requires the membership to be Active (returns 400 otherwise). dryRun=true (default) → token → dryRun=false to write. Source: live ST.',
   zodSchema: {
     membershipId: z.number().int().positive().describe('ST membership ID (must be Active status)'),
     serviceTypeId: z.number().int().positive().describe('ST service type ID for the recurring service'),

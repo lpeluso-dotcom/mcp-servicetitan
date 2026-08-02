@@ -20,7 +20,7 @@ interface Args {
 
 export const st_get_customer: ToolDef<Args> = {
   name: 'st_get_customer',
-  description: 'Get a single ServiceTitan customer by ID. Read-only. Cached 5 min.',
+  description: 'Get a single ServiceTitan customer by ID. Read-only. Cached 5 min. Source: live ST.',
   zodSchema: {
     customerId: z.number().int().positive().describe('ServiceTitan customer ID'),
   },

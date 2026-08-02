@@ -53,7 +53,8 @@ export const st_create_material: ToolDef<Args> = {
     'Create a new ServiceTitan pricebook material. ' +
     'dryRun=true (default) validates and returns a confirmation_token — call again with dryRun=false + token to write. ' +
     'Requires name and categoryId at minimum. A primary vendor is also required ' +
-    '(primaryVendor:{vendorId} or the flat primaryVendorId) — ST rejects a material create without exactly one primary vendor.',
+    '(primaryVendor:{vendorId} or the flat primaryVendorId) — ST rejects a material create without exactly one primary vendor. ' +
+    'Source: live ST.',
   isWrite: true,
   stEndpoint: { method: 'POST', path: '/pricebook/v2/tenant/{tid}/materials', source: 'live' },
   zodSchema: {

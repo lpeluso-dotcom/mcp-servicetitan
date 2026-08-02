@@ -10,7 +10,7 @@ interface Args { appointmentId: number; technicianIds: number[]; dryRun?: boolea
 
 export const assign_technicians: ToolDef<Args> = {
   name: 'assign_technicians',
-  description: 'Assign technicians to an appointment. ST requires a two-call compound: unassign all current techs, then assign the new set. Both calls are shown in the dryRun preview. dryRun=true (default) → token → dryRun=false to write.',
+  description: 'Assign technicians to an appointment. ST requires a two-call compound: unassign all current techs, then assign the new set. Both calls are shown in the dryRun preview. dryRun=true (default) → token → dryRun=false to write. Source: live ST.',
   isWrite: true,
   stEndpoint: { method: 'POST', path: '/dispatch/v2/tenant/{tid}/appointment-assignments/assign-technicians', source: 'live' },
   zodSchema: {

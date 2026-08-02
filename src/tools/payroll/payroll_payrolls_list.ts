@@ -54,7 +54,7 @@ const MAX_PAGESIZE = 100;
 export const payroll_payrolls_list: ToolDef<Args> = {
   name: 'payroll_payrolls_list',
   description:
-    'List ServiceTitan payroll records (per-employee payroll runs). Filter by employee, payroll period, or status. Source: live ST.',
+    'List ServiceTitan payroll records (per-employee payroll runs). Filter by employee, payroll period, or status. Source: live ST. Default page size 25, max 100.',
   zodSchema: {
     employeeId: z.number().int().positive().optional().describe('Filter by employee ID'),
     payrollPeriodId: z.number().int().positive().optional().describe('Filter by payroll period ID'),

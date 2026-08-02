@@ -5,11 +5,11 @@ import type { ToolDef } from '../index';
 
 interface Args { activeOnly?: boolean }
 
-// pb_services is FRESH (synced 2026-04-22) — D1-first read.
-// pb_materials + pb_equipment blocked until §13#1 sync fix ships.
+// Reads live ST pricebook services (not D1). Services-only.
+// pb_materials + pb_equipment health blocked until §13#1 sync fix ships.
 export const pricebook_health_check_services: ToolDef<Args> = {
   name: 'pricebook_health_check_services',
-  description: 'L5 composite: pricebook health check for SERVICES only. Checks for zero-cost services, missing categories, and inactive items. pb_services is fresh (synced 2026-04-22). Materials + equipment blocked until nightly sync fix (§13#1). Source: D1 (pb_services).',
+  description: 'L5 composite: pricebook health check for SERVICES only. Checks for zero-cost services, missing categories, and inactive items. Materials + equipment blocked until nightly sync fix (§13#1). Source: live ST (pricebook services).',
   zodSchema: {
     activeOnly: z.boolean().default(true).describe('Only check active services (default: true)'),
   },

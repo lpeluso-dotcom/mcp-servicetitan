@@ -8,7 +8,7 @@ interface Args { jobId?: number; assignedToId?: number; page?: number; pageSize?
 // Path must be /taskmanagement/ (no hyphen) — ST 404s on /task-management/.
 export const list_open_tasks: ToolDef<Args> = {
   name: 'list_open_tasks',
-  description: 'List open (incomplete) tasks. Path: /taskmanagement/ (no hyphen — ST 404s on /task-management/). Source: live ST.',
+  description: 'List open (incomplete) tasks. Path: /taskmanagement/ (no hyphen — ST 404s on /task-management/). Source: live ST. Default page size 50, max 200.',
   zodSchema: {
     jobId: z.number().int().positive().optional().describe('Filter by job ID'),
     assignedToId: z.number().int().positive().optional().describe('Filter by assigned employee ID'),

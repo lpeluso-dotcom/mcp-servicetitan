@@ -32,6 +32,39 @@
 - Real payloads captured 2026-07-11 from all 3 endpoints: none carry any of the 5 stripped keys (`paginationToken`/`requestId`/`eTag`/`_links`/`_meta`). Siro is not HAL-style on these tools — the recording pointer is a plain `recordingId` scalar, pagination uses `cursor` (not `paginationToken`), and the only media/web URL lives on the un-wrapped `/core/recordings` list endpoint under `links.web.self` (no underscore, so unaffected regardless).
 - New `src/tools/__tests__/siro_shaper.test.ts` encodes the real shapes as a regression guard; `read_shaper_sweep.test.ts` extended 42→45.
 
+## v1.7.0 — 2026-06-16 → 2026-07-10 (pricebook field surface, MCP native surface, estimate templates, semantic search, margin composites)
+
+`package.json` was bumped to 1.7.0 on 2026-06-16 (PR #37) and a large amount of further work landed on `main` afterward without a subsequent manual version bump — this entry catches up the full span. Going forward, release-please (added this task) ties every release PR to actual conventional-commit history instead of a manual edit, so this kind of multi-week catch-up entry shouldn't recur. Tool count **89 → 99** (+10, per `TOOLS.length`); test count **472 → 875** (+403).
+
+### Pricebook (#37, #48)
+- `st_create_service` / `st_patch_service`: full pricebook-service field surface — `hours`, `isLabor`, `taxable`, `account` (GL), `paysCommission`, `memberPrice`, plural `useStaticPrices`, multi-category via `categories[]` (precedence over `categoryId`). Removes the silently-dropped singular `useStaticPrice`.
+- New **`search_pricebook_semantic`** tool — Vectorize-backed natural-language pricebook lookup.
+- `search_pricebook_all` no longer reports dynamically-priced items as `$0` in tool output — QSC runs Pricebook Pro, so a missing/zero static price was never "free," just unresolved at read time; the tool now reflects that correctly (#46).
+
+### New: pricebook margin-discipline composites (QUA-739, #56/#57/#58)
+- `pricebook_markup_drift`, `pricebook_cost_drift`, `pricebook_vendor_part_gaps` — new composites over the D1 `pb_*` tables. `markup_drift` resolves real categories via `categories_json` → `pb_categories`.
+- `defaultShaper` response-shaping rolled out to 42 read tools + 7 raw composites (finishes the v1.4.1 "mechanical rollout" deferral).
+
+### New: estimate-template CRUD (#55)
+- `list_estimate_templates`, `get_estimate_template`, `create_estimate_template`, `update_estimate_template`, `delete_estimate_template` — full `/sales/v2` estimate-template surface.
+
+### New: `get_job_history` (#29)
+- Per-ticket audit-log read tool for jobs.
+
+### MCP native surface (#51)
+- `registerTool` migration to spec-correct titles/annotations/`structuredContent` across all tools; `outputSchema` on the top-10 tools; resource-link offload for oversized results (>80KB → KV); browsable catalog resources (pricebook tree, PII-stripped roster, report catalog); 5 QSC workflow prompts (dispatch brief, closeout, AR chase, quote follow-up, membership outreach) with argument completions.
+
+### Access & auth
+- Read-only Claude Desktop connector ("Jessica Hunt") — new `readonly` role + `/c/<token>/mcp` (#34).
+- Wrapped in `workers-oauth-provider`, Phase-2 read-only (#35).
+
+### Reliability fixes
+- Tenant-placeholder resolution bugs fixed (`get_capacity`, `st_get_capacity_slots`, `margin_audit`, others were sending the literal `/tenant/000000000/` to ST, causing live 403s).
+- `get_invoice`, `get_invoice_balance`, `list_unpaid_invoices`, `get_call`, `get_form_submission` corrected to real ST endpoint/ID semantics (no `/invoices/{id}` or `/calls/{id}` route; forms are D1-first).
+- `list_jobs_today` now queries today's appointments in ET, not the Jobs API.
+- Post-deploy smoke gate + `/admin/errors/unacked` alert source added (#40).
+- Description-lint static eval added; all tool descriptions brought to spec; corrected false `Source:D1` claims on 6 live-ST tools.
+
 ## v1.6.0 — 2026-05-25 (Dawn SMS + lockdown + readST sweep)
 
 Combined release. Tool count **87 → 89** (+2); test count **451 → 472** (+21).
