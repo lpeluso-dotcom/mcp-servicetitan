@@ -169,6 +169,20 @@ export function createOAuthProvider(
     tokenEndpoint: '/token',
     clientRegistrationEndpoint: '/register',
     scopesSupported: ['openid', 'email', 'profile'],
+    // OAuth 2.1 removes the `plain` PKCE method — it offers no cryptographic protection, since
+    // the verifier and the challenge are the same string. The library defaults this to TRUE for
+    // backward compatibility, so until now BOTH connectors advertised
+    // `code_challenge_methods_supported: ["plain","S256"]` (verified live 2026-08-01 against
+    // /.well-known/oauth-authorization-server on mcp-servicetitan AND qsc-hopper).
+    //
+    // This flag is not cosmetic. In workers-oauth-provider 0.8.1 it does two things:
+    //   - oauth-provider.js:1163 — metadata advertises only ["S256"]
+    //   - oauth-provider.js:2961 — /authorize THROWS on a `plain` challenge method
+    // so it closes the downgrade rather than merely hiding it. That is why no DCR-registration
+    // acceptance probe was needed to settle QUA-1117 item 4.
+    //
+    // Claude's client uses S256, so this is not a client-compatibility risk.
+    allowPlainPKCE: false,
     tokenExchangeCallback: async (options) => {
       const raw = Number((options.props as { upstreamExpiresIn?: number } | undefined)?.upstreamExpiresIn);
       const ttl = Number.isFinite(raw) && raw > 0 ? Math.min(Math.max(raw, 300), 3600) : 3600;
