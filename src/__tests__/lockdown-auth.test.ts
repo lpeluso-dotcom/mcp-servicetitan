@@ -6,7 +6,7 @@
 // ============================================================
 import { describe, it, expect } from 'vitest';
 import { SignJWT } from 'jose';
-import { resolveAuth, verifyConnectorToken } from '../auth';
+import { resolveAuth } from '../auth';
 
 const SYNC_KEY = 'test-sync-key-1234567890';
 
@@ -73,22 +73,12 @@ describe('MCP_LOCKDOWN auth ordering', () => {
     expect(auth.role).toBe('default');
   });
 
-  it('verifyConnectorToken downgrades a default-role connector token to lockdown', async () => {
-    const conn = await verifyConnectorToken(
-      'connector-token-abcdef1234567890',
-      d1RowEnv({ role: 'default', owner: 'jessica.hunt', expires_at: null }, { MCP_LOCKDOWN: 'true' }),
-    );
-    expect(conn).not.toBeNull();
-    expect(conn!.role).toBe('lockdown');
-  });
-
-  it('verifyConnectorToken still rejects unknown tokens under lockdown', async () => {
-    const conn = await verifyConnectorToken(
-      'connector-token-abcdef1234567890',
-      d1RowEnv(null as unknown as Record<string, unknown>, { MCP_LOCKDOWN: 'true' }),
-    );
-    expect(conn).toBeNull();
-  });
+  // The two `verifyConnectorToken` lockdown cases that lived here were removed
+  // 2026-08-01 with the `/c/<token>/mcp` route itself (QUA-1117 item 3). They
+  // asserted that lockdown NARROWED a URL-token's role — true, but it only ever
+  // mattered because the token carried a role at all, which was the defect.
+  // The replacement guard is source-level and lives in
+  // connector-route-removed.test.ts.
 
   it('downgrades a valid JWT admin caller to the lockdown role', async () => {
     const token = await signToken({ sub: 'jwt-user', actor: 'jwt-admin', role: 'admin' });

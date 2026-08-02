@@ -43,6 +43,7 @@ import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { embedQuery, sbRpc } from '../../supabase';
 import { buildTradeWarning, getTradeCoverage } from './trade_coverage';
+import { redactFreeText } from './redact';
 
 const ENTITY_KEYS = [
   'job', 'invoice_item', 'estimate', 'estimate_line', 'pricebook',
@@ -187,7 +188,9 @@ export const semantic_search_gold: ToolDef<Args> = {
     'Natural-language semantic search over the QSC gold warehouse vector index (Woz gold — jobs, invoice line items, ' +
     'estimates, estimate lines, pricebook items, pricebook categories, business units, job types, lead sources, ' +
     'locations, trucks, memberships). Embeds the query and returns the closest content chunks ranked by cosine ' +
-    'similarity. Cross-entity by default — narrow with entity_key and/or trade. Results carry no PII by construction.',
+    'similarity. Cross-entity by default — narrow with entity_key and/or trade. Free-text results are scrubbed of ' +
+    'phone numbers, email addresses, street addresses and premises-access details before return; `_redacted_matches` ' +
+    'reports how many were altered.',
   zodSchema: {
     query: z.string().min(1).max(500).describe('Natural-language search query'),
     entity_key: z.enum(ENTITY_KEYS).optional().describe(
@@ -273,11 +276,31 @@ export const semantic_search_gold: ToolDef<Args> = {
       );
     }
 
+    // 4. Caller-facing PII / premises scrub (QUA-1181).
+    //
+    // Applied LAST, after dedup and quota, for two reasons: dedup groups on the
+    // raw content_text so its occurrence_count keeps meaning "copies in the
+    // index", and only the rows actually being returned pay the regex cost.
+    //
+    // This runs on every door because every door dispatches this handler — the
+    // audit found byte-identical leaks on the OAuth readonly and default doors,
+    // so a per-door fix would have had to be written twice. See redact.ts for
+    // why the noun allow-list and the column-level PII gate do not cover this,
+    // and why the real fix is re-templating the job chunk in qsc-vector.
+    let redactedCount = 0;
+    const scrubbed = kept.map((m) => {
+      const content_text = redactFreeText(m.content_text);
+      if (content_text !== m.content_text) redactedCount += 1;
+      return { ...m, content_text };
+    });
+
     return {
-      matches: kept,
+      matches: scrubbed,
       query: args.query,
       _relevance_floor: DEFAULT_RELEVANCE_FLOOR,
       _source: 'supabase-vec-gold',
+      // Disclose rather than silently altering what the caller reads.
+      ...(redactedCount > 0 ? { _redacted_matches: redactedCount } : {}),
       ...(warnings.length > 0 ? { _warnings: warnings } : {}),
     };
   },

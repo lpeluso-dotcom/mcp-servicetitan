@@ -6,6 +6,10 @@
 // confident `summary.count: 0` — and the daily report told everyone the board
 // was clean. These tests pin the fix: a zero from the mirror must never be
 // presented as an authoritative zero.
+//
+// Since QUA-1109 the handler issues TWO queries per call (a COUNT/SUM cohort
+// aggregate plus the row page, via Promise.all) — the mock serves both by
+// inspecting the SQL rather than queueing a single response.
 // ============================================================
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -20,11 +24,37 @@ const CTX = { actor: 'test', correlation: 'c1' };
 const makeEnv = (): any => ({ ST_PROXY: { fetch: vi.fn() }, MCP_SYNC_KEY: 'k' });
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
 
+/**
+ * Serve both of the handler's queries: the cohort aggregate (matched on
+ * COUNT(*)) gets totals derived from `rows`; everything else gets the rows.
+ */
+const primeMirror = (rows: Array<Record<string, unknown>>) => {
+  readD1Mock.mockImplementation((_env: unknown, sql: string) => {
+    if (/COUNT\(\*\)/.test(sql)) {
+      return Promise.resolve({
+        rows: [{
+          cohort_count: rows.length,
+          cohort_estimate_amount: rows.reduce((s, r) => s + Number(r.estimate_amount ?? 0), 0),
+          cohort_sold_amount: rows.reduce((s, r) => s + Number(r.sold_estimate_amount ?? 0), 0),
+        }],
+      });
+    }
+    return Promise.resolve({ rows });
+  });
+};
+
+/** The row-page query is the one that must carry synced_at — find it. */
+const rowsQuerySql = (): string => {
+  const call = readD1Mock.mock.calls.find(([, sql]) => !/COUNT\(\*\)/.test(sql as string));
+  expect(call).toBeDefined();
+  return call![1] as string;
+};
+
 beforeEach(() => readD1Mock.mockReset());
 
 describe('the empty-mirror trap', () => {
   it('does NOT present a zero count as authoritative when the mirror is empty', async () => {
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
+    primeMirror([]);
 
     const r: any = await feed.handler(makeEnv(), {}, CTX);
 
@@ -39,9 +69,7 @@ describe('the empty-mirror trap', () => {
 
 describe('freshness is disclosed on real data', () => {
   it('marks a fresh mirror authoritative', async () => {
-    readD1Mock.mockResolvedValueOnce({
-      rows: [{ opportunity_id: 1, estimate_amount: 100, sold_estimate_amount: 0, synced_at: hoursAgo(1) }],
-    });
+    primeMirror([{ opportunity_id: 1, estimate_amount: 100, sold_estimate_amount: 0, synced_at: hoursAgo(1) }]);
 
     const r: any = await feed.handler(makeEnv(), {}, CTX);
 
@@ -53,9 +81,7 @@ describe('freshness is disclosed on real data', () => {
 
   it('flags a frozen mirror as stale and withholds authority', async () => {
     // The job_timesheets failure mode: rows present, but a month old.
-    readD1Mock.mockResolvedValueOnce({
-      rows: [{ opportunity_id: 1, estimate_amount: 0, sold_estimate_amount: 0, synced_at: hoursAgo(24 * 30) }],
-    });
+    primeMirror([{ opportunity_id: 1, estimate_amount: 0, sold_estimate_amount: 0, synced_at: hoursAgo(24 * 30) }]);
 
     const r: any = await feed.handler(makeEnv(), {}, CTX);
 
@@ -68,16 +94,15 @@ describe('freshness is disclosed on real data', () => {
 
 describe('the query can actually answer the freshness question', () => {
   it('SELECTs synced_at — without it the feed cannot know its own age', async () => {
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
+    primeMirror([]);
 
     await feed.handler(makeEnv(), {}, CTX);
 
-    const [, sql] = readD1Mock.mock.calls[0];
-    expect(sql).toMatch(/o\.synced_at/);
+    expect(rowsQuerySql()).toMatch(/o\.synced_at/);
   });
 
   it('names the mirror table it read, so the caveat is actionable', async () => {
-    readD1Mock.mockResolvedValueOnce({ rows: [] });
+    primeMirror([]);
     const r: any = await feed.handler(makeEnv(), {}, CTX);
     expect(r._mirror_table).toBe('opportunities');
   });
