@@ -16,8 +16,10 @@
 import { z } from 'zod';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
+import { McpError } from '../../errors';
 import { resolveTechnician } from '../../name-resolver';
 import { queryD1First } from '../../d1-proxy';
+import { stampMirrorFreshness, fetchTableMax, type FreshnessStamp } from '../../mirror-freshness';
 import type { Env } from '../../env';
 
 interface Args {
@@ -41,10 +43,18 @@ interface AmbiguousResult {
 
 interface NotFoundResult {
   status: 'not_found';
-  resolved_id: number;
+  /** Present only when the resolver produced an ID but the hydration missed. */
+  resolved_id?: number;
+  /** MB-1 / QUA-1141: a miss is a claim about the MIRROR, not ServiceTitan. */
+  _not_found_caveat: string;
 }
 
-type Result = FoundResult | AmbiguousResult | NotFoundResult;
+// The hydration read hits the `technicians` D1 mirror, so found/not_found
+// carry the mirror-freshness stamp; ambiguous never reaches that read.
+type Result =
+  | (FoundResult & FreshnessStamp)
+  | AmbiguousResult
+  | (NotFoundResult & FreshnessStamp);
 
 export const find_technician_by_name: ToolDef<Args> = {
   name: 'find_technician_by_name',
@@ -60,26 +70,68 @@ export const find_technician_by_name: ToolDef<Args> = {
   stEndpoint: { method: 'GET', path: 'd1://technicians', source: 'd1' },
   async handler(env: Env, args: Args, ctx?: { correlation?: string }): Promise<Result> {
     const correlation = ctx?.correlation;
-    const r = await resolveTechnician(env, args.name, 'read');
+
+    let r;
+    try {
+      r = await resolveTechnician(env, args.name, 'read');
+    } catch (err) {
+      // Review fix (2026-08-02): the COMMON miss — a name matching nobody on
+      // the roster — surfaces from name-resolver as a validation_error throw
+      // and used to bypass the caveated not_found path entirely. Catch it
+      // here (name-resolver itself is shared with other callers and stays
+      // untouched) and return the same honest envelope a hydration miss
+      // gets. Anything else (upstream_error etc.) still propagates.
+      if (err instanceof McpError && err.code === 'validation_error' && /not found/i.test(err.message)) {
+        return {
+          status: 'not_found',
+          ...stampMirrorFreshness([], {
+            table: 'technicians',
+            tableMax: await fetchTableMax(env, ['technicians']),
+          }),
+          _not_found_caveat:
+            `No technician matching "${args.name}" in the taylor-ai D1 roster mirror as of its ` +
+            `last sync (see _freshness). If the mirror is proven fresh this is a real roster ` +
+            `miss (check the spelling); otherwise it does NOT prove the tech is absent from ` +
+            `ServiceTitan — new hires are missing until the next technicians sync.`,
+        };
+      }
+      throw err;
+    }
 
     if (r.ambiguous) {
       return { status: 'ambiguous', resolved: r.resolved as 'exact' | 'prefix' | 'contains', candidates: r.candidates ?? [] };
     }
 
+    // Table-level probe (F1/F2 redesign) — fired alongside the hydration
+    // read; fetchTableMax never rejects, it degrades to {}.
+    const tableMaxP = fetchTableMax(env, ['technicians']);
     const row = await queryD1First<{
       tech_id: number;
       name: string;
       business_unit: string | null;
       role: string | null;
+      synced_at: string | null;
     }>(
       env,
-      `SELECT tech_id, name, business_unit, role FROM technicians WHERE tech_id = ? AND active = 1`,
+      `SELECT tech_id, name, business_unit, role, synced_at FROM technicians WHERE tech_id = ? AND active = 1`,
       [r.id],
       { correlation, tag: 'find_technician_by_name' },
     );
 
     if (!row) {
-      return { status: 'not_found', resolved_id: r.id };
+      // MB-1 / QUA-1141: not_found means "not in the MIRROR" — on a proven-
+      // fresh mirror that is an honest "not on the roster as of the last
+      // sync"; otherwise a new hire may simply be absent until the next
+      // technicians sync.
+      return {
+        status: 'not_found',
+        resolved_id: r.id,
+        ...stampMirrorFreshness([], { table: 'technicians', tableMax: await tableMaxP }),
+        _not_found_caveat:
+          `No active row for technician ${r.id} in the taylor-ai D1 mirror as of its last sync ` +
+          `(see _freshness). If the mirror is not proven fresh this does NOT prove the tech is ` +
+          `absent from ServiceTitan — new hires are missing until the next technicians sync.`,
+      };
     }
 
     return {
@@ -89,6 +141,8 @@ export const find_technician_by_name: ToolDef<Args> = {
       business_unit: row.business_unit,
       role: row.role,
       resolved: r.resolved,
+      // MB-1 / QUA-1141: a hit off a frozen mirror may be an ex-tech.
+      ...stampMirrorFreshness([row], { table: 'technicians', tableMax: await tableMaxP }),
     };
   },
   transformResult: defaultShaper,

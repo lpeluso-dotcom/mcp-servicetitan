@@ -11,7 +11,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
-import { stampMirrorFreshness } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -159,9 +159,10 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
        FROM opportunities o
        WHERE ${where.join(' AND ')}`;
 
-    const [{ rows: aggRows }, { rows }] = await Promise.all([
+    const [{ rows: aggRows }, { rows }, tableMax] = await Promise.all([
       readD1<CohortAgg>(env, aggSql, params),
       readD1<FeedRow>(env, sql, [...params, limit]),
+      fetchTableMax(env, ['opportunities']),
     ]);
 
     const agg = aggRows[0] ?? { cohort_count: 0, cohort_estimate_amount: 0, cohort_sold_amount: 0 };
@@ -177,8 +178,11 @@ export const open_opportunities_pulitzer_feed: ToolDef<Args> = {
     // MB-1 / QUA-1141: this feed drives Pulitzer's daily report. Reading the
     // mirror raw meant an EMPTY `opportunities` table rendered as a confident
     // `count: 0` — "clean board" — which is what happened in production. The
-    // count is only meaningful alongside the freshness of what produced it.
-    const freshness = stampMirrorFreshness(rows, { table: 'opportunities' });
+    // count is only meaningful alongside the freshness of what produced it,
+    // and freshness is judged by the table-level MAX(synced_at) probe: a
+    // truly empty table has MAX NULL and stamps unknown; a live table with a
+    // zero cohort is an honest zero (F1/F5 redesign).
+    const freshness = stampMirrorFreshness(rows, { table: 'opportunities', tableMax });
 
     return {
       filters: {

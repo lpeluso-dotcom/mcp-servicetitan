@@ -25,6 +25,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -41,6 +42,8 @@ interface MarkupRow {
   cost: number;
   price: number;
   kind: 'material' | 'equipment';
+  // Feeds the freshness stamp only — never emitted on outlier rows.
+  synced_at: string | null;
 }
 
 interface EquipmentNoPriceRow {
@@ -48,10 +51,14 @@ interface EquipmentNoPriceRow {
   code: string | null;
   name: string | null;
   cost: number;
+  synced_at: string | null;
 }
 
 interface CountRow {
   cnt: number;
+  // MAX(synced_at) — COUNT(*) aggregates row age away, so the count query
+  // carries its own freshness evidence (tech_scorecard pattern).
+  synced_at: string | null;
 }
 
 interface OutlierRow {
@@ -83,22 +90,25 @@ function median(values: number[]): number {
 // pb_categories.name. We resolve the primary category (categories_json[0])
 // via json_extract + LEFT JOIN so grouping is genuinely category-relative;
 // items whose join misses fall to 'Uncategorized' in the handler.
-const MARKUP_SQL = `SELECT m.id, m.code, m.name, c.name AS category_name, m.cost, m.price, 'material' AS kind
+const MARKUP_SQL = `SELECT m.id, m.code, m.name, c.name AS category_name, m.cost, m.price, 'material' AS kind, m.synced_at
    FROM pb_materials m
    LEFT JOIN pb_categories c ON c.id = json_extract(m.categories_json, '$[0]')
    WHERE m.active = 1 AND m.cost > 0 AND m.price > 0
    UNION ALL
-   SELECT e.id, e.code, e.name, c.name AS category_name, e.cost, e.price, 'equipment' AS kind
+   SELECT e.id, e.code, e.name, c.name AS category_name, e.cost, e.price, 'equipment' AS kind, e.synced_at
    FROM pb_equipment e
    LEFT JOIN pb_categories c ON c.id = json_extract(e.categories_json, '$[0]')
    WHERE e.active = 1 AND e.cost > 0 AND e.price > 0`;
 
-const EQUIPMENT_COST_NO_PRICE_SQL = `SELECT id, code, name, cost
+const EQUIPMENT_COST_NO_PRICE_SQL = `SELECT id, code, name, cost, synced_at
    FROM pb_equipment
    WHERE active = 1 AND cost > 0 AND price = 0
    ORDER BY cost DESC`;
 
-const MATERIAL_PLACEHOLDER_COUNT_SQL = `SELECT COUNT(*) AS cnt
+// COUNT(*) aggregates synced_at away — carry MAX(synced_at) alongside the
+// count so this query can still vouch for the mirror's age (MB-1 / QUA-1141,
+// same fix as tech_scorecard's GROUP BY).
+const MATERIAL_PLACEHOLDER_COUNT_SQL = `SELECT COUNT(*) AS cnt, MAX(synced_at) AS synced_at
    FROM pb_materials
    WHERE active = 1 AND cost = 0 AND price = 0`;
 
@@ -140,7 +150,13 @@ export const pricebook_markup_drift: ToolDef<Args> = {
     const minCategoryPeers = args.minCategoryPeers ?? DEFAULT_MIN_CATEGORY_PEERS;
     const includeMarginRisk = args.includeMarginRisk ?? true;
 
-    const { rows } = await readD1<MarkupRow>(env, MARKUP_SQL, []);
+    // Every table this composite reads gets its own liveness verdict —
+    // including pb_categories, whose join supplies the category names the
+    // grouping depends on (F2: no table hides behind a fresh sibling).
+    const [{ rows }, tableMax] = await Promise.all([
+      readD1<MarkupRow>(env, MARKUP_SQL, []),
+      fetchTableMax(env, ['pb_materials', 'pb_equipment', 'pb_categories']),
+    ]);
 
     const withMarkup = rows.map((r) => ({
       ...r,
@@ -189,18 +205,30 @@ export const pricebook_markup_drift: ToolDef<Args> = {
     const outliersFound = outliers.length;
     const outliersCapped = outliers.slice(0, EXAMPLE_CAP);
 
+    // synced_at feeds the stamp below; keep it off the emitted risk rows.
     let marginRisk: Record<string, unknown> | undefined;
+    let riskRows: Array<{ synced_at: string | null }> = [];
     if (includeMarginRisk) {
       const [equipNoPrice, placeholders] = await Promise.all([
         readD1<EquipmentNoPriceRow>(env, EQUIPMENT_COST_NO_PRICE_SQL, []),
         readD1<CountRow>(env, MATERIAL_PLACEHOLDER_COUNT_SQL, []),
       ]);
+      riskRows = [...equipNoPrice.rows, ...placeholders.rows];
       marginRisk = {
-        equipmentCostNoPrice: equipNoPrice.rows.slice(0, EXAMPLE_CAP),
+        equipmentCostNoPrice: equipNoPrice.rows.slice(0, EXAMPLE_CAP).map(({ synced_at: _, ...r }) => r),
         equipmentCostNoPriceCount: equipNoPrice.rows.length,
         materialPlaceholderCount: placeholders.rows[0]?.cnt ?? 0,
       };
     }
+
+    // MB-1 / QUA-1141: per-table verdicts from the MAX(synced_at) probe —
+    // a zero-computable-rows run on proven-live tables is an honest zero,
+    // and a frozen table is named even when its sibling is fresh (F2/F5).
+    // The riskRows still ride along for _empty/degraded-mode fidelity.
+    const freshness = stampMirrorFreshness([...rows, ...riskRows], {
+      table: 'pb_materials+pb_equipment',
+      tableMax,
+    });
 
     return {
       filters: { threshold, minCategoryPeers, includeMarginRisk },
@@ -209,11 +237,13 @@ export const pricebook_markup_drift: ToolDef<Args> = {
         categories_examined: categoriesExamined,
         categories_skipped_insufficient_peers: categoriesSkipped,
         outliers_found: outliersFound,
+        metrics_are_authoritative: freshness._freshness === 'fresh',
       },
       outliers: outliersCapped,
       marginRisk,
       _composite: 'pricebook_markup_drift',
       _source: 'd1',
+      ...freshness,
       _note:
         'Services are excluded entirely: QSC prices every active service dynamically at invoice time ' +
         '(use_static_prices=0 fleet-wide), so a service’s 0 price/cost is by design, not a markup gap. ' +

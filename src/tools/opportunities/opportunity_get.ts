@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { McpError } from '../../errors';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
-import { stampMirrorFreshness } from '../../mirror-freshness';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -77,26 +77,31 @@ export const opportunity_get: ToolDef<Args> = {
   },
   async handler(env, args, { correlation }) {
     try {
-      const { rows } = await readD1<OpportunityRow>(
-        env,
-        'SELECT * FROM opportunities WHERE opportunity_id = ? LIMIT 1',
-        [args.opportunityId],
-      );
+      const [{ rows }, tableMax] = await Promise.all([
+        readD1<OpportunityRow>(
+          env,
+          'SELECT * FROM opportunities WHERE opportunity_id = ? LIMIT 1',
+          [args.opportunityId],
+        ),
+        fetchTableMax(env, ['opportunities']),
+      ]);
       if (rows.length === 0) {
         // MB-1 / QUA-1141: `not_found` here is a claim about the MIRROR, not
-        // about ServiceTitan. With the `opportunities` mirror empty in
-        // production this tool returned not_found for opportunities that
-        // genuinely exist — so say which one this is.
+        // about ServiceTitan. The table-level probe distinguishes the two
+        // cases: on a LIVE mirror this stamps fresh and reads as "not in the
+        // mirror as of the last sync"; on an empty/frozen mirror (which has
+        // happened in production) it stamps unknown/stale with a warning.
         return {
           status: 'not_found',
           opportunity: null,
           estimates: [],
           _source: 'd1',
-          ...stampMirrorFreshness(rows, { table: 'opportunities' }),
+          ...stampMirrorFreshness(rows, { table: 'opportunities', tableMax }),
           _not_found_caveat:
-            `No row for opportunity ${args.opportunityId} in the taylor-ai D1 mirror. This does ` +
-            `NOT establish that the opportunity does not exist in ServiceTitan — the mirror has ` +
-            `been empty in production. Confirm against live ST before acting on this.`,
+            `No row for opportunity ${args.opportunityId} in the taylor-ai D1 mirror as of its ` +
+            `last sync (see _freshness). If the mirror is not proven fresh this does NOT ` +
+            `establish that the opportunity is absent from ServiceTitan — confirm against live ` +
+            `ST before acting on it.`,
         };
       }
       const opp = rows[0];
@@ -134,7 +139,7 @@ export const opportunity_get: ToolDef<Args> = {
         },
         estimates: estimates.map((e) => ({ ...e, active: e.active !== 0 })),
         _source: 'd1',
-        ...stampMirrorFreshness(rows, { table: 'opportunities' }),
+        ...stampMirrorFreshness(rows, { table: 'opportunities', tableMax }),
       };
     } catch (err) {
       throw new McpError(

@@ -185,6 +185,9 @@ describe('outputSchema — lenient fixture validation (top-10 tools)', () => {
 
   // Envelope per search_pricebook_all — two real shapes: 'success' (code or
   // query hit) and 'not_found'. See v12_new_tools.test.ts for real item rows.
+  // Both carry the MB-1 / QUA-1141 v2 freshness stamp on every path: items
+  // no longer leak synced_at (stamp plumbing, stripped), and `_tables` holds
+  // the per-table verdicts from the fetchTableMax probe.
   it('search_pricebook_all: success envelope (code lookup)', () => {
     expectValid(search_pricebook_all, {
       status: 'success',
@@ -192,16 +195,31 @@ describe('outputSchema — lenient fixture validation (top-10 tools)', () => {
       matched_code: 'FLU-150',
       items: [{ code: 'FLU-150', name: 'Flush', description: '', category: 'Drain', price: 150, member_price: null, hours: 0.75, type: 'service', calculated_price: 200, pricing: 'dynamic' }],
       _source: 'd1',
+      _mirror_table: 'pb_services',
+      _stale_hours: 3.2,
+      _freshness: 'fresh',
+      _empty: false,
+      _tables: { pb_services: { stale_hours: 3.2, freshness: 'fresh' } },
     });
   });
 
-  it('search_pricebook_all: not_found envelope', () => {
+  it('search_pricebook_all: not_found envelope (unprovable mirror)', () => {
     expectValid(search_pricebook_all, {
       status: 'not_found',
       message: 'Nothing found for "zzz". Try a different term.',
       count: 0,
       items: [],
       _source: 'd1',
+      _mirror_table: 'pb_services+pb_materials+pb_equipment',
+      _stale_hours: null,
+      _freshness: 'unknown',
+      _empty: true,
+      _tables: {
+        pb_services: { stale_hours: null, freshness: 'unknown' },
+        pb_materials: { stale_hours: null, freshness: 'unknown' },
+        pb_equipment: { stale_hours: null, freshness: 'unknown' },
+      },
+      _warning: 'Freshness unknown for `pb_services+pb_materials+pb_equipment`: mirror table(s) returned no MAX(synced_at) — a zero or miss from it is NOT proof that zero matching records exist.',
     });
   });
 
@@ -218,13 +236,18 @@ describe('outputSchema — lenient fixture validation (top-10 tools)', () => {
 
   // Envelope per job_cost_actuals composite (composites/job_cost_actuals.ts)
   // — real numbers pinned by v15_composites.test.ts's Brooks/77423990 probe.
+  // Carries the MB-1 / QUA-1141 v2 freshness stamp on every path (its
+  // _warning rides in _warnings, so no top-level _warning field): emitted
+  // timesheets no longer leak synced_at, and `_tables` holds the
+  // job_timesheets verdict from the fetchTableMax probe.
   it('job_cost_actuals: full composite envelope (Brooks/77423990 probe shape)', () => {
     expectValid(job_cost_actuals, {
       jobId: 77423990,
       job: { job_id: 77423990, customer_id: 9001, business_unit: 'Plumbing Service Residential', job_type: 'Service Call', job_status: 'Completed', completed_date: '2026-02-20', revenue: 850.0, project_id: null, modified_at: '2026-02-20T19:34:00Z' },
       summary: {
         total_drive_minutes: 24, total_working_minutes: 152, total_minutes: 176,
-        burden_rate_per_hour: 45, 'labor_burden_$': 132, revenue: 850,
+        burden_rate_per_hour: 45, 'labor_burden_$': 132, labor_burden_basis: 'timesheets',
+        metrics_are_authoritative: true, revenue: 850,
         'gross_profit_$': 718, gross_margin_pct: 84.5,
       },
       per_technician: [{ technician_id: 75766687, technician_name: 'Brooks Hunsucker', drive_minutes: 24, working_minutes: 152, timesheet_count: 1 }],
@@ -235,6 +258,11 @@ describe('outputSchema — lenient fixture validation (top-10 tools)', () => {
       invoice: null,
       _partial: false,
       _failures: [],
+      _mirror_table: 'job_timesheets',
+      _stale_hours: 3.2,
+      _freshness: 'fresh',
+      _empty: false,
+      _tables: { job_timesheets: { stale_hours: 3.2, freshness: 'fresh' } },
       _composite: 'job_cost_actuals',
       _source: 'mixed',
       correlation: 'c1',

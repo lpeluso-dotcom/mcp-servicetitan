@@ -1,3 +1,6 @@
+// MB-1 / QUA-1141: mirror-freshness stamp deliberately NOT adopted here —
+// this is a pre-write existence probe, not a read tool; its fail-open
+// `unavailable` path already discloses a broken/empty mirror to the caller.
 // ============================================================
 // sku-resolve.ts — resolve a pricebook SKU NAME against the D1 pricebook
 // mirror before a write that resolves lines by name.

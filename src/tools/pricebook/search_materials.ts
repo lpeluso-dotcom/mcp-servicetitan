@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { readST } from '../../st';
 import { codeVariants } from './search_pricebook_all';
 import { queryD1First } from '../../d1-proxy';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
@@ -21,7 +22,7 @@ const TENANT_ID = '000000000';
 const SQL_BY_CODE = `SELECT
   id, code, name, description, category_name, price, member_price, cost,
   active, unit_of_measure, taxable, account, primary_vendor_name,
-  primary_vendor_id, is_inventory
+  primary_vendor_id, is_inventory, synced_at
 FROM pb_materials
 WHERE code = ?
 LIMIT 1`;
@@ -81,9 +82,23 @@ export const search_materials: ToolDef<Args> = {
   stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/materials', source: 'live' },
   async handler(env, args, { actor, correlation }) {
     if (args.code) {
+      // Table-level freshness probe (F1 redesign) — concurrent with the code
+      // lookup; never rejects (degrades to {}).
+      const tableMaxP = fetchTableMax(env, ['pb_materials']);
       const exact = await lookupExactCode(env, args.code, correlation);
       if (exact) {
-        return { materials: [exact], _source: 'd1-exact', _matched_code: args.code };
+        // MB-1 / QUA-1141: this serves a raw pb_materials mirror row — stamp
+        // it so a hit off a frozen mirror is disclosed instead of served
+        // silently. Freshness is judged by the TABLE's MAX(synced_at): the
+        // row's own synced_at only says when the row itself last changed.
+        // synced_at is stamp plumbing, stripped from the emitted row.
+        const { synced_at: _synced_at, ...material } = exact as Record<string, unknown>;
+        return {
+          materials: [material],
+          _source: 'd1-exact',
+          _matched_code: args.code,
+          ...stampMirrorFreshness([exact], { table: 'pb_materials', tableMax: await tableMaxP }),
+        };
       }
     }
 

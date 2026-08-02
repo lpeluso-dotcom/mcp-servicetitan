@@ -31,6 +31,7 @@ import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
 import { shapePriceRow } from '../../supabase';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -45,6 +46,8 @@ interface CostDriftRow {
   cost: number;
   price: number;
   updated_at: string | null;
+  // Mirror sync time — NOT updated_at (ST's modifiedOn). Feeds the stamp.
+  synced_at: string | null;
   kind: 'material' | 'equipment';
 }
 
@@ -58,11 +61,11 @@ function clampWindowDays(raw: number | undefined): number {
   return Math.min(Math.max(Math.trunc(v), MIN_WINDOW_DAYS), MAX_WINDOW_DAYS);
 }
 
-const SQL = `SELECT id, code, name, category_name, cost, price, updated_at, 'material' AS kind
+const SQL = `SELECT id, code, name, category_name, cost, price, updated_at, synced_at, 'material' AS kind
    FROM pb_materials
    WHERE active = 1 AND cost > 0 AND substr(updated_at, 1, 10) >= date('now', ?)
    UNION ALL
-   SELECT id, code, name, category_name, cost, price, updated_at, 'equipment' AS kind
+   SELECT id, code, name, category_name, cost, price, updated_at, synced_at, 'equipment' AS kind
    FROM pb_equipment
    WHERE active = 1 AND cost > 0 AND substr(updated_at, 1, 10) >= date('now', ?)
    ORDER BY updated_at DESC
@@ -92,7 +95,10 @@ export const pricebook_cost_drift: ToolDef<Args> = {
     const windowDays = clampWindowDays(args.windowDays);
     const dateParam = `-${windowDays} days`;
 
-    const { rows } = await readD1<CostDriftRow>(env, SQL, [dateParam, dateParam, RESULT_CAP]);
+    const [{ rows }, tableMax] = await Promise.all([
+      readD1<CostDriftRow>(env, SQL, [dateParam, dateParam, RESULT_CAP]),
+      fetchTableMax(env, ['pb_materials', 'pb_equipment']),
+    ]);
 
     // shapePriceRow: QSC runs dynamic pricing, so a stored price of 0 is NOT
     // "free" — it means the price is computed at invoice time. D1 stores a
@@ -113,12 +119,21 @@ export const pricebook_cost_drift: ToolDef<Args> = {
       }),
     );
 
+    // MB-1 / QUA-1141: each table's MAX(synced_at) drives the stamp —
+    // updated_at is ST's modifiedOn and says nothing about the mirror's age,
+    // and per-table verdicts stop a frozen pb_equipment hiding behind a
+    // fresh pb_materials (F2). With both tables proven live, an empty window
+    // is an honest "nothing changed lately" (F5).
+    const freshness = stampMirrorFreshness(rows, { table: 'pb_materials+pb_equipment', tableMax });
+
     return {
       window_days: windowDays,
       count: items.length,
+      count_is_authoritative: freshness._freshness === 'fresh',
       items,
       _composite: 'pricebook_cost_drift',
       _source: 'd1',
+      ...freshness,
       _note:
         'updated_at is ST modifiedOn (any-field change), so this surfaces recently-MODIFIED cost-bearing ' +
         'items, not verified cost changes — true old→new cost delta needs a cost-history snapshot (deferred).',

@@ -271,6 +271,59 @@ describe('get_form_submission', () => {
     expect(result._source).toBe('d1');
   });
 
+  // MB-1 / QUA-1141: a D1 HIT used to be served with no freshness signal —
+  // a stale `form_submissions` row looked exactly like a current one.
+  it('D1 hit carries a freshness stamp — a live table marks it fresh', async () => {
+    const hitRow = {
+      submission_id: 8479, form_id: 7752, form_name: 'Lead Intake', status: 'Complete',
+      submitted_on: '2026-06-01T10:00:00Z', submitted_by_id: 501,
+      owners_json: null, units_json: null,
+      synced_at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+    };
+    const env = envD1AndLive((body) =>
+      / AS t,/.test(String(body.sql))
+        ? { success: true, results: [{ t: 'form_submissions', m: new Date(Date.now() - 2 * 3_600_000).toISOString() }] }
+        : { success: true, results: [hitRow] });
+    const result: any = await get_form_submission.handler(env, { formSubmissionId: 8479 }, CTX);
+    expect(result._mirror_table).toBe('form_submissions');
+    expect(result._freshness).toBe('fresh');
+    expect(result._warning).toBeUndefined();
+  });
+
+  it('a hit off a frozen sync (table MAX weeks old) is disclosed, not served silently (MB-1 / QUA-1141)', async () => {
+    const staleIso = new Date(Date.now() - 30 * 24 * 3_600_000).toISOString();
+    const hitRow = {
+      submission_id: 8479, form_id: 7752, form_name: 'Lead Intake', status: 'Complete',
+      submitted_on: '2026-06-01T10:00:00Z', submitted_by_id: 501,
+      owners_json: null, units_json: null, synced_at: staleIso,
+    };
+    const env = envD1AndLive((body) =>
+      / AS t,/.test(String(body.sql))
+        ? { success: true, results: [{ t: 'form_submissions', m: staleIso }] }
+        : { success: true, results: [hitRow] });
+    const result: any = await get_form_submission.handler(env, { formSubmissionId: 8479 }, CTX);
+    expect(result._source).toBe('d1');
+    expect(result._freshness).toBe('unknown');
+    expect(result._warning).toMatch(/no row change in|indistinguishable/);
+    expect(result._stale_hours).toBeGreaterThan(48);
+  });
+
+  it('an OLD hit row on a LIVE sync is not called stale — the table probe decides (F1)', async () => {
+    const hitRow = {
+      submission_id: 8479, form_id: 7752, form_name: 'Lead Intake', status: 'Complete',
+      submitted_on: '2026-06-01T10:00:00Z', submitted_by_id: 501,
+      owners_json: null, units_json: null,
+      synced_at: new Date(Date.now() - 30 * 24 * 3_600_000).toISOString(),
+    };
+    const env = envD1AndLive((body) =>
+      / AS t,/.test(String(body.sql))
+        ? { success: true, results: [{ t: 'form_submissions', m: new Date(Date.now() - 3_600_000).toISOString() }] }
+        : { success: true, results: [hitRow] });
+    const result: any = await get_form_submission.handler(env, { formSubmissionId: 8479 }, CTX);
+    expect(result._freshness).toBe('fresh');
+    expect(result._warning).toBeUndefined();
+  });
+
   it('D1 miss + formId falls back to a live scan matched on submission id (formIds= pinned)', async () => {
     let capturedUrl = '';
     const env = envD1AndLive(

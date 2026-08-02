@@ -21,6 +21,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -41,6 +42,8 @@ interface EstimateAuditRow {
   job_business_unit: string | null;
   job_type: string | null;
   job_techs_csv: string | null;
+  /** Row-level sync timestamp — feeds the mirror-freshness stamp. */
+  synced_at: string | null;
 }
 
 interface OutRow {
@@ -106,6 +109,7 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
 
     const sql =
       `SELECT e.estimate_id, e.job_id, e.status, e.total, e.sold_by, e.modified_date AS modified_at,
+              e.synced_at,
               j.business_unit AS job_business_unit, j.job_type,
               (SELECT GROUP_CONCAT(DISTINCT technician_name)
                  FROM appointment_assignments aa
@@ -116,7 +120,10 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
        ORDER BY e.modified_date DESC
        LIMIT ?`;
 
-    const { rows } = await readD1<EstimateAuditRow>(env, sql, [...params, limit * 3]);
+    const [{ rows }, tableMax] = await Promise.all([
+      readD1<EstimateAuditRow>(env, sql, [...params, limit * 3]),
+      fetchTableMax(env, ['estimates']),
+    ]);
 
     // Filter to the mismatch cohort in JS so we can carry the reason cleanly.
     const out: OutRow[] = [];
@@ -160,6 +167,12 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
     const byReason: Record<string, number> = {};
     for (const r of out) byReason[r.mismatch_reason] = (byReason[r.mismatch_reason] ?? 0) + 1;
 
+    // MB-1 / QUA-1141: this audit feeds commission review — a frozen or empty
+    // `estimates` mirror rendered as "0 mismatches, attribution is clean".
+    // The table-level MAX(synced_at) probe proves the mirror's age, so a
+    // clean audit over a live mirror is an honest clean audit (F1/F5).
+    const freshness = stampMirrorFreshness(rows, { table: 'estimates', tableMax });
+
     return {
       window: { startDate: args.startDate, endDate: args.endDate },
       filters: { status: args.status ?? null, businessUnit: args.businessUnit ?? null },
@@ -167,10 +180,13 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
         examined: rows.length,
         flagged: out.length,
         by_reason: byReason,
+        // A zero `flagged` is only a clean audit when the mirror is proven fresh.
+        count_is_authoritative: freshness._freshness === 'fresh',
       },
       mismatches: out,
       _composite: 'assigned_vs_sold_estimate_audit',
       _source: 'd1',
+      ...freshness,
     };
   },
   transformResult: defaultShaper,

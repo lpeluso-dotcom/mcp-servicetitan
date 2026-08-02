@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { readST } from '../../st';
 import { codeVariants } from './search_pricebook_all';
 import { queryD1First } from '../../d1-proxy';
+import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
@@ -23,7 +24,7 @@ const TENANT_ID = '000000000';
 const SQL_BY_CODE = `SELECT
   id, code, name, description, category_name, price, member_price, hours,
   is_labor, material_cost, active, cost, use_static_prices, calculated_price,
-  addon_price, addon_member_price, taxable, account
+  addon_price, addon_member_price, taxable, account, synced_at
 FROM pb_services
 WHERE code = ?
 LIMIT 1`;
@@ -84,9 +85,23 @@ export const search_pricebook_services: ToolDef<Args> = {
   async handler(env, args, { actor, correlation }) {
     // Exact-code path (D1) — try first, return early on hit.
     if (args.code) {
+      // Table-level freshness probe (F1 redesign) — concurrent with the code
+      // lookup; never rejects (degrades to {}).
+      const tableMaxP = fetchTableMax(env, ['pb_services']);
       const exact = await lookupExactCode(env, args.code, correlation);
       if (exact) {
-        return { services: [exact], _source: 'd1-exact', _matched_code: args.code };
+        // MB-1 / QUA-1141: this serves a raw pb_services mirror row — stamp
+        // it so a hit off a frozen mirror is disclosed instead of served
+        // silently. Freshness is judged by the TABLE's MAX(synced_at): the
+        // row's own synced_at only says when the row itself last changed.
+        // synced_at is stamp plumbing, stripped from the emitted row.
+        const { synced_at: _synced_at, ...service } = exact as Record<string, unknown>;
+        return {
+          services: [service],
+          _source: 'd1-exact',
+          _matched_code: args.code,
+          ...stampMirrorFreshness([exact], { table: 'pb_services', tableMax: await tableMaxP }),
+        };
       }
       // No D1 row — fall through to live ST with the code as a fuzzy name token.
     }
