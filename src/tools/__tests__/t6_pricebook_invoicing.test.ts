@@ -61,18 +61,25 @@ describe('search_pricebook_services', () => {
     expect(Array.isArray(result.services)).toBe(true);
   });
 
-  it('passes name filter to endpoint', async () => {
+  // QUA-951: these two previously asserted that `name` and `categoryId` were
+  // forwarded to live ST, and passed by checking the value merely APPEARED in
+  // the URL. ST accepts both and silently discards them, so "forwarded" was
+  // never the same as "applied" — a green suite is exactly why this shipped.
+  // Verified live 2026-08-04: both leave totalCount at the unfiltered 2,834.
+  it('rejects the name filter — ST ignores it on this endpoint', async () => {
     const env = makeEnv(liveOk([{ id: 1, name: 'AC Tune-Up' }]));
-    await search_pricebook_services.handler(env, { name: 'AC' }, CTX);
-    const [url] = env.ST_PROXY.fetch.mock.calls[0];
-    expect(url).toContain('AC');
+    await expect(search_pricebook_services.handler(env, { name: 'AC' }, CTX)).rejects.toThrow(
+      /name/i,
+    );
+    expect(env.ST_PROXY.fetch.mock.calls.length).toBe(0);
   });
 
-  it('passes categoryId filter', async () => {
+  it('rejects the categoryId filter — ST ignores it on this endpoint', async () => {
     const env = makeEnv(liveOk([]));
-    await search_pricebook_services.handler(env, { categoryId: 42 }, CTX);
-    const [url] = env.ST_PROXY.fetch.mock.calls[0];
-    expect(url).toContain('42');
+    await expect(search_pricebook_services.handler(env, { categoryId: 42 }, CTX)).rejects.toThrow(
+      /categoryId/i,
+    );
+    expect(env.ST_PROXY.fetch.mock.calls.length).toBe(0);
   });
 
   it('rejects pageSize over 200', async () => {

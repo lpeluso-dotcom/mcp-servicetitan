@@ -108,10 +108,17 @@ describe('search_pricebook_services (QUA-267 code param)', () => {
     const out = (await search_pricebook_services.handler(env, { code: 'flu150' }, ctx)) as any;
     // codeVariants("flu150") = ['flu150', 'FLU150', 'FLU-150'] (3 variants)
     expect(calls).toBe(3);
-    expect(out._source).toBe('live');
+    // QUA-951: all three variants missing in D1 now yields an honest empty
+    // result. It used to return _source 'live' — an unfiltered ST page.
+    expect(out._source).toBe('d1-exact');
+    expect(out.services).toHaveLength(0);
   });
 
-  it('exact code with no D1 hit and no name: falls through to live ST using code as name', async () => {
+  // QUA-951 (was: "falls through to live ST using code as name"). That
+  // fallthrough sent `name=<code>` to ST, which ignores `name` — so an unknown
+  // code came back as an unfiltered page of ~50 arbitrary services that read
+  // as matches. An unknown code must now return empty, not a plausible lie.
+  it('exact code with no D1 hit returns empty — never an unfiltered live page', async () => {
     const env = fakeEnv([
       {
         urlContains: '/api/sql/read',
@@ -123,34 +130,29 @@ describe('search_pricebook_services (QUA-267 code param)', () => {
       },
     ]);
     const out = (await search_pricebook_services.handler(env, { code: 'BRAND-NEW-99' }, ctx)) as any;
-    expect(out._source).toBe('live');
-    // Verify live ST was hit AT LEAST once (readST encodes query params in the URL).
+    expect(out.services).toHaveLength(0);
+    expect(out._matched_code).toBeNull();
+    expect(out._note).toMatch(/BRAND-NEW-99/);
+
     const liveCall = (env.ST_PROXY.fetch as any).mock.calls.find((c: any) =>
       String(c[0]).includes('/api/st/read'),
     );
-    expect(liveCall).toBeTruthy();
-    // The code is passed to the live ST `name` param when no explicit name is set.
-    // readST may inline the query in the URL or POST it as JSON depending on its impl.
-    const liveUrl = String(liveCall[0]);
-    const liveInit = liveCall[1] ?? {};
-    const probe = liveUrl + (liveInit.body ? ' ' + String(liveInit.body) : '');
-    expect(probe).toMatch(/BRAND-NEW-99/i);
+    expect(liveCall, 'a D1 code miss must not degrade into an unfiltered live ST call').toBeFalsy();
   });
 
-  it('name only (no code): goes straight to live ST', async () => {
+  // QUA-951 (was: "name only (no code): goes straight to live ST"). Going
+  // "straight to live ST" was the bug — ST discards `name` on this endpoint.
+  it('name only (no code): rejected, because ST ignores the name filter', async () => {
     const env = fakeEnv([
       {
         urlContains: '/api/st/read',
         body: { data: [{ id: 1, name: 'Diagnostic Fee' }] },
       },
     ]);
-    const out = (await search_pricebook_services.handler(env, { name: 'diagnostic' }, ctx)) as any;
-    expect(out._source).toBe('live');
-    // No D1 hit at all.
-    const d1Call = (env.ST_PROXY.fetch as any).mock.calls.find((c: any) =>
-      String(c[0]).includes('/api/sql/read'),
-    );
-    expect(d1Call).toBeUndefined();
+    await expect(
+      search_pricebook_services.handler(env, { name: 'diagnostic' }, ctx),
+    ).rejects.toThrow(/name|search_pricebook_all/i);
+    expect((env.ST_PROXY.fetch as any).mock.calls.length).toBe(0);
   });
 
   it('preserves the matched variant in _matched_code', async () => {
