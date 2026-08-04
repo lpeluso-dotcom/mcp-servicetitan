@@ -142,6 +142,7 @@ import { save_tech_debrief } from './dawn/save_tech_debrief';
 // TAI-STV2 — semantic search over the Woz gold vector index (Supabase vec schema)
 import { semantic_search_gold } from './gold/semantic_search_gold';
 import { gold_margin_by_bu } from './gold/gold_margin_by_bu';
+import { titan_advisor_score } from './gold/titan_advisor_score';
 import { tech_scorecard } from './composites/tech_scorecard';
 
 export interface ToolContext {
@@ -271,7 +272,7 @@ export const TOOLS: readonly ToolDef<any>[] = [
   // TAI-STV2 — Woz gold vector search (Supabase vec schema)
   semantic_search_gold,
   // TAI-STV2 rebuild — guided-surface backing tools
-  gold_margin_by_bu, tech_scorecard,
+  gold_margin_by_bu, tech_scorecard, titan_advisor_score,
 ] as const;
 
 export function findTool(name: string): ToolDef<any> | undefined {
