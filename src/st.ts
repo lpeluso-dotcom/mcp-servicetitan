@@ -30,6 +30,42 @@ export interface ReadSTContext {
   correlation: string;
 }
 
+/**
+ * Reject filter args that ST's list endpoints accept syntactically but
+ * silently discard — the QUA-1054 / QUA-951 defect class.
+ *
+ * ST does not 400 on an unrecognized query param. It ignores it and returns
+ * an unfiltered page 1 as HTTP 200, so a dropped filter is indistinguishable
+ * from a genuine match. `find_customer({phone})` shipped `phoneNumber` and
+ * handed callers a stranger's name, address and balance with full confidence.
+ *
+ * The rule (Luke, 2026-08-04): if a filter cannot be applied server-side,
+ * FAIL LOUDLY. A wrong answer is worse than no answer. Never degrade to an
+ * unfiltered page, and never quietly drop the arg either — the caller asked
+ * a narrower question than we can answer and must be told so.
+ *
+ * @param args     the tool's parsed arguments
+ * @param unsupported map of arg name -> what the caller should do instead
+ */
+export function rejectUnsupportedSTFilters(
+  args: Record<string, unknown>,
+  unsupported: Record<string, string>,
+  correlation?: string,
+): void {
+  const offenders = Object.keys(unsupported).filter(
+    (k) => args[k] !== undefined && args[k] !== null && args[k] !== '',
+  );
+  if (offenders.length === 0) return;
+  const detail = offenders.map((k) => `\`${k}\`: ${unsupported[k]}`).join(' ');
+  throw new McpError(
+    'validation_error',
+    `ServiceTitan does not support filtering by ${offenders.map((k) => `\`${k}\``).join(', ')} ` +
+      `on this endpoint — it ignores the parameter and returns an unfiltered first page, ` +
+      `which would look like a real match. Refusing rather than returning wrong data. ${detail}`,
+    { correlation },
+  );
+}
+
 export interface STListResponse<T = unknown> {
   data: T[];
   hasMore?: boolean;

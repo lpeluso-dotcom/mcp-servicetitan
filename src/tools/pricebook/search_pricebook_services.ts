@@ -11,7 +11,7 @@
 // ============================================================
 
 import { z } from 'zod';
-import { readST } from '../../st';
+import { readST, rejectUnsupportedSTFilters } from '../../st';
 import { codeVariants } from './search_pricebook_all';
 import { queryD1First } from '../../d1-proxy';
 import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
@@ -62,10 +62,11 @@ async function lookupExactCode(
 export const search_pricebook_services: ToolDef<Args> = {
   name: 'search_pricebook_services',
   description:
-    'Search pricebook services by exact `code` (e.g. "WHEH-140", "P1HL22"), or fuzzy `name`/category. ' +
-    'Exact-code path hits D1 directly (sub-100ms) and short-circuits on hit. ' +
-    'Fuzzy path falls through to live ST. ' +
-    'Source: D1 for exact code (fresh nightly); live ST for name/category fuzzy. Default page size 50, max 200.',
+    'Look up pricebook services by exact `code` (e.g. "WHEH-140", "P1HL22") against D1 (sub-100ms), ' +
+    'or list them live via `active`/`page`/`pageSize`. ' +
+    'For fuzzy name/description matching use search_pricebook_all({query}) instead — ServiceTitan has ' +
+    'no name or category filter on this endpoint and silently ignores both (QUA-951). ' +
+    'Source: D1 for exact code (fresh nightly); live ST for plain listing. Default page size 50, max 200.',
   zodSchema: {
     code: z
       .string()
@@ -73,16 +74,43 @@ export const search_pricebook_services: ToolDef<Args> = {
       .max(64)
       .optional()
       .describe(
-        'Exact pricebook code (e.g. "WHEH-140"). Wins over `name` if both provided. Tries the raw value, UPPERCASE, and UPPERCASE-hyphenated variants in order.',
+        'Exact pricebook code (e.g. "WHEH-140"). Tries the raw value, UPPERCASE, and UPPERCASE-hyphenated variants in order. Returns empty if no such code exists.',
       ),
-    name: z.string().optional().describe('Service name or token (partial match against live ST)'),
-    categoryId: z.number().int().positive().optional().describe('Filter by category ID'),
+    name: z
+      .string()
+      .optional()
+      .describe('NOT SUPPORTED by ServiceTitan on this endpoint — passing it returns a validation error. Use search_pricebook_all({query}).'),
+    categoryId: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('NOT SUPPORTED by ServiceTitan on this endpoint — passing it returns a validation error. Filter client-side against list_service_categories.'),
     active: z.boolean().optional().describe('Filter by active status (default: all)'),
     page: z.number().int().positive().default(1).describe('Page number'),
     pageSize: z.number().int().positive().max(200).default(50).describe('Page size, max 200'),
   },
   stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/services', source: 'live' },
   async handler(env, args, { actor, correlation }) {
+    // QUA-951: verified live 2026-08-04 — `name` and `categoryId` are both
+    // discarded by ST on /pricebook/v2/tenant/{tid}/services (totalCount stays
+    // at the unfiltered 2,834). A Plumbing categoryId filter returned an HVAC
+    // diagnostic fee as its top hit and silently invalidated a whole
+    // verification pass.
+    rejectUnsupportedSTFilters(
+      args as unknown as Record<string, unknown>,
+      {
+        name:
+          'ServiceTitan has no name filter on /pricebook/v2/tenant/{tid}/services. ' +
+          'Use search_pricebook_all({query}) for fuzzy name/description matching, or ' +
+          'pass `code` here for an exact-code lookup.',
+        categoryId:
+          'ServiceTitan has no categoryId filter on /pricebook/v2/tenant/{tid}/services. ' +
+          'Page the catalogue and filter client-side against list_service_categories.',
+      },
+      correlation,
+    );
+
     // Exact-code path (D1) — try first, return early on hit.
     if (args.code) {
       // Table-level freshness probe (F1 redesign) — concurrent with the code
@@ -103,12 +131,21 @@ export const search_pricebook_services: ToolDef<Args> = {
           ...stampMirrorFreshness([exact], { table: 'pb_services', tableMax: await tableMaxP }),
         };
       }
-      // No D1 row — fall through to live ST with the code as a fuzzy name token.
+      // QUA-951: no D1 row. This used to fall through to live ST with
+      // `name=<code>` — a parameter ST ignores — so an unknown code came back
+      // as an unfiltered page of ~50 arbitrary services that looked like
+      // matches. There is no server-side code filter to fall back to, so the
+      // honest answer to "no such code" is an empty result.
+      return {
+        services: [],
+        _source: 'd1-exact',
+        _matched_code: null,
+        _note: `No pricebook service found with code "${args.code}". Tried variants: ${codeVariants(args.code).join(', ')}. For fuzzy matching use search_pricebook_all({query}).`,
+        ...stampMirrorFreshness([], { table: 'pb_services', tableMax: await tableMaxP }),
+      };
     }
 
     const query: Record<string, unknown> = {
-      name: args.name ?? args.code,
-      categoryId: args.categoryId,
       active: args.active,
       page: args.page ?? 1,
       pageSize: args.pageSize ?? 50,
