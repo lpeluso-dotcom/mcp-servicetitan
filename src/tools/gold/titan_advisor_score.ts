@@ -92,23 +92,28 @@ export const titan_advisor_score: ToolDef<Args> = {
       ? `&section_name=eq.${encodeURIComponent(args.section)}`
       : '';
 
-    const daily = await sbSelect<SnapRow[]>(
+    // ORDER DESC + limit, THEN reverse — so a cap drops the OLDEST days, never the newest.
+    // Ordering asc and limiting truncates the recent end: "show me the whole trend" would
+    // silently return the oldest N days and stop short of today, which reads as a pipeline
+    // that died rather than a window that was too wide.
+    const daily = (await sbSelect<SnapRow[]>(
       env,
-      `snap_titan_advisor_daily?${window}&order=snapshot_date.asc&limit=${LIMIT_DAILY}`,
-      'gold');
+      `snap_titan_advisor_daily?${window}&order=snapshot_date.desc&limit=${LIMIT_DAILY}`,
+      'gold')).reverse();
 
-    const sections = await sbSelect<SectionRow[]>(
+    const sections = (await sbSelect<SectionRow[]>(
       env,
       `agg_titan_advisor_section_daily?${window}${sectionFilter}` +
-      `&order=snapshot_date.asc,section_name.asc&limit=${LIMIT_SECTIONS}`,
-      'gold');
+      `&order=snapshot_date.desc,section_name.asc&limit=${LIMIT_SECTIONS}`,
+      'gold')).reverse();
 
+    // Same desc-then-reverse reasoning as above: keep the most RECENT days when the cap bites.
     const features = args.detail
-      ? await sbSelect<FeatureRow[]>(
+      ? (await sbSelect<FeatureRow[]>(
           env,
           `fct_titan_advisor_feature_daily?${window}${sectionFilter}` +
-          `&order=snapshot_date.asc,section_name.asc,feature_name.asc&limit=${LIMIT_FEATURES}`,
-          'gold')
+          `&order=snapshot_date.desc,section_name.asc,feature_name.asc&limit=${LIMIT_FEATURES}`,
+          'gold')).reverse()
       : undefined;
 
     // Say so when a cap bit. A silently-truncated series is worse than a smaller one: the

@@ -102,6 +102,27 @@ describe('titan_advisor_score', () => {
     for (const [u] of f.mock.calls) expect(String(u)).toMatch(/[&?]limit=\d+/);
   });
 
+  it('drops the OLDEST days when a cap bites, never the newest', async () => {
+    const f = stubFetch({ snap_titan_advisor_daily: [], agg_titan_advisor_section_daily: [] });
+    await titan_advisor_score.handler(env, { from: '2020-01-01', to: '2026-08-03' }, ctx);
+    // desc + limit keeps the most recent N. Ordering asc would truncate the recent end,
+    // making a too-wide window look like a pipeline that stopped running.
+    for (const [u] of f.mock.calls) expect(String(u)).toContain('order=snapshot_date.desc');
+  });
+
+  it('still returns rows oldest-first after the desc fetch is reversed', async () => {
+    stubFetch({
+      // PostgREST returns newest-first under order=desc; the handler must reverse it.
+      snap_titan_advisor_daily: [
+        { snapshot_date: '2026-08-03', earned: 269, available: 476, pct: 56.5, feature_count: 131, checkpoint_count: 315 },
+        { snapshot_date: '2026-08-02', earned: 268, available: 476, pct: 56.3, feature_count: 131, checkpoint_count: 315 },
+      ],
+      agg_titan_advisor_section_daily: [],
+    });
+    const out: any = await titan_advisor_score.handler(env, { from: '2026-08-02', to: '2026-08-03' }, ctx);
+    expect(out.daily.map((r: any) => r.snapshot_date)).toEqual(['2026-08-02', '2026-08-03']);
+  });
+
   it('flags truncation when a cap is hit, so a partial series is not read as complete', async () => {
     // 400 daily rows = LIMIT_DAILY, i.e. the cap bit.
     const capped = Array.from({ length: 400 }, (_, i) => ({
