@@ -135,6 +135,7 @@ export const job_cost_actuals: ToolDef<Args> = {
     // into _warnings above rather than emitted as its own field.
     _mirror_table: z.string(),
     _stale_hours: z.number().nullable(),
+    _rows_synced_hours: z.number().nullable().optional(),
     _freshness: z.string(),
     _empty: z.boolean(),
     _tables: z.record(z.string(), z.unknown()).optional(),
