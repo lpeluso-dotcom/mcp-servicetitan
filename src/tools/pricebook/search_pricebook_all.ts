@@ -156,6 +156,7 @@ export const search_pricebook_all: ToolDef<Args> = {
     _source: z.string(),
     _mirror_table: z.string(),
     _stale_hours: z.number().nullable(),
+    _rows_synced_hours: z.number().nullable().optional(),
     _freshness: z.string(),
     _empty: z.boolean(),
     _tables: z.record(z.string(), z.unknown()).optional(),

@@ -79,6 +79,19 @@ export interface FreshnessStamp {
    * or null when it cannot be determined.
    */
   _stale_hours: number | null;
+  /**
+   * QUA-1234 — age of the newest row IN THE RETURNED PAGE, in hours; null
+   * when no returned row carries a usable timestamp (or the page is empty).
+   *
+   * Distinct from `_stale_hours`, which is a TABLE-level figure answering
+   * "is the sync alive?". This one answers "how old is the data I am
+   * holding?". In prod on 2026-08-09 those were 44h and 1151h for the same
+   * `opportunities` response — both true, and only the first was shown.
+   *
+   * Carries NO freshness verdict: per F1, unchanged rows keep their original
+   * synced_at forever, so an old page is what a healthy mirror serves.
+   */
+  _rows_synced_hours: number | null;
   /** `unknown` whenever freshness could not be PROVEN — never a default of `fresh`. */
   _freshness: Freshness;
   /**
@@ -107,6 +120,19 @@ interface StampOptions {
    * object (the fetchTableMax failure contract) degrades to row-level mode.
    */
   tableMax?: Record<string, unknown>;
+}
+
+/** Newest `synced_at` across the returned page, or undefined when none is usable. */
+function newestRowTs(
+  list: ReadonlyArray<unknown>,
+  syncedAtField: string
+): number | undefined {
+  let newest: number | undefined;
+  for (const row of list) {
+    const t = parseSyncedAt(fieldOf(row, syncedAtField));
+    if (t !== undefined && (newest === undefined || t > newest)) newest = t;
+  }
+  return newest;
 }
 
 /** Read a field off a row of unknown shape without assuming an index signature. */
@@ -216,11 +242,30 @@ export function stampMirrorFreshness(
     // mirror returning zero matching rows is a real zero as of the last
     // sync (the honest-empty semantics; F5).
 
+    // ── QUA-1234: report the page's OWN age as a FACT, no verdict ──
+    // A live table MAX proves the sync ran; it says nothing about the age of
+    // the rows actually handed to the caller. One fresh row anywhere in the
+    // table used to stamp every page 'fresh', including pages whose rows had
+    // not moved in 48 days — which is how the dead opportunities sync
+    // (QUA-1075) stayed hidden for 11 extra days.
+    //
+    // Deliberately NO warning and NO verdict is derived from this number.
+    // F1 is right: old returned rows are what a HEALTHY mirror serves (5 of
+    // 43,093 pb_services rows are synced <48h), so warning on row age would
+    // fire on nearly every honest call and train callers to ignore the
+    // disclosure entirely. The defect in QUA-1234 was never that the page
+    // was old — it was that the page's age was INVISIBLE while a
+    // table-level number sat next to it under a name callers read as the
+    // page's. Publishing both, separately named, is the whole fix.
+    const pageTs = newestRowTs(list, syncedAtField);
+    const rowsAge = pageTs === undefined ? null : ageHours(now, pageTs);
+
     return {
       ...base,
       // Worst observed age is factual and useful even under an 'unknown'
       // headline (null only when no table produced any timestamp at all).
       _stale_hours: worst,
+      _rows_synced_hours: rowsAge,
       _freshness: headline,
       _tables: tables,
       ...(warning !== undefined ? { _warning: warning } : {}),
@@ -235,6 +280,7 @@ export function stampMirrorFreshness(
     return {
       ...base,
       _stale_hours: null,
+      _rows_synced_hours: null,
       _freshness: 'unknown',
       _warning:
         `0 rows returned from the taylor-ai D1 mirror table \`${table}\` and no table-level ` +
@@ -245,17 +291,14 @@ export function stampMirrorFreshness(
     };
   }
 
-  let newest: number | undefined;
-  for (const row of list) {
-    const t = parseSyncedAt(fieldOf(row, syncedAtField));
-    if (t !== undefined && (newest === undefined || t > newest)) newest = t;
-  }
+  const newest = newestRowTs(list, syncedAtField);
 
   // ── No usable timestamp: cannot prove anything, so claim nothing ─────
   if (newest === undefined) {
     return {
       ...base,
       _stale_hours: null,
+      _rows_synced_hours: null,
       _freshness: 'unknown',
       _warning:
         `Freshness unknown for \`${table}\`: the ${list.length} row(s) returned carry no readable ` +
@@ -269,7 +312,7 @@ export function stampMirrorFreshness(
   // A recently-synced returned row IS proof the sync ran — degraded mode may
   // still say 'fresh'.
   if (rounded <= STALE_THRESHOLD_HOURS) {
-    return { ...base, _stale_hours: rounded, _freshness: 'fresh' };
+    return { ...base, _stale_hours: rounded, _rows_synced_hours: rounded, _freshness: 'fresh' };
   }
 
   // F1: an old newest-row proves NOTHING. Mirrors are incrementally synced —
@@ -278,6 +321,7 @@ export function stampMirrorFreshness(
   return {
     ...base,
     _stale_hours: rounded,
+    _rows_synced_hours: rounded,
     _freshness: 'unknown',
     _warning:
       `Freshness unknown for \`${table}\`: the newest returned row was synced ${rounded}h ago, ` +
