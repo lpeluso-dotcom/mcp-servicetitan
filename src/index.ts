@@ -40,6 +40,10 @@ export function healthPayload(env: Env): Record<string, unknown> {
     ok: true,
     service: 'mcp-servicetitan',
     version: env.MCP_SERVICE_VERSION,
+    // Derived at deploy time from the checked-out commit. Unlike
+    // MCP_SERVICE_VERSION (a hand-edited literal that has not moved across
+    // ~10 deploys) this cannot drift from what is actually running.
+    commit: env.GIT_SHA || 'unknown',
     toolCount: TOOLS.length,
     // tool NAMES intentionally omitted (QUA-519): unauthenticated enumeration
     // aids targeting. Full per-tool inventory lives on admin-gated /admin/endpoints.

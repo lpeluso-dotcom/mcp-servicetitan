@@ -22,6 +22,7 @@ export interface Env {
 
   // Vars
   MCP_SERVICE_VERSION: string;
+  GIT_SHA?: string; // short commit sha, stamped by deploy.yml (never hand-edited)
   ST_TENANT_ID: string;
   MCP_LOCKDOWN?: string; // "true" → server enters lockdown / read-only mode (v1.5.2)
   // Post-write verify-read backoff schedule, in ms, for read-after-write lag

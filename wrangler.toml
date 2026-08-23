@@ -52,6 +52,9 @@ service = "your-servicetitan-proxy"
 
 [vars]
 MCP_SERVICE_VERSION = "1.7.0"
+# Stamped by .github/workflows/deploy.yml from the deployed commit; the deploy
+# fails if this placeholder survives. Never hand-edit.
+GIT_SHA = "unknown"
 ST_TENANT_ID = "000000000"
 # audit S-2: verifyJwt now ALWAYS requires a numeric `exp` (a token without one
 # used to be valid forever) and enforces `aud`/`iss` whenever they are set.
@@ -104,6 +107,9 @@ cpu_ms = 50
 
 [env.dev.vars]
 MCP_SERVICE_VERSION = "1.7.0-dev"
+# Stamped by deploy.yml from the deployed commit; the deploy fails if this
+# placeholder survives. Never hand-edit.
+GIT_SHA = "unknown"
 ST_TENANT_ID = "000000000"
 # audit S-2: enabled in dev so audience enforcement is exercised before prod.
 JWT_AUDIENCE = "mcp-servicetitan"
