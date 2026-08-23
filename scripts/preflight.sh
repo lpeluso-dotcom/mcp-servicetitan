@@ -97,18 +97,33 @@ echo "[3] wrangler.toml config"
 # rules match credential SHAPES, not PII lists.
 echo ""
 echo "[3b] No real employee PII committed (audit S-8)"
-grep -q '@qualityservicecompany\.net' wrangler.toml \
-  && fail "wrangler.toml contains a real @qualityservicecompany.net address — this repo is PUBLIC; use the ALLOWED_EMAILS_PROD/DEV GitHub secrets" \
-  || pass "wrangler.toml carries no real employee address"
-grep -q '@qualityservicecompany\.net' src/oauth.ts \
-  && fail "src/oauth.ts contains a real @qualityservicecompany.net address — remove the hardcoded fallback" \
-  || pass "src/oauth.ts carries no real employee address"
-grep -q 'DEFAULT_ALLOWED' src/oauth.ts \
-  && fail "src/oauth.ts reintroduced DEFAULT_ALLOWED — the allow-list must fail CLOSED, not fall back to a committed list" \
-  || pass "no DEFAULT_ALLOWED fallback"
-[ "$(grep -cE '^ALLOWED_EMAILS = "allowed@example\.com"$' wrangler.toml)" = "2" ] \
-  && pass "ALLOWED_EMAILS placeholder present in both prod and dev sections" \
-  || fail "expected exactly 2 ALLOWED_EMAILS placeholder lines in wrangler.toml (prod + dev)"
+# IMPORTANT: this checks the COMMITTED content via `git show`, not the working
+# file. In deploy.yml this step runs AFTER inject-deploy-config.py has rewritten
+# the on-disk wrangler.toml with the real addresses from GH secrets — reading
+# the working copy here would fail on every deploy by design. The invariant is
+# "no real PII is committed", which is exactly what git records.
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  COMMITTED_TOML="$(git show HEAD:wrangler.toml 2>/dev/null || echo '')"
+  COMMITTED_OAUTH="$(git show HEAD:src/oauth.ts 2>/dev/null || echo '')"
+  if [ -z "$COMMITTED_TOML" ] || [ -z "$COMMITTED_OAUTH" ]; then
+    fail "could not read committed wrangler.toml / src/oauth.ts from git — cannot verify the S-8 invariant"
+  else
+    printf '%s' "$COMMITTED_TOML" | grep -q '@qualityservicecompany\.net' \
+      && fail "committed wrangler.toml contains a real @qualityservicecompany.net address — this repo is PUBLIC; use the ALLOWED_EMAILS_PROD/DEV GitHub secrets" \
+      || pass "committed wrangler.toml carries no real employee address"
+    printf '%s' "$COMMITTED_OAUTH" | grep -q '@qualityservicecompany\.net' \
+      && fail "committed src/oauth.ts contains a real @qualityservicecompany.net address — remove the hardcoded fallback" \
+      || pass "committed src/oauth.ts carries no real employee address"
+    printf '%s' "$COMMITTED_OAUTH" | grep -q 'DEFAULT_ALLOWED' \
+      && fail "src/oauth.ts reintroduced DEFAULT_ALLOWED — the allow-list must fail CLOSED, not fall back to a committed list" \
+      || pass "no DEFAULT_ALLOWED fallback"
+    [ "$(printf '%s' "$COMMITTED_TOML" | grep -cE '^ALLOWED_EMAILS = "allowed@example\.com"$')" = "2" ] \
+      && pass "ALLOWED_EMAILS placeholder committed in both prod and dev sections" \
+      || fail "expected exactly 2 committed ALLOWED_EMAILS placeholder lines in wrangler.toml (prod + dev)"
+  fi
+else
+  fail "not a git repository — cannot verify the S-8 committed-PII invariant"
+fi
 grep -q 'compatibility_flags = \["nodejs_compat"\]' wrangler.toml && pass "nodejs_compat flag set" || fail "nodejs_compat missing"
 grep -q '\[observability\]' wrangler.toml && pass "observability block present" || fail "observability missing"
 grep -q 'binding = "MCP_METRICS"' wrangler.toml && pass "MCP_METRICS AE binding" || fail "MCP_METRICS AE binding missing"
