@@ -269,9 +269,14 @@ export function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: Request
 async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    // ── OAuth upstream dance (/authorize + /callback), federated to Cloudflare Access (M365). ──
-    // Must run BEFORE the Hono fallthrough (which would 404 these). The provider advertises these
-    // endpoints; they're implemented in src/oauth.ts.
+    // ── OAuth upstream dance (/authorize + /callback + /approve), federated to Cloudflare Access
+    // (M365). Must run BEFORE the Hono fallthrough (which would 404 these). The provider advertises
+    // these endpoints; they're implemented in src/oauth.ts.
+    //
+    // /approve is the consent gate (audit S-1) and is deliberately reachable without a sync key —
+    // a browser has to render it mid-flow. It is not an open door: the parked grant is addressed
+    // by an unguessable approve:<uuid> KV entry that is single-use and expires in LOGIN_TTL, and
+    // the email allow-list is re-checked before completeAuthorization is called.
     const oauthRoute = await handleOAuthRoute(request, env, url);
     if (oauthRoute) return oauthRoute;
 
