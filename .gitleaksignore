@@ -15,3 +15,13 @@
 # (fix/lockdown-auth-and-hardening, 2026-07-13). Not a real secret — a literal
 # string only ever used to sign/verify tokens within the test process.
 src/__tests__/lockdown-auth.test.ts:generic-api-key:29
+
+# Test-fixture HS256 signing key for the audit S-2 JWT claim-enforcement tests
+# (feat/wave1-security-hardening, 2026-08-23). Not a real secret — a literal
+# string ("test-secret-at-least-16-chars-long") that exists only to sign and
+# verify tokens inside the test process, chosen to clear verifyJwt's 16-char
+# minimum-length guard. gitleaks scores it generic-api-key on entropy alone.
+src/__tests__/jwt-claims.test.ts:generic-api-key:5
+
+# Same literal, quoted inside the Wave-1 implementation plan's Task 3 code block.
+docs/superpowers/plans/2026-08-23-wave1-security-and-deploy-hygiene.md:generic-api-key:642
