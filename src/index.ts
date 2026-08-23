@@ -40,6 +40,10 @@ export function healthPayload(env: Env): Record<string, unknown> {
     ok: true,
     service: 'mcp-servicetitan',
     version: env.MCP_SERVICE_VERSION,
+    // Derived at deploy time from the checked-out commit. Unlike
+    // MCP_SERVICE_VERSION (a hand-edited literal that has not moved across
+    // ~10 deploys) this cannot drift from what is actually running.
+    commit: env.GIT_SHA || 'unknown',
     toolCount: TOOLS.length,
     // tool NAMES intentionally omitted (QUA-519): unauthenticated enumeration
     // aids targeting. Full per-tool inventory lives on admin-gated /admin/endpoints.
@@ -269,9 +273,14 @@ export function buildServer(env: Env, execCtx: ExecutionContext, reqCtx: Request
 async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    // ── OAuth upstream dance (/authorize + /callback), federated to Cloudflare Access (M365). ──
-    // Must run BEFORE the Hono fallthrough (which would 404 these). The provider advertises these
-    // endpoints; they're implemented in src/oauth.ts.
+    // ── OAuth upstream dance (/authorize + /callback + /approve), federated to Cloudflare Access
+    // (M365). Must run BEFORE the Hono fallthrough (which would 404 these). The provider advertises
+    // these endpoints; they're implemented in src/oauth.ts.
+    //
+    // /approve is the consent gate (audit S-1) and is deliberately reachable without a sync key —
+    // a browser has to render it mid-flow. It is not an open door: the parked grant is addressed
+    // by an unguessable approve:<uuid> KV entry that is single-use and expires in LOGIN_TTL, and
+    // the email allow-list is re-checked before completeAuthorization is called.
     const oauthRoute = await handleOAuthRoute(request, env, url);
     if (oauthRoute) return oauthRoute;
 

@@ -79,7 +79,22 @@ jobs:
           KV_NAMESPACE_ID_DEV:   ${{ secrets.KV_NAMESPACE_ID_DEV }}
           ST_PROXY_SERVICE_PROD: ${{ secrets.ST_PROXY_SERVICE_PROD }}
           ST_PROXY_SERVICE_DEV:  ${{ secrets.ST_PROXY_SERVICE_DEV }}
+          ALLOWED_EMAILS_PROD:   ${{ secrets.ALLOWED_EMAILS_PROD }}
+          ALLOWED_EMAILS_DEV:    ${{ secrets.ALLOWED_EMAILS_DEV }}
         run: python3 scripts/inject-deploy-config.py
+
+      # Stamp the deployed commit into wrangler.toml so /health can report what is
+      # actually running. MCP_SERVICE_VERSION is a hand-edited literal that has not
+      # moved across ~10 deploys, so it cannot identify deployed code.
+      - name: Stamp deployed commit into wrangler.toml
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          echo "Stamping GIT_SHA=$SHA"
+          sed -i "s/^GIT_SHA = \"unknown\"$/GIT_SHA = \"$SHA\"/" wrangler.toml
+          if grep -q '^GIT_SHA = "unknown"$' wrangler.toml; then
+            echo "::error::GIT_SHA placeholder was not substituted"; exit 1
+          fi
+          grep -n '^GIT_SHA' wrangler.toml
 
       # Preflight runs the full pre-deploy gate: file presence, bindings,
       # secrets, and local repository hygiene.

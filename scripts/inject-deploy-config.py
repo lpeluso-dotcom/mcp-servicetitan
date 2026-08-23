@@ -12,6 +12,7 @@ Required env vars (matching the GH Actions secret names):
   D1_DATABASE_ID_PROD     D1_DATABASE_ID_DEV
   KV_NAMESPACE_ID_PROD    KV_NAMESPACE_ID_DEV
   ST_PROXY_SERVICE_PROD   ST_PROXY_SERVICE_DEV
+  ALLOWED_EMAILS_PROD     ALLOWED_EMAILS_DEV
 
 Why a script instead of inline `sed` in deploy.yml: each placeholder appears
 in two sections (prod + dev), and we only want to swap each occurrence with
@@ -31,15 +32,20 @@ REQUIRED_VARS = (
     'D1_DATABASE_ID_PROD', 'D1_DATABASE_ID_DEV',
     'KV_NAMESPACE_ID_PROD', 'KV_NAMESPACE_ID_DEV',
     'ST_PROXY_SERVICE_PROD', 'ST_PROXY_SERVICE_DEV',
+    'ALLOWED_EMAILS_PROD', 'ALLOWED_EMAILS_DEV',
 )
 
 D1_PLACEHOLDER = '"00000000-0000-0000-0000-000000000000"'
 KV_PLACEHOLDER = '"00000000000000000000000000000000"'
 SVC_PROD_PLACEHOLDER = '"your-servicetitan-proxy"'
 SVC_DEV_PLACEHOLDER = '"your-servicetitan-proxy-dev"'
+# audit S-8: real addresses are never committed; injected here from GH secrets.
+EMAILS_PLACEHOLDER = '"allowed@example.com"'
 
 # Section header → (placeholder, env var) tuples.
 SECTION_SUBS = {
+    '[vars]':          [(EMAILS_PLACEHOLDER, 'ALLOWED_EMAILS_PROD', True)],
+    '[env.dev.vars]':  [(EMAILS_PLACEHOLDER, 'ALLOWED_EMAILS_DEV',  True)],
     '[[d1_databases]]':           [(D1_PLACEHOLDER,       'D1_DATABASE_ID_PROD',   True)],
     '[[env.dev.d1_databases]]':   [(D1_PLACEHOLDER,       'D1_DATABASE_ID_DEV',    True)],
     '[[kv_namespaces]]':          [(KV_PLACEHOLDER,       'KV_NAMESPACE_ID_PROD',  True)],

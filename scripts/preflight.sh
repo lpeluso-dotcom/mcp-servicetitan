@@ -87,6 +87,28 @@ grep -q 'update_estimate_status' "$SMOKE" \
 # ── 3. wrangler.toml config ─────────────────────────────────
 echo ""
 echo "[3] wrangler.toml config"
+
+# audit S-8 (2026-08-01): the committed wrangler.toml published 8 real employee
+# addresses in BOTH the prod and dev vars blocks, and src/oauth.ts carried 2 more
+# as a hardcoded fallback. This repository is PUBLIC, and audit S-1 (open dynamic
+# client registration) made that list a directly actionable phishing target.
+# Real values now arrive at deploy time from GH secrets. Pin the invariant so a
+# future edit cannot quietly put them back. gitleaks does not catch this: its
+# rules match credential SHAPES, not PII lists.
+echo ""
+echo "[3b] No real employee PII committed (audit S-8)"
+grep -q '@qualityservicecompany\.net' wrangler.toml \
+  && fail "wrangler.toml contains a real @qualityservicecompany.net address — this repo is PUBLIC; use the ALLOWED_EMAILS_PROD/DEV GitHub secrets" \
+  || pass "wrangler.toml carries no real employee address"
+grep -q '@qualityservicecompany\.net' src/oauth.ts \
+  && fail "src/oauth.ts contains a real @qualityservicecompany.net address — remove the hardcoded fallback" \
+  || pass "src/oauth.ts carries no real employee address"
+grep -q 'DEFAULT_ALLOWED' src/oauth.ts \
+  && fail "src/oauth.ts reintroduced DEFAULT_ALLOWED — the allow-list must fail CLOSED, not fall back to a committed list" \
+  || pass "no DEFAULT_ALLOWED fallback"
+[ "$(grep -cE '^ALLOWED_EMAILS = "allowed@example\.com"$' wrangler.toml)" = "2" ] \
+  && pass "ALLOWED_EMAILS placeholder present in both prod and dev sections" \
+  || fail "expected exactly 2 ALLOWED_EMAILS placeholder lines in wrangler.toml (prod + dev)"
 grep -q 'compatibility_flags = \["nodejs_compat"\]' wrangler.toml && pass "nodejs_compat flag set" || fail "nodejs_compat missing"
 grep -q '\[observability\]' wrangler.toml && pass "observability block present" || fail "observability missing"
 grep -q 'binding = "MCP_METRICS"' wrangler.toml && pass "MCP_METRICS AE binding" || fail "MCP_METRICS AE binding missing"
