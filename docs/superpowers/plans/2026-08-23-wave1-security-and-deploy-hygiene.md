@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Never commit real employee email addresses, the real ServiceTitan tenant id (`431848990`), or any credential.** This repo is PUBLIC (`gh api repos/lpeluso-dotcom/mcp-servicetitan` → `"private": false`).
+- **Never commit real employee email addresses, the real ServiceTitan tenant id (the value behind the `000000000` placeholder), or any credential.** This repo is PUBLIC (`gh api repos/lpeluso-dotcom/mcp-servicetitan` → `"private": false`).
 - **All existing tests must stay green.** Baseline before starting: 107 test files, 1331 tests passing (`npm test`).
 - **`npm run check` must pass** (tsc --noEmit + full vitest run) before any commit.
 - **Protected modules** (per `qsc-infra/.claude/rules/protected-modules.md`) touched by this plan: `src/tools/st_call.ts` (NOT touched), `src/write-gate.ts` (NOT touched). `src/oauth.ts` is not on the protected list but is security-critical — every change to it needs a test.
