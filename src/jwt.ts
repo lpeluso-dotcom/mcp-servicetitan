@@ -6,15 +6,35 @@ export interface JwtClaims {
   role: 'default' | 'admin';
 }
 
+export interface JwtVerifyOptions {
+  audience?: string;
+  issuer?: string;
+}
+
 const MIN_HS256_SECRET_LENGTH = 16;
 
-export async function verifyJwt(token: string, secret: string): Promise<JwtClaims | null> {
+export async function verifyJwt(
+  token: string,
+  secret: string,
+  opts: JwtVerifyOptions = {},
+): Promise<JwtClaims | null> {
   if (typeof secret !== 'string' || secret.length < MIN_HS256_SECRET_LENGTH || secret === 'undefined') {
     return null;
   }
 
   try {
-    const { payload } = await jwtVerify(token, new TextEncoder().encode(secret));
+    // audience/issuer are enforced only when configured, so an unconfigured
+    // deployment does not lock itself out. `exp`, by contrast, is ALWAYS
+    // required (checked below): jose silently accepts a token that omits the
+    // claim entirely, which made such a token valid forever. (audit S-2)
+    const { payload } = await jwtVerify(token, new TextEncoder().encode(secret), {
+      ...(opts.audience ? { audience: opts.audience } : {}),
+      ...(opts.issuer ? { issuer: opts.issuer } : {}),
+      clockTolerance: 30,
+    });
+
+    if (typeof payload.exp !== 'number') return null;
+
     const sub = String(payload.sub ?? '');
     if (!sub) return null;
 

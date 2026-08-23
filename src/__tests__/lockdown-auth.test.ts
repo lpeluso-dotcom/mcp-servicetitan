@@ -29,9 +29,13 @@ describe('MCP_LOCKDOWN auth ordering', () => {
   const jwtSecret = 'test-jwt-secret-long-enough-for-hs256';
 
   async function signToken(claims: Record<string, unknown>): Promise<string> {
+    // audit S-2: verifyJwt now REQUIRES a numeric `exp`. These helpers used to
+    // mint tokens with no expiry, i.e. they asserted the vulnerability (a token
+    // valid forever) as expected behaviour.
     const token = new SignJWT(claims)
       .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt();
+      .setIssuedAt()
+      .setExpirationTime('5m');
     return token.sign(new TextEncoder().encode(jwtSecret));
   }
 

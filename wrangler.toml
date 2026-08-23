@@ -53,6 +53,14 @@ service = "your-servicetitan-proxy"
 [vars]
 MCP_SERVICE_VERSION = "1.7.0"
 ST_TENANT_ID = "000000000"
+# audit S-2: verifyJwt now ALWAYS requires a numeric `exp` (a token without one
+# used to be valid forever) and enforces `aud`/`iss` whenever they are set.
+# JWT_AUDIENCE and JWT_ISSUER are deliberately UNSET in prod: no JWT minter has
+# been identified, audit_log shows no `jwt-client` actor in 30 days, and
+# audit_log does not record authMode - so enabling audience checking here would
+# be a guess that could reject an unidentified live caller. Both are enabled in
+# [env.dev.vars] for verification. Set them in prod once the minter is known;
+# the code enforces them the moment they exist.
 # Phase-2 OAuth (prod). SELF_ORIGIN pins the callback origin; ALLOWED_EMAILS is the in-worker
 # allow-list. ACCESS_CLIENT_ID/ISSUER/SECRET are wrangler SECRETS (not committed — keeps the
 # 64-hex client id out of git / gitleaks).
@@ -97,6 +105,8 @@ cpu_ms = 50
 [env.dev.vars]
 MCP_SERVICE_VERSION = "1.7.0-dev"
 ST_TENANT_ID = "000000000"
+# audit S-2: enabled in dev so audience enforcement is exercised before prod.
+JWT_AUDIENCE = "mcp-servicetitan"
 # Phase-2 OAuth (dev): SELF_ORIGIN = dev worker origin; ACCESS_* are wrangler secrets (see prod).
 SELF_ORIGIN = "https://mcp-servicetitan-dev.lpeluso.workers.dev"
 ALLOWED_EMAILS = "allowed@example.com"

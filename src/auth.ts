@@ -66,7 +66,10 @@ async function resolveCredentials(request: Request, env: Env): Promise<AuthResul
   const authHeader = request.headers.get('authorization');
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
-    const claims = await verifyJwt(token, env.JWT_SECRET);
+    const claims = await verifyJwt(token, env.JWT_SECRET, {
+      audience: env.JWT_AUDIENCE,
+      issuer: env.JWT_ISSUER,
+    });
     if (claims) {
       return {
         authenticated: true,

@@ -34,6 +34,8 @@ export interface Env {
   SIRO_API_TOKEN: string; // Siro org API token (Bearer auth)
   ST_WEBHOOK_SECRET: string; // ServiceTitan webhook HMAC-SHA256 secret
   JWT_SECRET: string; // JWT signing secret for dual-mode auth
+  JWT_AUDIENCE?: string; // enforced by verifyJwt when set (audit S-2)
+  JWT_ISSUER?: string;   // enforced by verifyJwt when set (audit S-2)
 
   // Workers AI (native binding) — pricebook query + row embeddings
   AI: unknown; // Ai binding; typed as unknown to avoid @cloudflare/workers-types Ai coupling in helpers

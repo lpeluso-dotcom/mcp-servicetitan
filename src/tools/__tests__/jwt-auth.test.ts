@@ -6,9 +6,13 @@ describe('jwt-auth dual-mode', () => {
   const secret = 'test-secret-key-long-enough';
 
   async function signToken(claims: Record<string, unknown>): Promise<string> {
+    // audit S-2: verifyJwt now REQUIRES a numeric `exp`. These helpers used to
+    // mint tokens with no expiry, i.e. they asserted the vulnerability (a token
+    // valid forever) as expected behaviour.
     const token = new SignJWT(claims)
       .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt();
+      .setIssuedAt()
+      .setExpirationTime('5m');
     return token.sign(new TextEncoder().encode(secret));
   }
 
@@ -80,6 +84,7 @@ describe('jwt-auth dual-mode', () => {
     const token = await new SignJWT({ sub: 'user-123', role: 'admin' })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
+      .setExpirationTime('5m')
       .sign(new TextEncoder().encode('undefined'));
     const env = makeEnv(undefined as any) as any;
     const req = makeRequest(`Bearer ${token}`);
