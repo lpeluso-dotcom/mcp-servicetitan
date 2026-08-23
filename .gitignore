@@ -19,3 +19,7 @@ scripts/probe-snapshots/
 
 # Tool-selection eval run artifact (regenerated per `npm run eval:tools`)
 scripts/evals/last-run.json
+
+# Agent session artifact; contains real D1 database UUIDs in prose. Never commit
+# to this PUBLIC repo (flagged in the 2026-08-23 Wave-1 plan risk table).
+.phoenix-report.md
