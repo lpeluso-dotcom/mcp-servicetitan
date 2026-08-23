@@ -56,8 +56,11 @@ ST_TENANT_ID = "000000000"
 # Phase-2 OAuth (prod). SELF_ORIGIN pins the callback origin; ALLOWED_EMAILS is the in-worker
 # allow-list. ACCESS_CLIENT_ID/ISSUER/SECRET are wrangler SECRETS (not committed — keeps the
 # 64-hex client id out of git / gitleaks).
+# ALLOWED_EMAILS real values are injected at deploy time by scripts/inject-deploy-config.py
+# from the ALLOWED_EMAILS_PROD / ALLOWED_EMAILS_DEV GitHub Actions secrets. Never commit real
+# addresses here - this repository is public (audit S-8, 2026-08-01).
 SELF_ORIGIN = "https://mcp-servicetitan.lpeluso.workers.dev"
-ALLOWED_EMAILS = "office@qualityservicecompany.net,lpeluso@qualityservicecompany.net,awilliams@qualityservicecompany.net,ssusor@qualityservicecompany.net,talexander@qualityservicecompany.net,gcox@qualityservicecompany.net,ejohnson@qualityservicecompany.net,jkinard@qualityservicecompany.net"
+ALLOWED_EMAILS = "allowed@example.com"
 
 # Secrets (set with `wrangler secret put`):
 # MCP_SYNC_KEY - shared bearer between mcp-servicetitan and the upstream proxy
@@ -96,7 +99,7 @@ MCP_SERVICE_VERSION = "1.7.0-dev"
 ST_TENANT_ID = "000000000"
 # Phase-2 OAuth (dev): SELF_ORIGIN = dev worker origin; ACCESS_* are wrangler secrets (see prod).
 SELF_ORIGIN = "https://mcp-servicetitan-dev.lpeluso.workers.dev"
-ALLOWED_EMAILS = "office@qualityservicecompany.net,lpeluso@qualityservicecompany.net,awilliams@qualityservicecompany.net,ssusor@qualityservicecompany.net,talexander@qualityservicecompany.net,gcox@qualityservicecompany.net,ejohnson@qualityservicecompany.net,jkinard@qualityservicecompany.net"
+ALLOWED_EMAILS = "allowed@example.com"
 
 [[env.dev.durable_objects.bindings]]
 name = "ST_RATE_LIMITER"

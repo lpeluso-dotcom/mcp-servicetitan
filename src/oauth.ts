@@ -21,7 +21,6 @@ const JWKS_TTL = 3600;
 // __Host- prefix (securing-MCP guide): browser-enforced Secure + Path=/ +
 // no Domain — a sibling *.workers.dev host cannot plant or override it.
 const CSRF_COOKIE = '__Host-mcpst_oauth_csrf';
-const DEFAULT_ALLOWED = 'office@qualityservicecompany.net,lpeluso@qualityservicecompany.net';
 
 function b64url(bytes: Uint8Array): string {
   let s = '';
@@ -32,8 +31,15 @@ function randB64url(n: number): string { return b64url(crypto.getRandomValues(ne
 function selfOrigin(env: Env, request: Request): string {
   return (env.SELF_ORIGIN && env.SELF_ORIGIN.replace(/\/$/, '')) || new URL(request.url).origin;
 }
+// Fail closed: an unset or blank ALLOWED_EMAILS denies EVERY email rather than
+// falling back to a committed list. The deploy injector (scripts/inject-deploy-config.py)
+// exits non-zero if the placeholder survives, so an unconfigured deploy fails loudly
+// at build time rather than silently granting access at runtime. (audit S-8)
 function allowedEmails(env: Env): string[] {
-  return (env.ALLOWED_EMAILS || DEFAULT_ALLOWED).split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+  return (env.ALLOWED_EMAILS ?? '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
 }
 function getCookie(request: Request, name: string): string | null {
   const raw = request.headers.get('cookie');
