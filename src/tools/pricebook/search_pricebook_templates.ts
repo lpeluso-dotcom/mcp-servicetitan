@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { sbRpc, shapePriceRow } from '../../supabase';
+import { goldAsOf } from '../../gold-watermark';
 
 interface Args { query: string; limit?: number; }
 
@@ -22,9 +23,17 @@ export const search_pricebook_templates: ToolDef<Args> = {
   },
   async handler(env: Env, args: Args) {
     const limit = Math.min(args.limit ?? 12, 25);
-    const rows = await sbRpc<Array<Record<string, unknown>>>(env, 'search_templates', {
-      query_text: args.query, limit_rows: limit,
-    });
-    return { results: (rows ?? []).map((r) => shapePriceRow(r)), query: args.query, _source: 'supabase' };
+    const [rows, asOf] = await Promise.all([
+      sbRpc<Array<Record<string, unknown>>>(env, 'search_templates', {
+        query_text: args.query, limit_rows: limit,
+      }),
+      goldAsOf(env, 'pricebook_templates'),
+    ]);
+    return {
+      results: (rows ?? []).map((r) => shapePriceRow(r)),
+      query: args.query,
+      _source: 'supabase',
+      ...asOf,
+    };
   },
 };

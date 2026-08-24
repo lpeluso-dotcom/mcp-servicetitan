@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { sbSelect } from '../../supabase';
+import { goldAsOf } from '../../gold-watermark';
 
 /** Guards the two values that get interpolated into the PostgREST query string. */
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -96,10 +97,23 @@ export const titan_advisor_score: ToolDef<Args> = {
     // Ordering asc and limiting truncates the recent end: "show me the whole trend" would
     // silently return the oldest N days and stop short of today, which reads as a pipeline
     // that died rather than a window that was too wide.
-    const daily = (await sbSelect<SnapRow[]>(
-      env,
-      `snap_titan_advisor_daily?${window}&order=snapshot_date.desc&limit=${LIMIT_DAILY}`,
-      'gold')).reverse();
+    const [dailyDesc, asOf] = await Promise.all([
+      sbSelect<SnapRow[]>(
+        env,
+        `snap_titan_advisor_daily?${window}&order=snapshot_date.desc&limit=${LIMIT_DAILY}`,
+        'gold'),
+      goldAsOf(env, 'gold'),
+    ]);
+
+    // The newest snapshot_date is FREE here — the query is already ordered
+    // desc, so it sits at index 0 before the reverse. It answers a different
+    // question from the build watermark ("how current is the data" vs "did the
+    // pipeline finish"), and both were previously invisible. Publishing them
+    // under separate names is the same split mirror-freshness made between
+    // `_rows_synced_hours` and `_stale_hours`: one number under one name that
+    // callers read as the other is how QUA-1234 hid a dead sync for 11 days.
+    const rowsAsOf = dailyDesc[0]?.snapshot_date ?? null;
+    const daily = [...dailyDesc].reverse();
 
     const sections = (await sbSelect<SectionRow[]>(
       env,
@@ -134,6 +148,9 @@ export const titan_advisor_score: ToolDef<Args> = {
             'the latest day. Narrow the date range, or drop detail:true, and re-query.' }
         : {}),
       _source: 'gold',
+      ...asOf,
+      /** Newest snapshot_date in the returned window — the DATA date, not the build time. */
+      _gold_rows_as_of: rowsAsOf,
       _scope_basis:
         'Report the percentage, not earned points — available points grow over time as ' +
         'ServiceTitan adds checkpoints, so earned counts are not comparable across dates. ' +

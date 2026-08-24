@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { sbSelect, shapePriceRow } from '../../supabase';
+import { goldAsOf } from '../../gold-watermark';
 
 interface Args { code: string; }
 
@@ -38,11 +39,17 @@ export const get_service_breakout: ToolDef<Args> = {
     code: z.string().min(1).max(64).describe('Service code (e.g. "SVC-1")'),
   },
   async handler(env: Env, args: Args) {
-    const svcRows = await sbSelect<Row[]>(
-      env, `pricebook_items?code=eq.${encodeURIComponent(args.code)}&item_type=eq.service&select=${SELECT_COLS}&limit=1`,
-    );
+    const [svcRows, asOf] = await Promise.all([
+      sbSelect<Row[]>(
+        env, `pricebook_items?code=eq.${encodeURIComponent(args.code)}&item_type=eq.service&select=${SELECT_COLS}&limit=1`,
+      ),
+      goldAsOf(env, 'pricebook'),
+    ]);
     const svc = svcRows?.[0];
-    if (!svc) return { service: null, not_found: true, _source: 'supabase' };
+    // The miss path needs the stamp MORE than the hit path, not less: "not
+    // found" from a frozen mirror and "not found" from a current one are the
+    // same three words, and only one of them means the item does not exist.
+    if (!svc) return { service: null, not_found: true, _source: 'supabase', ...asOf };
 
     const ids = skuIds(svc);
     let components: Row[] = [];
@@ -63,6 +70,7 @@ export const get_service_breakout: ToolDef<Args> = {
       recommendations: pick('recommendations'),
       upgrades: pick('upgrades'),
       _source: 'supabase',
+      ...asOf,
     };
   },
 };

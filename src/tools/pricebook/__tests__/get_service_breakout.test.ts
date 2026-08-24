@@ -5,6 +5,21 @@ const env = { SUPABASE_URL: 'https://p.supabase.co', SUPABASE_PB_KEY: 'k' } as a
 const ctx = { actor: 'test', correlation: 'c1' };
 afterEach(() => vi.unstubAllGlobals());
 
+/**
+ * Requests the TOOL made, excluding the `_gold_as_of` watermark probe.
+ *
+ * The probe is a cached single-row `?select=synced_at&order=…&limit=1` read
+ * that every Supabase-backed tool now issues. The assertions below are about
+ * how many ITEM reads the tool does (one, or two with a batch resolve), so
+ * they filter the probe out by name rather than counting raw fetches — a raw
+ * count would re-break every time a shared concern is added.
+ */
+function itemCalls(f: { mock: { calls: unknown[] } }): string[] {
+  return (f.mock.calls as any[])
+    .map(([u]) => String(u))
+    .filter((u) => !u.includes('select=synced_at') && !u.includes('refresh_state'));
+}
+
 describe('get_service_breakout', () => {
   it('reads the service row then resolves component items by st_id, shaping prices', async () => {
     const calls: string[] = [];
@@ -47,7 +62,7 @@ describe('get_service_breakout', () => {
     const out: any = await get_service_breakout.handler(env, { code: 'SVC-2' }, ctx);
     expect(out.materials).toEqual([]);
     expect(out.equipment).toEqual([]);
-    expect(fetchMock).toHaveBeenCalledTimes(1); // no batch resolve needed
+    expect(itemCalls(fetchMock)).toHaveLength(1); // no batch resolve needed
   });
 
   it('returns not_found when no service row matches', async () => {
@@ -56,6 +71,9 @@ describe('get_service_breakout', () => {
     const out: any = await get_service_breakout.handler(env, { code: 'MISSING' }, ctx);
     expect(out.service).toBeNull();
     expect(out.not_found).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(itemCalls(fetchMock)).toHaveLength(1);
+    // A miss from a frozen mirror and a miss from a current one read identically
+    // without this, so not_found must carry the stamp too.
+    expect(out).toHaveProperty('_gold_as_of');
   });
 });

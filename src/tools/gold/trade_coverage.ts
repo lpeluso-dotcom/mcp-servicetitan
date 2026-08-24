@@ -33,6 +33,7 @@
 import type { Env } from '../../env';
 import { cacheGet } from '../../cache';
 import { sbCount, sbSelect } from '../../supabase';
+import { goldAsOf } from '../../gold-watermark';
 
 const CHUNKS = 'entity_chunks';
 const NULL_TRADE = 'trade_bu=is.null';
@@ -90,7 +91,21 @@ export interface NounCoverage {
 }
 
 export interface TradeCoverage {
+  /**
+   * When WE RAN THE COUNTS. This is always "just now" on a cache miss and is
+   * NOT a statement about how old the index is — see `gold_as_of` for that.
+   * The distinction is the whole reason this field could not be reused as a
+   * data-age watermark: a frozen index measured a second ago still reports a
+   * second-old `measured_at`.
+   */
   measured_at: string;
+  /**
+   * When the data behind these counts was BUILT — the vec re-embed and the
+   * gold build behind it, whichever is older. Null when unprovable.
+   * Optional so a `TradeCoverage` cached before this field existed still
+   * deserialises instead of throwing.
+   */
+  gold_as_of?: string | null;
   total_chunks: number;
   untagged_chunks: number;
   untagged_share: number;
@@ -128,10 +143,11 @@ async function discoverNouns(env: Env): Promise<string[]> {
 
 /** One live measurement. Throws on any failure — getTradeCoverage is the soft wrapper. */
 export async function measureTradeCoverage(env: Env): Promise<TradeCoverage> {
-  const [total, untagged, nouns] = await Promise.all([
+  const [total, untagged, nouns, asOf] = await Promise.all([
     sbCount(env, `${CHUNKS}?select=chunk_id`, VEC),
     sbCount(env, `${CHUNKS}?select=chunk_id&${NULL_TRADE}`, VEC),
     discoverNouns(env),
+    goldAsOf(env, 'vec'),
   ]);
 
   const perNoun = await mapLimit(nouns, PROBE_CONCURRENCY, async (entity_key) => ({
@@ -156,6 +172,7 @@ export async function measureTradeCoverage(env: Env): Promise<TradeCoverage> {
 
   return {
     measured_at: new Date().toISOString(),
+    gold_as_of: asOf._gold_as_of,
     total_chunks: total,
     untagged_chunks: untagged,
     untagged_share: total > 0 ? untagged / total : 0,
@@ -261,7 +278,16 @@ export function buildTradeWarning(coverage: TradeCoverage | null, trade: string)
         `bulk of the corpus — drop it only to reach the nouns above.`,
   );
 
-  parts.push(`Coverage measured ${coverage.measured_at} (re-measured at most every ${COVERAGE_TTL_SEC / 3600}h).`);
+  // Two different clocks, named apart on purpose. "Measured" is when we ran
+  // the counts (always recent); "index built" is how old the data those counts
+  // describe actually is. Printing only the first invites the reader to treat
+  // a freshly-counted frozen index as fresh.
+  parts.push(
+    `Coverage measured ${coverage.measured_at} (re-measured at most every ${COVERAGE_TTL_SEC / 3600}h); ` +
+    (coverage.gold_as_of
+      ? `index last built ${coverage.gold_as_of}.`
+      : `index build time UNKNOWN — the coverage figures describe an index of unverified age.`),
+  );
 
   return parts.join(' ');
 }

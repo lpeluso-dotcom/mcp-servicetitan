@@ -18,6 +18,110 @@ export const EMBED_MODEL_ID = '@cf/baai/bge-base-en-v1.5';
 // clear Postgres error instead of a generic client abort.
 const SUPABASE_FETCH_TIMEOUT_MS = 25_000;
 
+// ── Transient-failure retry ─────────────────────────────────────────────
+// Shape deliberately copied from `src/d1-proxy.ts` (MAX_RETRIES = 2, backoff
+// [50, 200]) rather than invented fresh: this repo already has ONE retry
+// idiom, and a second one with different attempt counts and different
+// transient-status rules is a maintenance trap, not a feature. Same numbers,
+// same classification, same "terminal 4xx short-circuits immediately".
+//
+// Before this, all four helpers were single-shot: one 502 from the edge in
+// front of Supabase and a gold tool returned a hard error to the caller, with
+// no attempt to find out whether the next 50ms would have worked.
+const MAX_RETRIES = 2; // 1 initial + 2 retries = 3 attempts total
+const BACKOFF_MS = [50, 200] as const;
+
+/**
+ * Ceiling on how much of an error body reaches an exception message.
+ *
+ * Every error path here used to interpolate the FULL `res.text()`. Supabase
+ * sits behind Cloudflare, so a 522/524 answers with an HTML interstitial —
+ * tens of KB — and that page landed whole in `error_log` AND in the MCP
+ * response the model reads. 600 chars is comfortably more than any PostgREST
+ * error envelope (`{"code","details","hint","message"}` runs ~100-300) while
+ * cutting an HTML page down to its recognisable head.
+ */
+const ERROR_BODY_MAX_CHARS = 600;
+
+/** Same classification as d1-proxy's `isTransientStatus`. */
+function isTransientStatus(status: number): boolean {
+  return status === 429 || status === 408 || (status >= 500 && status < 600);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Read an error body for an exception message, bounded and marked.
+ *
+ * Marked matters as much as bounded: a silently-cut body reads like the whole
+ * story, so whoever is debugging goes looking for a cause that was clipped off
+ * rather than for the rest of the page.
+ */
+async function errorBody(res: Response): Promise<string> {
+  const t = await res.text().catch(() => '');
+  if (t === '') return String(res.status);
+  return t.length > ERROR_BODY_MAX_CHARS
+    ? `${t.slice(0, ERROR_BODY_MAX_CHARS)} …[truncated, ${t.length} chars total]`
+    : t;
+}
+
+/**
+ * `fetch` with the shared abort budget plus retry-on-transient.
+ *
+ * Returns the LAST response — including a non-ok one — and lets each caller
+ * build its own error message, so the existing per-helper wording
+ * (`supabase rpc <fn> failed …` / `supabase count <path> failed …`) survives
+ * unchanged. Throws only when every attempt failed at the network level.
+ *
+ * IDEMPOTENCE (why the PATCH in `sbWriteEmbedding` is retried too): retry is
+ * safe when replaying the request cannot change the outcome. `sbRpc` bodies
+ * are reads behind `/rpc/` and `sbSelect`/`sbCount` are GETs, so those are
+ * trivially safe. The one write is
+ * `PATCH pricebook_items?code=eq.X&item_type=eq.Y {embedding: <fixed vector>}`
+ * — a full-value assignment on a keyed filter, computed BEFORE the first
+ * attempt and byte-identical on every replay. Applying it twice leaves exactly
+ * the state applying it once leaves, and the failure being protected against
+ * is the ambiguous one (the PATCH reached Postgres, the response was lost) —
+ * where the replay is a no-op. An INSERT, an upsert with a generated key, or
+ * an increment would NOT qualify; this module has none of those. If one is
+ * ever added, give it `retry: false` rather than assuming this comment covers
+ * it.
+ */
+async function sbFetch(url: string, init: RequestInit): Promise<Response> {
+  let lastNetworkError: Error | null = null;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, {
+        ...init,
+        // A fresh signal per attempt: an AbortSignal is single-use, so reusing
+        // one would make every retry after a timeout abort instantly.
+        signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
+      });
+      // Terminal (400/401/403/404/409/…) or success: hand it straight back.
+      if (res.ok || !isTransientStatus(res.status)) return res;
+      // Transient and out of attempts: return it so the caller reports the
+      // real status rather than a synthesised network message.
+      if (attempt === MAX_RETRIES) return res;
+    } catch (err) {
+      // A hit on the 25s abort budget is TERMINAL, not transient. The budget
+      // is sized against the authenticator role's 30s statement_timeout, so
+      // reaching it means the QUERY is too slow — the wire is fine. Retrying
+      // would spend 3 x 25s = 75s of a caller's wall clock to be told the same
+      // thing three times. Fast network failures below still retry.
+      const name = (err as Error)?.name;
+      if (name === 'TimeoutError' || name === 'AbortError') throw err;
+      lastNetworkError = err as Error;
+      if (attempt === MAX_RETRIES) break;
+    }
+    await sleep(BACKOFF_MS[attempt] ?? BACKOFF_MS[BACKOFF_MS.length - 1]);
+  }
+
+  throw lastNetworkError ?? new Error('supabase fetch failed: unknown');
+}
+
 /** Exact embed input the app uses (lib/refresh.ts embedMissing) — keep in lockstep. */
 export function embedInputFor(row: {
   name?: string; description?: string | null; category_name?: string | null;
@@ -63,13 +167,11 @@ function headers(env: Env): Record<string, string> {
 export async function sbRpc<T>(env: Env, fn: string, body: Record<string, unknown>, schema?: string): Promise<T> {
   const h = headers(env);
   if (schema) h['Content-Profile'] = schema;
-  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+  const res = await sbFetch(`${env.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
     method: 'POST', headers: h, body: JSON.stringify(body),
-    signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
-    const t = await res.text().catch(() => String(res.status));
-    throw new Error(`supabase rpc ${fn} failed ${res.status}: ${t}`);
+    throw new Error(`supabase rpc ${fn} failed ${res.status}: ${await errorBody(res)}`);
   }
   return res.json() as Promise<T>;
 }
@@ -77,12 +179,9 @@ export async function sbRpc<T>(env: Env, fn: string, body: Record<string, unknow
 export async function sbSelect<T>(env: Env, pathAndQuery: string, schema?: string): Promise<T> {
   const h = headers(env);
   if (schema) h['Accept-Profile'] = schema;
-  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
-    headers: h, signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
-  });
+  const res = await sbFetch(`${env.SUPABASE_URL}/rest/v1/${pathAndQuery}`, { headers: h });
   if (!res.ok) {
-    const t = await res.text().catch(() => String(res.status));
-    throw new Error(`supabase select failed ${res.status}: ${t}`);
+    throw new Error(`supabase select failed ${res.status}: ${await errorBody(res)}`);
   }
   return res.json() as Promise<T>;
 }
@@ -110,12 +209,9 @@ export async function sbCount(env: Env, pathAndQuery: string, schema?: string): 
   const q = /[?&]limit=/.test(pathAndQuery)
     ? pathAndQuery
     : `${pathAndQuery}${pathAndQuery.includes('?') ? '&' : '?'}limit=1`;
-  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${q}`, {
-    headers: h, signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
-  });
+  const res = await sbFetch(`${env.SUPABASE_URL}/rest/v1/${q}`, { headers: h });
   if (!res.ok) {
-    const t = await res.text().catch(() => String(res.status));
-    throw new Error(`supabase count ${pathAndQuery} failed ${res.status}: ${t}`);
+    throw new Error(`supabase count ${pathAndQuery} failed ${res.status}: ${await errorBody(res)}`);
   }
   const range = res.headers.get('content-range');
   const total = range?.split('/')[1];
@@ -129,14 +225,16 @@ export async function sbWriteEmbedding(
   env: Env, code: string, itemType: string, vector: number[],
 ): Promise<void> {
   const q = `pricebook_items?code=eq.${encodeURIComponent(code)}&item_type=eq.${encodeURIComponent(itemType)}`;
-  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${q}`, {
-    method: 'PATCH', headers: headers(env),
-    body: JSON.stringify({ embedding: `[${vector.join(',')}]` }),
-    signal: AbortSignal.timeout(SUPABASE_FETCH_TIMEOUT_MS),
+  // Body computed ONCE, outside sbFetch, so every retry replays byte-identical
+  // bytes — the property that makes retrying this PATCH safe (see sbFetch).
+  const body = JSON.stringify({ embedding: `[${vector.join(',')}]` });
+  const res = await sbFetch(`${env.SUPABASE_URL}/rest/v1/${q}`, {
+    method: 'PATCH', headers: headers(env), body,
   });
   if (!res.ok && res.status !== 204) {
-    const t = await res.text().catch(() => String(res.status));
-    throw new Error(`supabase embedding write ${code}/${itemType} failed ${res.status}: ${t}`);
+    throw new Error(
+      `supabase embedding write ${code}/${itemType} failed ${res.status}: ${await errorBody(res)}`,
+    );
   }
 }
 

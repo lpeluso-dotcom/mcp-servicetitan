@@ -107,7 +107,13 @@ describe('titan_advisor_score', () => {
     await titan_advisor_score.handler(env, { from: '2020-01-01', to: '2026-08-03' }, ctx);
     // desc + limit keeps the most recent N. Ordering asc would truncate the recent end,
     // making a too-wide window look like a pipeline that stopped running.
-    for (const [u] of f.mock.calls) expect(String(u)).toContain('order=snapshot_date.desc');
+    // Scoped to the advisor reads: the `_gold_as_of` watermark probe also
+    // fetches, and it reads vec.refresh_state, which has no snapshot_date.
+    const advisorCalls = (f.mock.calls as any[])
+      .map(([u]) => String(u))
+      .filter((u) => u.includes('titan_advisor'));
+    expect(advisorCalls.length).toBeGreaterThan(0);
+    for (const u of advisorCalls) expect(u).toContain('order=snapshot_date.desc');
   });
 
   it('still returns rows oldest-first after the desc fetch is reversed', async () => {
