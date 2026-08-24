@@ -32,14 +32,63 @@ export interface RequestContext {
 // customer data. We redact at audit-log time (defense-in-depth), so a future
 // reader endpoint or D1 export can't surface raw customer phone/email/address
 // even though access to mcp-servicetitan is already gated behind MCP_SYNC_KEY.
-// Keep this list in sync with src/__tests__/security_redact.test.ts.
-const REDACT_FIELD_PATTERNS: readonly RegExp[] = [
+// Keep this list in sync with src/tools/__tests__/security_redact.test.ts.
+//
+// Exported for that test: the two halves are asserted SEPARATELY because
+// several ordinary field names (`keyName`) are caught by the PII half, and a
+// whole-function assertion cannot tell which half fired.
+export const PII_FIELD_PATTERNS: readonly RegExp[] = [
   /^phone/i, /Phone$/i,
   /^email/i, /Email$/i,
   /^name$/i, /Name$/i,
   /^street/i, /^address/i, /^city$/i, /^zip$/i, /^postal/i, /^state$/i,
   /^note$/i, /^notes$/i, /^description$/i, /^summary$/i,
   /^body$/i,        // raw st_call body — may contain anything
+];
+
+// Field-name patterns that indicate CREDENTIAL material.
+//
+// WHY. The list above is PII-only and stripped zero credential-shaped keys,
+// so a tool arg named `client_secret` / `access_token` / an echoed
+// `X-Sync-Key` header landed verbatim in the D1 `audit_log.payload` column,
+// which records every tool call. That row is gated behind MCP_SYNC_KEY — but
+// a log that stores the key material protecting it is a circular defense.
+// This is the layer that breaks the circle. It is not a substitute for not
+// putting secrets in tool args; it is the net under that rule.
+//
+// SEPARATOR CLASS. Every multi-word pattern accepts `-`, `_` or nothing, so
+// `syncKey`, `sync_key` and the real-world header spelling `X-Sync-Key` all
+// match. The patterns are unanchored on purpose (`accessToken`,
+// `refreshTokenExpiry`, `headers.authorization` must all hit).
+//
+// ENUMERATED, NOT /key/i. A bare `key` pattern over-matches `keyName`,
+// `foreignKey`, `keys`, `keyword` — ordinary field names whose redaction
+// would buy no security and would make audit rows unreadable, which is how a
+// denylist ends up being switched off. `salt` is anchored (`/^salt$/i`) for
+// the same reason: `saltwater` is not a credential.
+export const CREDENTIAL_FIELD_PATTERNS: readonly RegExp[] = [
+  /secret/i,                 // covers clientSecret / client_secret / *_secret
+  /token/i,                  // covers access/refresh/bearer/id tokens
+  /api[-_]?key/i,
+  /authorization/i,
+  /password/i, /passwd/i,
+  /credential/i,
+  /bearer/i,
+  /cookie/i,
+  /session[-_]?id/i,
+  /sync[-_]?key/i,
+  /client[-_]?secret/i,
+  /refresh[-_]?token/i,
+  /access[-_]?token/i,
+  /jwt/i,
+  /signature/i,
+  /private[-_]?key/i,
+  /^salt$/i,
+];
+
+const REDACT_FIELD_PATTERNS: readonly RegExp[] = [
+  ...PII_FIELD_PATTERNS,
+  ...CREDENTIAL_FIELD_PATTERNS,
 ];
 
 function shouldRedactKey(key: string): boolean {

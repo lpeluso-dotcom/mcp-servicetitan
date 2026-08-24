@@ -156,7 +156,17 @@ export interface ToolContext {
  *
  * source semantics:
  *   - 'live'     — every call hits live ST via servicetitan-proxy /api/st/read|write
- *   - 'd1'       — D1-first read via read-router (live ST only on miss)
+ *   - 'd1'       — reads the taylor-ai D1 mirror ONLY, via readD1/queryD1
+ *                  (src/d1.ts, src/d1-proxy.ts -> proxy /api/sql/read). There
+ *                  is NO live-ST fallback: a frozen, empty or lagging mirror
+ *                  is served as-is, so what the tool returns is "the mirror as
+ *                  of its last sync", never "ServiceTitan right now". The
+ *                  `path` on these descriptors names the ST endpoint the data
+ *                  ORIGINATES from (or a `d1://<table>` pseudo-path) for
+ *                  coverage inventory — it is not an endpoint this tool calls.
+ *                  Tools disclose the gap with stampMirrorFreshness()
+ *                  (src/mirror-freshness.ts); a caller that needs live truth
+ *                  must use a 'live' tool.
  *   - 'mixed'    — composite/fanout that touches both D1 and live ST
  *   - 'computed' — synthetic/derived (no single canonical ST endpoint)
  */

@@ -3,11 +3,12 @@
 //
 // WHY THIS EXISTS (audit MB-1 / QUA-1141)
 //
-// `src/read-router.ts` already implements the right defense — staleness
-// threshold, live fallback, `_stale_days` disclosure, table allow-list — and
-// has ZERO non-test importers. Every mirror-reading tool calls readD1/queryD1
-// raw instead, so a frozen or empty mirror is served to callers as current
-// truth, with no signal that anything is wrong.
+// `src/read-router.ts` implemented one shape of the right defense — staleness
+// threshold, live fallback, `_stale_days` disclosure, table allow-list — but
+// had ZERO non-test importers and was DELETED in favour of this module. Every
+// mirror-reading tool calls readD1/queryD1 raw, so without a stamp a frozen
+// or empty mirror is served to callers as current truth, with no signal that
+// anything is wrong.
 //
 // That is not hypothetical. Both of these are true in production today:
 //   - the `opportunities` mirror is empty, so the Pulitzer feed reports
@@ -58,7 +59,9 @@
 import type { Env } from './env';
 import { readD1 } from './d1';
 
-/** Age past which mirror data is called stale. Matches read-router's 48h. */
+/** Age past which mirror data is called stale. Inherited from the deleted
+ *  read-router's 48h threshold, kept so the number stays comparable to the
+ *  older `_stale_hours` guard in payroll_job_timesheets_list. */
 export const STALE_THRESHOLD_HOURS = 48;
 
 export type Freshness = 'fresh' | 'stale' | 'unknown';
