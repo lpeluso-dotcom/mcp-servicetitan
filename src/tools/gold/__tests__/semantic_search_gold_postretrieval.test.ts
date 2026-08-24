@@ -241,8 +241,14 @@ describe('semantic_search_gold post-retrieval: trade warning', () => {
 
     const warned = (out._warnings ?? []).join(' ');
     expect(warned).not.toMatch(/trade/i);
-    // Exactly one Supabase call: the RPC. No count over ~349k rows.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The claim under test is that no COVERAGE probe was paid for — no count
+    // over ~349k rows. The `_gold_as_of` watermark read is a separate, cheap,
+    // cached single-row lookup and is expected on every call, so it is
+    // excluded by name rather than by a raw call count.
+    const coverageProbes = (fetchMock.mock.calls as any[])
+      .map(([u]) => String(u))
+      .filter((u) => u.includes('entity_chunks') || u.includes('pii_allowlist'));
+    expect(coverageProbes).toHaveLength(0);
   });
 });
 

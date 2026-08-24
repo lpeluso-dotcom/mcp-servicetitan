@@ -22,9 +22,16 @@ describe('search_pricebook_templates', () => {
   it('caps limit at 25 and defaults to 12', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify([]), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock as any);
+    // Select the search_templates POSTs by URL rather than by call index: the
+    // `_gold_as_of` watermark probe also fetches (a GET against the template
+    // mirror), so positional indexing no longer identifies the RPC.
+    const limits = () => (fetchMock.mock.calls as any[])
+      .filter(([u]) => String(u).includes('/rpc/search_templates'))
+      .map(([, init]) => JSON.parse(String((init as any).body)).limit_rows);
+
     await search_pricebook_templates.handler(env, { query: 'x', limit: 999 }, ctx);
-    expect(JSON.parse(((fetchMock.mock.calls as any[])[0][1] as any).body).limit_rows).toBe(25);
+    expect(limits()).toEqual([25]);
     await search_pricebook_templates.handler(env, { query: 'x' }, ctx);
-    expect(JSON.parse(((fetchMock.mock.calls as any[])[1][1] as any).body).limit_rows).toBe(12);
+    expect(limits()).toEqual([25, 12]);
   });
 });

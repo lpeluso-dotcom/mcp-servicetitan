@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
 import { sbRpc } from '../../supabase';
+import { goldAsOf } from '../../gold-watermark';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -51,11 +52,16 @@ export const gold_margin_by_bu: ToolDef<Args> = {
       .describe('Restrict to one ST business unit ID (optional; omitted = all BUs).'),
   },
   async handler(env, args) {
-    const rows = await sbRpc<RpcRow[]>(env, 'margin_by_bu', {
-      p_from: args.from,
-      p_to: args.to,
-      p_bu_id: args.businessUnitId ?? null,
-    }, 'gold');
+    // The watermark rides alongside the RPC, not after it: it is a separate
+    // cached probe, and serialising it would add a round trip to every call.
+    const [rows, asOf] = await Promise.all([
+      sbRpc<RpcRow[]>(env, 'margin_by_bu', {
+        p_from: args.from,
+        p_to: args.to,
+        p_bu_id: args.businessUnitId ?? null,
+      }, 'gold'),
+      goldAsOf(env, 'gold'),
+    ]);
     return {
       window: { from: args.from, to: args.to },
       rows: rows.map((r) => ({
@@ -68,6 +74,10 @@ export const gold_margin_by_bu: ToolDef<Args> = {
       })),
       count: rows.length,
       _source: 'gold',
+      // Data age travels WITH the numbers, for the same reason _margin_basis
+      // does: whoever is holding the figures is exactly who is about to quote
+      // them, and a stale-gold answer that looks fresh is worse than none.
+      ...asOf,
       // Travels WITH the rows, not just in the tool description — a caller that already has the
       // numbers in hand is exactly who is about to quote GP% at someone.
       _margin_basis:
