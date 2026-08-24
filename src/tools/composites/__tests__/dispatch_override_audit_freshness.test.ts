@@ -40,7 +40,24 @@ function makeEnv(appointments: any[], assignmentRows: any[], tableMax: string | 
     }
     return new Response(JSON.stringify({ success: false, error: 'no route' }), { status: 500 });
   });
-  return { env: { ST_TENANT_ID: '000000000', ST_PROXY: { fetch: fetcher }, MCP_SYNC_KEY: 'k' } as any, bodies };
+  // ST_RATE_LIMITER: the appointments read now drains pages through
+  // pagedStRead, which checks the rate-limiter DO once per page attempt.
+  const rateLimiter = {
+    idFromName: vi.fn().mockReturnValue('rl-id'),
+    get: vi.fn().mockReturnValue({
+      fetch: vi.fn(async () => new Response(JSON.stringify({ allowed: true }), { status: 200 })),
+    }),
+  };
+  return {
+    env: {
+      ST_TENANT_ID: '000000000',
+      ST_PROXY: { fetch: fetcher },
+      ST_RATE_LIMITER: rateLimiter,
+      MCP_SYNC_KEY: 'k',
+      MCP_SERVICE_VERSION: '0.0.0-test',
+    } as any,
+    bodies,
+  };
 }
 
 const APPT = { id: 1001, jobId: 2002, start: '2026-07-20T09:00:00Z' };
@@ -65,8 +82,8 @@ describe('dispatch_override_audit freshness disclosure (MB-1 / QUA-1141)', () =>
     expect(out._source).toBe('live');
     expect(out._warnings).toBeUndefined();
     // synced_at is stamp plumbing, not part of the technicians row shape.
-    expect(out.overrides[0].technicians[0].technician_id).toBe(55);
-    expect(out.overrides[0].technicians[0].synced_at).toBeUndefined();
+    expect(out.appointments[0].technicians[0].technician_id).toBe(55);
+    expect(out.appointments[0].technicians[0].synced_at).toBeUndefined();
   });
 
   it('concatenates a stale-mirror warning into the existing _warnings array — never a top-level _warning', async () => {
@@ -87,7 +104,7 @@ describe('dispatch_override_audit freshness disclosure (MB-1 / QUA-1141)', () =>
   it('zero assignment rows on a LIVE mirror is an honest "nobody assigned" (F5)', async () => {
     const { env } = makeEnv([APPT], []);
     const out: any = await dispatch_override_audit.handler(env, ARGS, CTX);
-    expect(out.overrides[0].technicians).toEqual([]);
+    expect(out.appointments[0].technicians).toEqual([]);
     expect(out._empty).toBe(true);
     expect(out._freshness).toBe('fresh');
     expect(out._warnings).toBeUndefined();
@@ -96,7 +113,7 @@ describe('dispatch_override_audit freshness disclosure (MB-1 / QUA-1141)', () =>
   it('flags an UNPROVABLE assignments mirror — technicians: [] must not read as "nobody assigned"', async () => {
     const { env } = makeEnv([APPT], [], null);
     const out: any = await dispatch_override_audit.handler(env, ARGS, CTX);
-    expect(out.overrides[0].technicians).toEqual([]);
+    expect(out.appointments[0].technicians).toEqual([]);
     expect(out._empty).toBe(true);
     expect(out._freshness).toBe('unknown');
     expect(out._warnings.join(' ')).toMatch(/not proof/i);
@@ -105,7 +122,7 @@ describe('dispatch_override_audit freshness disclosure (MB-1 / QUA-1141)', () =>
   it('emits no stamp when no appointments exist — there was no mirror read to disclose', async () => {
     const { env } = makeEnv([], []);
     const out: any = await dispatch_override_audit.handler(env, ARGS, CTX);
-    expect(out.overrides).toEqual([]);
+    expect(out.appointments).toEqual([]);
     expect(out._mirror_table).toBeUndefined();
     expect(out._warnings).toBeUndefined();
   });
