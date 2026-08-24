@@ -55,6 +55,10 @@ import { membership_jackpot_leaderboard } from './composites/membership_jackpot_
 import { pricebook_markup_drift } from './composites/pricebook_markup_drift';
 import { pricebook_cost_drift } from './composites/pricebook_cost_drift';
 import { pricebook_vendor_part_gaps } from './composites/pricebook_vendor_part_gaps';
+// QUA-1167 — AP-inbox read/verify (session-cookie internal API; caller-supplied auth)
+import { ap_inbox_list_documents } from './ap_inbox/ap_inbox_list_documents';
+import { ap_inbox_reconcile_amount } from './ap_inbox/ap_inbox_reconcile_amount';
+import { ap_inbox_dedup_check } from './ap_inbox/ap_inbox_dedup_check';
 // T9 — Admin raw gateway
 import { st_call } from './st_call';
 // T8 — Memberships
@@ -283,6 +287,10 @@ export const TOOLS: readonly ToolDef<any>[] = [
   semantic_search_gold,
   // TAI-STV2 rebuild — guided-surface backing tools
   gold_margin_by_bu, tech_scorecard, titan_advisor_score,
+  // QUA-1167 — AP-inbox read/verify. All read-only. list_documents hits the
+  // session-cookie internal API with caller-supplied credentials; the other two
+  // are pure computation.
+  ap_inbox_list_documents, ap_inbox_reconcile_amount, ap_inbox_dedup_check,
 ] as const;
 
 export function findTool(name: string): ToolDef<any> | undefined {
