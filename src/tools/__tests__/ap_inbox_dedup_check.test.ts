@@ -181,9 +181,11 @@ describe('normalizeInvoiceNumber', () => {
     expect(normalizeInvoiceNumber('396175 01')).not.toBe(normalizeInvoiceNumber('396175'));
   });
 
-  it('uppercases and strips leading zeros', () => {
+  it('uppercases, strips leading zeros, and strips punctuation', () => {
     expect(normalizeInvoiceNumber('0012345')).toBe('12345');
-    expect(normalizeInvoiceNumber('ps-inv229380')).toBe('PS-INV229380');
+    // Punctuation goes the same way it does for vendor names — OCR adds a
+    // stray '#' or '.' often enough that keeping it defeats the primary key.
+    expect(normalizeInvoiceNumber('ps-inv229380')).toBe('PSINV229380');
   });
 
   it('treats zero-padded variants of the same invoice as equal', () => {

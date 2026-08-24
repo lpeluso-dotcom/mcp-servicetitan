@@ -48,6 +48,54 @@ export interface ApInboxAuth {
   csrf_token: string;
 }
 
+/**
+ * Remove credential values from anything about to be interpolated into an
+ * error.
+ *
+ * The first version reasoned that interpolating only the RESPONSE BODY was
+ * safe. It is not: a Cloudflare WAF block page or an ASP.NET diagnostic page
+ * can echo the request headers straight back, so the cookie arrives inside the
+ * upstream body and lands in the McpError message — which `obs.ts` writes to
+ * D1 unredacted (tool-registry's redaction covers `audit_log.payload` only)
+ * and which is also returned to the model.
+ */
+function scrub(text: string, auth: ApInboxAuth): string {
+  let out = text;
+  for (const secret of [auth.session_cookie, auth.csrf_token]) {
+    if (!secret) continue;
+    // Whole value first, then each individual cookie's value, so a partial
+    // echo is caught too.
+    out = out.split(secret).join('[redacted]');
+    for (const part of secret.split(';')) {
+      const eq = part.indexOf('=');
+      if (eq === -1) continue;
+      const value = part.slice(eq + 1).trim();
+      if (value.length >= 8) out = out.split(value).join('[redacted]');
+    }
+  }
+  return out;
+}
+
+/**
+ * Reject a credential that cannot legally sit in an HTTP header BEFORE it is
+ * sent.
+ *
+ * These strings are pasted by a human from a browser capture. A stray newline
+ * makes the runtime throw with the value embedded in the exception message
+ * (a second leak path), and is a header-injection vector besides. Validate at
+ * the boundary rather than discovering it in a stack trace.
+ */
+function assertHeaderSafe(name: string, value: string): void {
+  // RFC 7230 field-value: visible ASCII plus space/tab. No CR, LF, or NUL.
+  if (!/^[\t\x20-\x7E]*$/.test(value)) {
+    throw new McpError(
+      'validation_error',
+      `${name} contains characters that are not legal in an HTTP header (most likely a newline ` +
+        `from the paste). Re-copy it from the browser capture. The value is not echoed here.`,
+    );
+  }
+}
+
 function headersFor(auth: ApInboxAuth, withBody: boolean): Record<string, string> {
   return {
     accept: 'application/json',
@@ -80,6 +128,9 @@ export async function apInboxFetch<T = unknown>(
     correlation?: string;
   },
 ): Promise<T> {
+  assertHeaderSafe('session_cookie', auth.session_cookie);
+  assertHeaderSafe('csrf_token', auth.csrf_token);
+
   const url = new URL(`${BASE}${path}`);
   for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, String(v));
 
@@ -93,10 +144,17 @@ export async function apInboxFetch<T = unknown>(
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new McpError('timeout', `AP-inbox request to ${path} failed or timed out: ${msg}`, {
-      correlation: opts.correlation,
-    });
+    const raw = e instanceof Error ? e.message : String(e);
+    // Distinguish a real timeout from a network/DNS/TLS failure. Classifying
+    // everything as 'timeout' invites a caller retry policy to retry things
+    // that will never succeed.
+    const aborted = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
+    throw new McpError(
+      aborted ? 'timeout' : 'upstream_error',
+      `AP-inbox request to ${path} ${aborted ? 'timed out' : 'failed'}: ` +
+        scrub(raw, auth).slice(0, ERROR_BODY_CAP),
+      { correlation: opts.correlation },
+    );
   }
 
   if (res.status === 401 || res.status === 403) {
@@ -113,10 +171,13 @@ export async function apInboxFetch<T = unknown>(
   const body = await res.text().catch(() => '');
 
   if (!res.ok) {
-    // Deliberately interpolates only the response body — never a header.
+    // The upstream body is NOT trusted: a WAF block page or an ASP.NET
+    // diagnostic can echo our own request headers back at us. Scrub before
+    // interpolating.
     throw new McpError(
       mapUpstreamStatus(res.status),
-      `AP-inbox ${opts.method} ${path} returned HTTP ${res.status}: ${body.slice(0, ERROR_BODY_CAP)}`,
+      `AP-inbox ${opts.method} ${path} returned HTTP ${res.status}: ` +
+        scrub(body, auth).slice(0, ERROR_BODY_CAP),
       { correlation: opts.correlation },
     );
   }

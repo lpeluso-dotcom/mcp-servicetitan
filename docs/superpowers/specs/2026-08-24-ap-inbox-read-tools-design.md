@@ -503,6 +503,41 @@ larger live exposure than anything the three tools in this doc address.
 
 ---
 
+## 9a. Changes from adversarial review (2026-08-24, post-implementation)
+
+An independent review of the first implementation reproduced **eight** defects by
+execution. All are fixed; the regression suite is `ap_inbox_hardening.test.ts`. The shared
+root cause is worth stating plainly, because it is the same shape as the incident these tools
+address: **the first pass treated missing or unparseable data as zero, then reported a
+confident verdict on it.**
+
+| Defect | Now |
+|---|---|
+| `enrich_note` said "All rows enriched" while returning unenriched rows; an out-of-range cursor enriched nothing and still claimed success | Note derived from what was actually enriched; `enriched_count` / `unenriched_count` returned; out-of-range cursor is an error |
+| `dedupCheck` silently skipped comparison rows with no invoice number and reported "No duplicate found" | New `verdict: cannot_judge` + `unjudgeable_comparison_rows` count |
+| `totalCount` stored but never enforced — a truncated comparison set looked complete | Pages until complete; throws if `rows.length < totalCount` |
+| Self-match exclusion compared `undefined === undefined`, so every id-less row looked like "self" | Requires both ids genuinely present; also applied to `created_bills` |
+| `reconciles: true` on empty items, zero header, and `tax === header` | All three HOLD |
+| `toNum`/`amount` returned 0 for unparseable input, deleting lines and demoting duplicates | Parse tracked; unparseable is a HOLD, never a zero |
+| Two *missing* amounts compared equal and reported `is_duplicate: true` | Missing amount → `cannot_judge` |
+| Credentials could reach an error via an echoed upstream body or a header-validation throw | Scrubbed from every interpolation; validated at the boundary before send |
+
+Three deliberate contract changes came out of it:
+
+- **`verdict` replaces `is_duplicate` as the primary field.** `is_duplicate: false` was doing
+  double duty for "checked, clean" and "could not check" — and a caller branching on the
+  boolean reads the second as the first. Only `verdict: 'clear'` means safe to file. This
+  supersedes §5.3's `confidence` field, which was never implemented.
+- **`also_matched`** on the reconcile result, with a HOLD when two modes both reconcile but
+  imply different per-line amounts. `mode` decides how each *line* posts, and AP lines map to
+  jobs, so resolving that by candidate order silently misallocates cost.
+- **A sixth reconciliation mode**, `extended_tax_inclusive`. Mode 3 was implemented only
+  against the unit sum, so a CES-style extended bill with tax-inclusive lines could not
+  reconcile in any mode — the same throughput regression mode 3 was added to fix.
+
+Tolerance is now compared in **integer cents**. `Math.abs(a - b) < 0.05` accepted a gap of
+exactly five cents, because `100.05 - 100` is `0.049999999999997` in float.
+
 ## 10. Open questions
 
 1. ~~**Probe 0** — does a Worker `fetch` reach the inbox API?~~ **Answered 2026-08-24: yes.**

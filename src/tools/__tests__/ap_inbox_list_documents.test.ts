@@ -42,11 +42,15 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('ap_inbox_list_documents — spans the pending/created boundary', () => {
   it('defaults to BOTH pending (2) and created (3)', async () => {
+    // totalCount must equal the rows actually returned. An earlier version of
+    // this test claimed totalCount 99/591 while returning ONE row each and
+    // asserted that as the contract — certifying the truncation blindness the
+    // tool now refuses. See ap_inbox_hardening.test.ts.
     const fetchMock = vi.fn(async (_url: any, init: any) => {
       const st = JSON.parse(init.body).status;
       return jsonResponse({
         result: [row({ status: st[0], billWasCreated: st[0] === 3 })],
-        totalCount: st[0] === 2 ? 99 : 591,
+        totalCount: 1,
       });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -54,7 +58,7 @@ describe('ap_inbox_list_documents — spans the pending/created boundary', () =>
     const out: any = await ap_inbox_list_documents.handler({} as any, { ...AUTH }, ctx);
 
     expect(out.statuses_requested).toEqual([2, 3]);
-    expect(out.total_by_status).toEqual({ '2': 99, '3': 591 });
+    expect(out.total_by_status).toEqual({ '2': 1, '3': 1 });
     expect(out.documents.map((d: any) => d.status).sort()).toEqual([2, 3]);
   });
 
@@ -152,7 +156,10 @@ describe('ap_inbox_list_documents — enrichment is opt-in and bounded', () => {
       { } as any, { ...AUTH, statuses: [2], enrich: true }, ctx,
     );
     expect(out.enriched).toBe(true);
-    expect(out.documents[0].vendor_invoice_number).toBe('39617501'); // normalized, space kept as data
+    // RAW, exactly as printed on the PDF. Normalization happens inside
+    // ap_inbox_dedup_check's comparison, not in the value handed back — the
+    // output must agree with the document a human opens.
+    expect(out.documents[0].vendor_invoice_number).toBe('396175 01');
     expect(out.documents[0].vendor_id).toBe(288);
     expect(out.documents[0].is_bill_duplicate).toBe(false);
   });

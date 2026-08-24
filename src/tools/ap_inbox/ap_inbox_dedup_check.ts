@@ -46,9 +46,15 @@ const AMOUNT_TOLERANCE = 0.01;
  */
 export function normalizeInvoiceNumber(raw: unknown): string {
   if (raw === null || raw === undefined) return '';
+  // Strip punctuation as well as whitespace, for the same reason `slug` does
+  // it to vendor names: OCR adds a leading '#' or a trailing '.' often enough
+  // that leaving them in defeats the PRIMARY dedup key. The first version
+  // stripped whitespace only, so '#3873769' and '3873769' were different
+  // invoices — a stricter standard applied to the noisier field than to the
+  // decisive one.
   const s = String(raw)
     .toUpperCase()
-    .replace(/\s+/g, '');
+    .replace(/[^A-Z0-9]/g, '');
   if (s === '') return '';
   const stripped = s.replace(/^0+/, '');
   // '000' must not collapse to '' — that would make every zero-ish invoice
@@ -86,17 +92,46 @@ export function normalizeVendorKey(v: { vendor_id?: unknown; vendor_name?: unkno
   return id ? `id:${id}` : slug(v.vendor_name);
 }
 
-/** True when two rows are the same vendor. Ids win when BOTH sides have one. */
+/**
+ * Do two rows name the same vendor? Tri-state: `null` means UNKNOWN.
+ *
+ * Unknown is a real answer here and must not collapse to `false`. ST
+ * auto-matched a vendorId on only 17 of 35 rows (2026-08-21) and `slim()`
+ * defaults a missing name to `''`, so a row carrying an id and no name
+ * compared against a row carrying a name and no id is genuinely
+ * indeterminate. The first version returned `false` for that, which silently
+ * demoted a real duplicate to "not a duplicate" — the dangerous direction.
+ */
 export function vendorsMatch(
   a: { vendor_id?: unknown; vendor_name?: unknown },
   b: { vendor_id?: unknown; vendor_name?: unknown },
-): boolean {
+): boolean | null {
   const aid = positiveId(a.vendor_id);
   const bid = positiveId(b.vendor_id);
   if (aid && bid) return aid === bid;
   const as = slug(a.vendor_name);
   const bs = slug(b.vendor_name);
-  return as !== '' && as === bs;
+  if (as !== '' && bs !== '') return as === bs;
+  return null; // one side has only an id, the other only a name
+}
+
+/**
+ * Are these the same physical row? Requires BOTH ids on BOTH sides.
+ *
+ * `BillRefSchema` declares the ids nullish, so a bare `a.id === b.id` compares
+ * `undefined === undefined` and reports true. That made every hand-assembled
+ * pending row look like the candidate itself, and the tool reported no
+ * duplicate for a set of literally identical rows.
+ */
+function isSameRow(a: BillRef, b: BillRef): boolean {
+  return (
+    a.document_id != null &&
+    b.document_id != null &&
+    a.ocr_result_id != null &&
+    b.ocr_result_id != null &&
+    a.document_id === b.document_id &&
+    a.ocr_result_id === b.ocr_result_id
+  );
 }
 
 export interface BillRef {
@@ -117,19 +152,51 @@ interface MatchRow {
   total_amount: number;
 }
 
+/**
+ * `clear` is the ONLY verdict that means "safe to file".
+ *
+ * `is_duplicate: false` is not the same statement — it is also what a
+ * `cannot_judge` returns, and a caller branching on the boolean alone will
+ * read "I could not check this" as "I checked it and it is fine". That
+ * conflation is the shape of the original incident, so the verdict is the
+ * primary field and the boolean is kept only for the confirmed-duplicate case.
+ */
+export type DedupVerdict = 'duplicate' | 'ambiguous' | 'cannot_judge' | 'clear';
+
 export interface DedupResult {
+  verdict: DedupVerdict;
+  /** True ONLY for a confirmed duplicate. Never branch on `!is_duplicate` — check `verdict`. */
   is_duplicate: boolean;
   normalized: { vendor_key: string; invoice_number: string };
   matched_against: MatchRow[];
-  /** Same invoice + vendor, DIFFERENT amount. Not a duplicate; still worth a human's eye. */
+  /** Invoice matches but vendor or amount does not, or could not be compared. Needs a human. */
   ambiguous_matches: MatchRow[];
+  /** Comparison rows that could not be read at all — usually unenriched. */
+  unjudgeable_comparison_rows: number;
   checks_run: string[];
   reason: string;
 }
 
-function amount(v: unknown): number {
-  const n = typeof v === 'number' ? v : Number(v);
-  return Number.isFinite(n) ? n : 0;
+interface ParsedAmount {
+  value: number;
+  ok: boolean;
+}
+
+/**
+ * Parse a money value, reporting whether it was actually readable.
+ *
+ * `Number('$4,947.88')` is NaN. The first version coerced that to 0, which
+ * demoted a real duplicate to "amount differs" — and, worse, made two MISSING
+ * amounts compare equal (0 === 0) and report `is_duplicate: true`. Two
+ * unknowns are not agreement.
+ */
+function parseAmount(v: unknown): ParsedAmount {
+  if (v === null || v === undefined) return { value: 0, ok: false };
+  if (typeof v === 'number') return Number.isFinite(v) ? { value: v, ok: true } : { value: 0, ok: false };
+  const cleaned = String(v).replace(/[$,\s]/g, '');
+  if (cleaned === '') return { value: 0, ok: false };
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? { value: n, ok: true } : { value: 0, ok: false };
 }
 
 function toRow(b: BillRef, source: 'created' | 'pending'): MatchRow {
@@ -139,7 +206,25 @@ function toRow(b: BillRef, source: 'created' | 'pending'): MatchRow {
     ocr_result_id: b.ocr_result_id ?? null,
     vendor_name: String(b.vendor_name ?? ''),
     vendor_invoice_number: String(b.vendor_invoice_number ?? ''),
-    total_amount: amount(b.total_amount),
+    total_amount: parseAmount(b.total_amount).value,
+  };
+}
+
+function cannotJudge(
+  reason: string,
+  normalized: { vendor_key: string; invoice_number: string },
+  checks_run: string[],
+  unjudgeable = 0,
+): DedupResult {
+  return {
+    verdict: 'cannot_judge',
+    is_duplicate: false,
+    normalized,
+    matched_against: [],
+    ambiguous_matches: [],
+    unjudgeable_comparison_rows: unjudgeable,
+    checks_run,
+    reason,
   };
 }
 
@@ -155,7 +240,8 @@ export function dedupCheck(input: {
 
   const inv = normalizeInvoiceNumber(candidate.vendor_invoice_number);
   const vendorKey = normalizeVendorKey(candidate);
-  const amt = amount(candidate.total_amount);
+  const amtP = parseAmount(candidate.total_amount);
+  const normalized = { vendor_key: vendorKey, invoice_number: inv };
 
   const checks_run = ['created_bills', ...(pendingProvided ? ['pending_self_join'] : [])];
 
@@ -163,40 +249,61 @@ export function dedupCheck(input: {
   // return a confident "not a duplicate" — an unenriched row (see
   // ap_inbox_list_documents `enrich`) looks exactly like this.
   if (inv === '') {
-    return {
-      is_duplicate: false,
-      normalized: { vendor_key: vendorKey, invoice_number: '' },
-      matched_against: [],
-      ambiguous_matches: [],
-      checks_run,
-      reason:
-        'Candidate has no vendor invoice number, which is the primary dedup key — cannot judge. ' +
+    return cannotJudge(
+      'Candidate has no vendor invoice number, which is the primary dedup key. ' +
         'If this row came from ap_inbox_list_documents, re-fetch it with enrich:true; the invoice ' +
         'number is not on the list row. NOT a clearance to file.',
-    };
+      normalized,
+      checks_run,
+    );
   }
+
+  if (!amtP.ok) {
+    return cannotJudge(
+      'Candidate has no readable total_amount. Amount is one of the three components that must ' +
+        'agree, so no verdict is possible. NOT a clearance to file.',
+      normalized,
+      checks_run,
+    );
+  }
+  const amt = amtP.value;
 
   const matched: MatchRow[] = [];
   const ambiguous: MatchRow[] = [];
+  let unjudgeable = 0;
 
   const scan = (rows: BillRef[], source: 'created' | 'pending') => {
     for (const row of rows) {
-      // Never match the candidate against itself in the pending set.
-      if (
-        source === 'pending' &&
-        row.document_id === candidate.document_id &&
-        row.ocr_result_id === candidate.ocr_result_id
-      ) {
+      // Never compare the candidate against itself — in EITHER set. The
+      // created check needs this too: list_documents returns one flat array
+      // spanning both statuses, and its two per-status requests are
+      // sequential, so a bill filed in between appears in both pages under the
+      // same key.
+      if (isSameRow(row, candidate)) continue;
+
+      const rowInv = normalizeInvoiceNumber(row.vendor_invoice_number);
+      const rowAmt = parseAmount(row.total_amount);
+
+      // A row we cannot read is NOT a row that failed to match. Count it, and
+      // let it block the `clear` verdict. Silently skipping these is how a
+      // 640-row unenriched comparison set reported "no duplicate found".
+      if (rowInv === '' || !rowAmt.ok) {
+        unjudgeable++;
         continue;
       }
-      const rowInv = normalizeInvoiceNumber(row.vendor_invoice_number);
-      if (rowInv === '' || rowInv !== inv) continue;
-      if (!vendorsMatch(candidate, row)) continue;
+      if (rowInv !== inv) continue;
 
-      // Invoice + vendor agree. The amount decides duplicate vs ambiguous.
-      if (Math.abs(amount(row.total_amount) - amt) < AMOUNT_TOLERANCE) {
+      const vendorVerdict = vendorsMatch(candidate, row);
+      const amountAgrees = Math.abs(rowAmt.value - amt) < AMOUNT_TOLERANCE;
+
+      if (vendorVerdict === true && amountAgrees) {
         matched.push(toRow(row, source));
       } else {
+        // Invoice number matched. That alone is strong enough to deserve a
+        // human, whether the vendor or the amount is what disagrees. The first
+        // version surfaced amount mismatches and dropped vendor mismatches
+        // silently — backwards, since the vendor name is the noisiest OCR
+        // field and the invoice number is the decisive one.
         ambiguous.push(toRow(row, source));
       }
     }
@@ -206,20 +313,32 @@ export function dedupCheck(input: {
   if (pendingProvided) scan(pending, 'pending');
 
   const is_duplicate = matched.length > 0;
+  const verdict: DedupVerdict = is_duplicate
+    ? 'duplicate'
+    : ambiguous.length > 0
+      ? 'ambiguous'
+      : unjudgeable > 0
+        ? 'cannot_judge'
+        : 'clear';
 
   let reason: string;
-  if (is_duplicate) {
+  if (verdict === 'duplicate') {
     const where = [...new Set(matched.map((m) => m.source))].join(' + ');
     reason =
       `DUPLICATE — invoice ${inv}, vendor, and amount ${amt.toFixed(2)} all agree with ` +
       `${matched.length} row(s) in: ${where}. DO NOT FILE; filing double-counts this cost onto the job.`;
-  } else if (ambiguous.length > 0) {
+  } else if (verdict === 'ambiguous') {
     reason =
-      `Not a duplicate: invoice ${inv} and vendor match ${ambiguous.length} row(s), but the amount ` +
-      `differs from ${amt.toFixed(2)}. Could be a page split or a partial credit — have a human look ` +
-      `before filing.`;
+      `AMBIGUOUS — invoice ${inv} matches ${ambiguous.length} row(s), but the vendor or the amount ` +
+      `does not agree with ${amt.toFixed(2)}. Could be a page split, a partial credit, or an OCR ` +
+      `vendor-name variant. A human must look before filing.`;
+  } else if (verdict === 'cannot_judge') {
+    reason =
+      `CANNOT JUDGE — ${unjudgeable} comparison row(s) had no readable invoice number or amount, so ` +
+      `they were never actually compared. Re-fetch them from ap_inbox_list_documents with enrich:true ` +
+      `(and page through next_cursor until it is null). This is NOT a clearance to file.`;
   } else {
-    reason = `No duplicate found for invoice ${inv} across ${checks_run.join(' + ')}.`;
+    reason = `CLEAR — no duplicate found for invoice ${inv} across ${checks_run.join(' + ')}; every comparison row was readable.`;
   }
 
   // A caller who omits pending_bills gets only half the guarantee. Say so
@@ -231,10 +350,12 @@ export function dedupCheck(input: {
   }
 
   return {
+    verdict,
     is_duplicate,
-    normalized: { vendor_key: vendorKey, invoice_number: inv },
+    normalized,
     matched_against: matched,
     ambiguous_matches: ambiguous,
+    unjudgeable_comparison_rows: unjudgeable,
     checks_run,
     reason,
   };

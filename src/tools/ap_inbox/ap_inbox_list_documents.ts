@@ -33,6 +33,8 @@ const DEFAULT_PAGE_SIZE = 1000;
 const MAX_PAGE_SIZE = 2000;
 const DEFAULT_ENRICH_LIMIT = 50;
 const MAX_ENRICH_LIMIT = 200;
+/** Hard stop on the pagination loop. 20 x 2000 = 40k rows, far above any real inbox. */
+const MAX_PAGES = 20;
 
 /** A GetBillDocuments row. Verified live: exactly 13 keys, `vendorName` among them. */
 interface RawRow {
@@ -165,7 +167,9 @@ export const ap_inbox_list_documents: ToolDef<Args> = {
       session_cookie: args.session_cookie,
       csrf_token: args.csrf_token,
     };
-    const statuses = args.statuses?.length ? args.statuses : DEFAULT_STATUSES;
+    // De-duplicated: statuses:[2,2] would otherwise fetch twice, push every row
+    // twice, and overwrite total_by_status['2'] with itself.
+    const statuses = [...new Set(args.statuses?.length ? args.statuses : DEFAULT_STATUSES)];
     const pageSize = Math.min(args.page_size ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
 
     const documents: SlimDocument[] = [];
@@ -181,41 +185,67 @@ export const ap_inbox_list_documents: ToolDef<Args> = {
     // blindness this tool exists to fix. Per-status calls make that
     // unobservable failure impossible, and cost one extra request.
     for (const status of statuses) {
-      const page = await apInboxFetch<{ result?: RawRow[]; totalCount?: number }>(
-        auth,
-        '/GetBillDocuments',
-        {
-          method: 'POST',
-          correlation,
-          body: {
-            search: '',
-            status: [status],
-            orderBy: 'date',
-            desc: true,
-            pageIndex: 1,
-            pageSize,
+      const rows: RawRow[] = [];
+      let totalCount: number | null = null;
+      let pageIndex = 1;
+
+      // PAGE UNTIL COMPLETE. The first version fetched pageIndex 1 only, stored
+      // totalCount, and never compared the two — so 591 filed bills behind a
+      // 1000-row page looked fine right up until they did not. The list is
+      // ordered date-desc, so truncation drops the OLDEST filed bills first,
+      // which is exactly where a re-forwarded invoice from two months ago
+      // lives. An incomplete comparison set must never look complete.
+      for (; pageIndex <= MAX_PAGES; pageIndex++) {
+        const page = await apInboxFetch<{ result?: RawRow[]; totalCount?: number }>(
+          auth,
+          '/GetBillDocuments',
+          {
+            method: 'POST',
+            correlation,
+            body: { search: '', status: [status], orderBy: 'date', desc: true, pageIndex, pageSize },
           },
-        },
-      );
+        );
 
-      const rows = page.result ?? [];
+        const batch = page.result ?? [];
+        if (page.totalCount !== undefined) totalCount = Number(page.totalCount);
 
-      // Assert the filter was actually applied. A wrong answer is worse than
-      // no answer: silently accepting rows of another status would make a
-      // "pending only" view quietly include filed bills, or vice versa.
-      const wrong = rows.find((r) => Number(r.status) !== status);
-      if (wrong) {
+        // Assert the filter was actually applied. A wrong answer is worse than
+        // no answer: silently accepting rows of another status would make a
+        // "pending only" view quietly include filed bills, or vice versa.
+        //
+        // Only rows that ACTUALLY CARRY a different status count. A row with
+        // no status field is missing data, not evidence ServiceTitan dropped
+        // the filter — `slim()` already tolerates that, and the two must
+        // agree.
+        const wrong = batch.find((r) => r.status !== undefined && Number(r.status) !== status);
+        if (wrong) {
+          throw new McpError(
+            'upstream_error',
+            `GetBillDocuments was asked for status ${status} but returned a row with status ` +
+              `${wrong.status} (document ${wrong.id}). ServiceTitan appears to have dropped the ` +
+              `status filter and returned an unfiltered page. Refusing to return data that would ` +
+              `look like a filtered result.`,
+            { correlation },
+          );
+        }
+
+        rows.push(...batch);
+        if (batch.length === 0) break;
+        if (totalCount !== null && rows.length >= totalCount) break;
+      }
+
+      if (totalCount !== null && rows.length < totalCount) {
         throw new McpError(
           'upstream_error',
-          `GetBillDocuments was asked for status ${status} but returned a row with status ` +
-            `${wrong.status} (document ${wrong.id}). ServiceTitan appears to have dropped the ` +
-            `status filter and returned an unfiltered page. Refusing to return data that would ` +
-            `look like a filtered result.`,
+          `Incomplete result for status ${status}: ServiceTitan reports totalCount ${totalCount} but ` +
+            `only ${rows.length} rows were retrieved in ${MAX_PAGES} pages of ${pageSize}. Returning ` +
+            `a truncated set would silently hide already-filed bills from the duplicate check — the ` +
+            `list is ordered date-desc, so what is missing is the OLDEST rows. Raise page_size.`,
           { correlation },
         );
       }
 
-      total_by_status[String(status)] = Number(page.totalCount ?? rows.length);
+      total_by_status[String(status)] = totalCount ?? rows.length;
       documents.push(...rows.map(slim));
     }
 
@@ -225,7 +255,20 @@ export const ap_inbox_list_documents: ToolDef<Args> = {
     const limit = Math.min(args.enrich_limit ?? DEFAULT_ENRICH_LIMIT, MAX_ENRICH_LIMIT);
     let next_cursor: number | null = null;
 
+    let enriched_count = 0;
+
     if (enrich) {
+      // A cursor past the end enriched nothing and then reported success with
+      // a reversed range ("Enriched rows 1000..4. All rows enriched.").
+      if (cursor >= documents.length && documents.length > 0) {
+        throw new McpError(
+          'validation_error',
+          `enrich_cursor ${cursor} is past the end of the ${documents.length}-row result. Nothing ` +
+            `would be enriched, and reporting success would imply otherwise. Pass a cursor below ` +
+            `${documents.length}, or omit it to start from 0.`,
+          { correlation },
+        );
+      }
       const end = Math.min(cursor + limit, documents.length);
       for (let i = cursor; i < end; i++) {
         const d = documents[i];
@@ -239,8 +282,15 @@ export const ap_inbox_list_documents: ToolDef<Args> = {
           },
         );
         const bd = detail.billData ?? {};
+        // Return the RAW invoice number, exactly as it appears on the PDF a
+        // human will open. Normalization belongs inside the comparison
+        // (ap_inbox_dedup_check does it), not in the value we hand back —
+        // showing "39617501" for an invoice printed "396175 01" makes the
+        // tool's output disagree with the document it describes.
         const invRaw = unwrap(bd.vendorDocumentNumber);
-        d.vendor_invoice_number = normalizeInvoiceNumber(invRaw) || null;
+        const invStr = invRaw === null || invRaw === undefined ? '' : String(invRaw).trim();
+        d.vendor_invoice_number = invStr === '' ? null : invStr;
+        enriched_count++;
 
         // purchasingVendor.value is the vendorId and is often null — ST
         // auto-matched only 17 of 35 rows on 2026-08-21. .text is the OCR name.
@@ -261,15 +311,24 @@ export const ap_inbox_list_documents: ToolDef<Args> = {
       statuses_requested: statuses,
       total_by_status,
       enriched: enrich,
+      enriched_count,
+      unenriched_count: documents.filter((d) => d.vendor_invoice_number === null).length,
       // Makes the null-vs-not-fetched distinction explicit. An unenriched
       // vendor_invoice_number is null because we did not ask, NOT because the
       // bill has none — treating those the same is how a dedup check returns a
       // confident false negative.
+      //
+      // This note is derived from what was ACTUALLY enriched in THIS response,
+      // not from next_cursor. The first version keyed off next_cursor alone,
+      // so a resumed call (cursor 3, limit 2, 5 rows) enriched the last two
+      // and announced "All rows enriched" while returning three null rows.
       enrich_note: enrich
-        ? `Enriched rows ${cursor}..${Math.min(cursor + limit, documents.length) - 1}.` +
+        ? `Enriched ${enriched_count} row(s) at offsets ${cursor}..${Math.min(cursor + limit, documents.length) - 1} of ${documents.length}. ` +
+          `${documents.filter((d) => d.vendor_invoice_number === null).length} row(s) in THIS response still have a null invoice number` +
           (next_cursor !== null
-            ? ` ${documents.length - next_cursor} rows still unenriched — call again with enrich_cursor:${next_cursor}.`
-            : ' All rows enriched.')
+            ? ` — call again with enrich_cursor:${next_cursor} to continue.`
+            : `; they were outside this call's window. Re-call from enrich_cursor:0 to cover them.`) +
+          ' Rows with a null invoice number CANNOT be judged by ap_inbox_dedup_check.'
         : 'NOT ENRICHED: vendor_invoice_number/vendor_id/is_bill_duplicate are null because they were not fetched, not because the bills lack them. ap_inbox_dedup_check cannot judge these rows.',
       next_cursor,
       documents,
