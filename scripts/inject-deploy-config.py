@@ -9,10 +9,11 @@ runs against a checked-out copy; nothing is written back to git).
 
 Required env vars (matching the GH Actions secret names):
   ST_TENANT_ID
-  D1_DATABASE_ID_PROD     D1_DATABASE_ID_DEV
-  KV_NAMESPACE_ID_PROD    KV_NAMESPACE_ID_DEV
-  ST_PROXY_SERVICE_PROD   ST_PROXY_SERVICE_DEV
-  ALLOWED_EMAILS_PROD     ALLOWED_EMAILS_DEV
+  D1_DATABASE_ID_PROD           D1_DATABASE_ID_DEV
+  KV_NAMESPACE_ID_PROD          KV_NAMESPACE_ID_DEV        (PROXY_STATE)
+  KV_CACHE_NAMESPACE_ID_PROD    KV_CACHE_NAMESPACE_ID_DEV  (MCP_CACHE)
+  ST_PROXY_SERVICE_PROD         ST_PROXY_SERVICE_DEV
+  ALLOWED_EMAILS_PROD           ALLOWED_EMAILS_DEV
 
 Why a script instead of inline `sed` in deploy.yml: each placeholder appears
 in two sections (prod + dev), and we only want to swap each occurrence with
@@ -31,6 +32,7 @@ REQUIRED_VARS = (
     'ST_TENANT_ID',
     'D1_DATABASE_ID_PROD', 'D1_DATABASE_ID_DEV',
     'KV_NAMESPACE_ID_PROD', 'KV_NAMESPACE_ID_DEV',
+    'KV_CACHE_NAMESPACE_ID_PROD', 'KV_CACHE_NAMESPACE_ID_DEV',
     'ST_PROXY_SERVICE_PROD', 'ST_PROXY_SERVICE_DEV',
     'ALLOWED_EMAILS_PROD', 'ALLOWED_EMAILS_DEV',
 )
@@ -48,8 +50,6 @@ SECTION_SUBS = {
     '[env.dev.vars]':  [(EMAILS_PLACEHOLDER, 'ALLOWED_EMAILS_DEV',  True)],
     '[[d1_databases]]':           [(D1_PLACEHOLDER,       'D1_DATABASE_ID_PROD',   True)],
     '[[env.dev.d1_databases]]':   [(D1_PLACEHOLDER,       'D1_DATABASE_ID_DEV',    True)],
-    '[[kv_namespaces]]':          [(KV_PLACEHOLDER,       'KV_NAMESPACE_ID_PROD',  True)],
-    '[[env.dev.kv_namespaces]]':  [(KV_PLACEHOLDER,       'KV_NAMESPACE_ID_DEV',   True)],
     '[[services]]':               [(SVC_PROD_PLACEHOLDER, 'ST_PROXY_SERVICE_PROD', True)],
     # Dev service section may contain either the dev or generic placeholder
     # depending on which was committed; try dev first, fall back to prod.
@@ -58,6 +58,24 @@ SECTION_SUBS = {
         (SVC_PROD_PLACEHOLDER, 'ST_PROXY_SERVICE_DEV', False),
     ],
 }
+
+# KV sections are NOT keyed on the section header alone. There are now three
+# `[[kv_namespaces]]` blocks per environment (PROXY_STATE, OAUTH_KV, MCP_CACHE)
+# and the header-only mapping above would hand every one of them the SAME id —
+# verified: adding the MCP_CACHE block made it inherit PROXY_STATE's namespace,
+# which would have dropped cache blobs into PROXY_STATE's keyspace alongside
+# `embed_workflow:last_instance`. So KV blocks are resolved by their
+# `binding = "..."` line instead. OAUTH_KV carries a real committed id (KV ids
+# are account-scoped identifiers, not secrets) and is deliberately absent here —
+# it has no placeholder to swap.
+KV_BINDING_SUBS = {
+    ('[[kv_namespaces]]', 'PROXY_STATE'): 'KV_NAMESPACE_ID_PROD',
+    ('[[kv_namespaces]]', 'MCP_CACHE'): 'KV_CACHE_NAMESPACE_ID_PROD',
+    ('[[env.dev.kv_namespaces]]', 'PROXY_STATE'): 'KV_NAMESPACE_ID_DEV',
+    ('[[env.dev.kv_namespaces]]', 'MCP_CACHE'): 'KV_CACHE_NAMESPACE_ID_DEV',
+}
+
+BINDING_RE = re.compile(r'(?m)^binding\s*=\s*"([^"]+)"\s*$')
 
 SECTION_RE = re.compile(r'(?m)^(\[\[?[^\]\n]+\]\]?)\s*$')
 
@@ -96,6 +114,16 @@ def main() -> int:
             ctx = chunk.strip()
             out.append(chunk)
             continue
+        # KV blocks: resolve by binding name, not by section header. See
+        # KV_BINDING_SUBS for why the header alone is not enough.
+        if ctx.endswith('kv_namespaces]]'):
+            binding = BINDING_RE.search(chunk)
+            env_name = KV_BINDING_SUBS.get((ctx, binding.group(1) if binding else ''))
+            if env_name and KV_PLACEHOLDER in chunk:
+                chunk = chunk.replace(KV_PLACEHOLDER, quote(os.environ[env_name]), 1)
+            out.append(chunk)
+            continue
+
         subs = SECTION_SUBS.get(ctx, [])
         for placeholder, env_name, required_match in subs:
             value = quote(os.environ[env_name])

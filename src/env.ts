@@ -51,4 +51,20 @@ export interface Env {
   // F3 Durable Objects
   ST_RATE_LIMITER: DurableObjectNamespace;
   CUSTOMER_SNAPSHOT_FLIGHT: DurableObjectNamespace;
+
+  // ── Wave 2, workstream E (platform adoption) ─────────────────────────────
+  // All OPTIONAL on purpose: each feature must degrade to today's behaviour
+  // when its binding is absent (local dev, the offline test suite, an account
+  // where the resource has not been created yet).
+
+  /** KV store backing src/cache.ts. See CACHE_BACKEND for the cutover flag. */
+  MCP_CACHE?: KVNamespace;
+  /** "d1" (default) | "dual" | "kv" — which store src/cache.ts reads and writes. */
+  CACHE_BACKEND?: string;
+  /**
+   * Native Cloudflare [[ratelimits]] binding, applied per authenticated actor at
+   * the /mcp edge. Per-location and eventually consistent — it does NOT and
+   * cannot replace the ST_RATE_LIMITER DO's global ServiceTitan quota.
+   */
+  MCP_EDGE_RL?: RateLimit;
 }

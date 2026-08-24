@@ -31,7 +31,7 @@ describe('supabase helpers', () => {
   it('embedQuery returns the vector on success', async () => {
     const e = env();
     await expect(embedQuery(e, 'shower caulk')).resolves.toEqual([0.1, 0.2, 0.3]);
-    expect(e.AI.run).toHaveBeenCalledWith('@cf/baai/bge-base-en-v1.5', { text: ['shower caulk'] });
+    expect(e.AI.run).toHaveBeenCalledWith('@cf/baai/bge-base-en-v1.5', { text: ['shower caulk'] }, expect.objectContaining({ gateway: expect.objectContaining({ cacheTtl: 86400 }) }));  // 3rd arg: AI Gateway (Wave 2 item 5)
   });
 
   it('embedQuery returns null when AI throws', async () => {

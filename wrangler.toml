@@ -12,6 +12,61 @@ cpu_ms = 50
 [observability]
 enabled = true
 
+# Workers Tracing (open beta). Automatic spans cover the ST_PROXY service
+# binding, D1 queries, DO fetches and Workers AI — exactly the per-request
+# breakdown this worker has never had.
+#
+# head_sampling_rate IS SET DELIBERATELY AND MUST STAY SET. Tracing is free
+# through 2026-09-30 and BILLED FROM 2026-10-01, and an unset rate defaults to
+# 1.0 — 100% of requests. Choosing the number now is how we avoid discovering
+# it on a bill. Sampling is head-based, so unsampled requests carry no overhead.
+#
+# NOTE ON OVERLAP: this worker already writes its own spans to the D1
+# otel_span_queue (src/observability/tracing.ts, migrations/0005). That stays
+# for now — it is one hand-rolled root span per MCP tool call, which native
+# tracing does not replace one-for-one. Once native traces prove out, the D1
+# `error_log` table becomes a candidate to retire. `audit_log` does NOT: it is
+# the compliance record for a two-phase-confirm write system, not telemetry.
+# Neither is touched in this change.
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.1
+
+# ── Required secrets (enforced deploy gate) ──────────────────────────────────
+# `wrangler deploy` and `wrangler versions upload` FAIL if any of these is not
+# configured on the Worker, and `wrangler types` generates from this list rather
+# than sniffing .dev.vars. This is the enforced form of the comment block that
+# used to be the only record of what this worker needs; keep the two in sync.
+[secrets]
+required = [
+  "MCP_SYNC_KEY",         # shared bearer between mcp-servicetitan and the upstream proxy
+  "SIRO_API_TOKEN",       # Siro org API token for v1 read endpoints
+  "ST_WEBHOOK_SECRET",    # ServiceTitan webhook HMAC-SHA256 secret
+  "JWT_SECRET",           # JWT signing secret for dual-mode auth
+  "ACCESS_CLIENT_ID",     # Cloudflare Access SaaS-OIDC (Phase-2 OAuth)
+  "ACCESS_ISSUER",
+  "ACCESS_CLIENT_SECRET",
+  "SUPABASE_URL",         # Supabase project URL
+  "SUPABASE_PB_KEY",      # dedicated connector Supabase secret key
+]
+
+# ── Native per-caller rate limit at the /mcp edge ────────────────────────────
+# Keyed on the AUTHENTICATED actor in src/edge-rate-limit.ts, so one runaway
+# agent client cannot fan a retry loop out into a pile of DO round trips.
+#
+# THIS IS NOT A REPLACEMENT FOR THE ST_RATE_LIMITER DURABLE OBJECT. The native
+# binding is per-Cloudflare-location and eventually consistent — Cloudflare's
+# docs say it is "intentionally designed to not be used as an accurate
+# accounting system" — and `period` accepts only 10 or 60. It cannot enforce a
+# GLOBAL ServiceTitan quota. Different problem, different tool, different layer.
+[[ratelimits]]
+name = "MCP_EDGE_RL"
+namespace_id = "1001"
+
+[ratelimits.simple]
+limit = 240
+period = 60
+
 [[analytics_engine_datasets]]
 binding = "MCP_METRICS"
 dataset = "mcp_servicetitan_metrics"
@@ -44,6 +99,17 @@ id = "00000000000000000000000000000000"
 binding = "OAUTH_KV"
 id = "0fc38122dc7b4f15b2e2c3403b688fa6"
 
+# Read-through cache store (src/cache.ts). Replaces the D1 `mcp_cache` table,
+# whose expired rows NOTHING ever deletes — idx_mcp_cache_expires exists but the
+# only DELETE is cachePurgeNamespace, by namespace. KV expires entries itself and
+# is read at the edge instead of round-tripping to the single-region D1 primary.
+# Reached only when CACHE_BACKEND is "dual" or "kv"; see [vars].
+# Its id needs its OWN GH secret (KV_CACHE_NAMESPACE_ID_PROD/DEV) — do not point
+# it at PROXY_STATE's namespace, whose keyspace it would collide with.
+[[kv_namespaces]]
+binding = "MCP_CACHE"
+id = "00000000000000000000000000000000"
+
 # Service binding to your own ServiceTitan proxy worker. The proxy is expected
 # to expose /api/st/read, /api/st/write, and queryD1-compatible behavior.
 [[services]]
@@ -72,13 +138,14 @@ ST_TENANT_ID = "000000000"
 # addresses here - this repository is public (audit S-8, 2026-08-01).
 SELF_ORIGIN = "https://mcp-servicetitan.lpeluso.workers.dev"
 ALLOWED_EMAILS = "allowed@example.com"
+# Cache backend cutover (src/cache.ts). "d1" = today's behaviour, byte for byte.
+# Stage: "d1" → "dual" (write both, read KV first, warm the store) → "kv".
+# Roll back by setting this back to "d1"; no code change, no redeploy of logic.
+CACHE_BACKEND = "d1"
 
-# Secrets (set with `wrangler secret put`):
-# MCP_SYNC_KEY - shared bearer between mcp-servicetitan and the upstream proxy
-# SIRO_API_TOKEN - Siro org API token for v1 read endpoints
-# ST_WEBHOOK_SECRET - ServiceTitan webhook HMAC-SHA256 secret
-# JWT_SECRET - JWT signing secret for dual-mode auth
-# ACCESS_CLIENT_ID / ACCESS_ISSUER / ACCESS_CLIENT_SECRET - Cloudflare Access SaaS-OIDC (Phase-2 OAuth)
+# Secrets: the ENFORCED list is the [secrets] `required` array near the top of
+# this file — `wrangler deploy` fails if any is unset. Set each with
+# `wrangler secret put <NAME>`. Notes on the two non-obvious ones:
 # SUPABASE_URL - Supabase project URL (https://nlaaliehqpgskjmiuzze.supabase.co)
 # SUPABASE_PB_KEY - dedicated connector Supabase secret key (read + embedding-column write)
 
@@ -102,6 +169,41 @@ placement = { mode = "smart" }
 [env.dev.observability]
 enabled = true
 
+# Dev traffic is negligible, so trace it all — the point of dev is to see the
+# whole span tree before prod samples it down to 10%.
+[env.dev.observability.traces]
+enabled = true
+head_sampling_rate = 1
+
+# Declared EXPLICITLY rather than inherited from the top-level [secrets]: this
+# repo should not have to guess at wrangler's environment-inheritance rules for
+# a property that fails the deploy when it is wrong.
+#
+# SUPABASE_URL / SUPABASE_PB_KEY are deliberately ABSENT. This file already
+# documents the dev cron as "a harmless no-op if dev secrets are unset";
+# requiring them here would convert that documented no-op into a hard
+# dev-deploy failure. Add them once dev actually carries Supabase credentials.
+[env.dev.secrets]
+required = [
+  "MCP_SYNC_KEY",
+  "SIRO_API_TOKEN",
+  "ST_WEBHOOK_SECRET",
+  "JWT_SECRET",
+  "ACCESS_CLIENT_ID",
+  "ACCESS_ISSUER",
+  "ACCESS_CLIENT_SECRET",
+]
+
+# Same guard as prod, same caveat: per-location, eventually consistent, and no
+# substitute for the ST_RATE_LIMITER DO. Tighter here so dev trips it first.
+[[env.dev.ratelimits]]
+name = "MCP_EDGE_RL"
+namespace_id = "1002"
+
+[env.dev.ratelimits.simple]
+limit = 120
+period = 60
+
 [env.dev.limits]
 cpu_ms = 50
 
@@ -116,6 +218,9 @@ JWT_AUDIENCE = "mcp-servicetitan"
 # Phase-2 OAuth (dev): SELF_ORIGIN = dev worker origin; ACCESS_* are wrangler secrets (see prod).
 SELF_ORIGIN = "https://mcp-servicetitan-dev.lpeluso.workers.dev"
 ALLOWED_EMAILS = "allowed@example.com"
+# Dev runs one stage AHEAD of prod so the KV path is actually exercised (and its
+# D1 fallback still covers it) before prod ever reads from KV.
+CACHE_BACKEND = "dual"
 
 [[env.dev.durable_objects.bindings]]
 name = "ST_RATE_LIMITER"
@@ -154,6 +259,11 @@ id = "00000000000000000000000000000000"
 [[env.dev.kv_namespaces]]
 binding = "OAUTH_KV"
 id = "d7fb3c58f8604a43a57df60206638a3b"
+
+# Read-through cache store (dev) — see the prod block for why this exists.
+[[env.dev.kv_namespaces]]
+binding = "MCP_CACHE"
+id = "00000000000000000000000000000000"
 
 [[env.dev.services]]
 binding = "ST_PROXY"

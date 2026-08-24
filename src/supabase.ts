@@ -29,7 +29,18 @@ export function embedInputFor(row: {
 /** Embed one query string → 768-float vector, or null on any failure (caller falls back to lexical). */
 export async function embedQuery(env: Env, text: string): Promise<number[] | null> {
   try {
-    const res: any = await (env.AI as any).run(EMBED_MODEL_ID, { text: [text] });
+    // AI Gateway (Wave 2, workstream E item 5) — QUERY embeddings ONLY.
+    // Repeated query text ("shower caulk" typed by five techs) is served from
+    // the gateway cache, and the AI binding gets token/latency/error analytics.
+    // Deliberately NOT applied to PricebookEmbedWorkflow: that embeds only rows
+    // WHERE embedding IS NULL, so every input is unique by construction and a
+    // cache is pure overhead — Cloudflare's docs warn against caching embedding
+    // requests for indexing workloads.
+    const res: any = await (env.AI as any).run(
+      EMBED_MODEL_ID,
+      { text: [text] },
+      { gateway: { id: 'default', cacheTtl: 86400 } }
+    );
     const vec = res?.data?.[0];
     return Array.isArray(vec) && vec.length ? (vec as number[]) : null;
   } catch {

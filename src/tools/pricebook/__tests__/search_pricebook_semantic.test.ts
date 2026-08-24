@@ -18,7 +18,7 @@ describe('search_pricebook_semantic (Supabase hybrid)', () => {
 
     const out: any = await search_pricebook_semantic.handler(env(aiRun), { query: 'shower caulk', topK: 5 }, ctx);
 
-    expect(aiRun).toHaveBeenCalledWith('@cf/baai/bge-base-en-v1.5', { text: ['shower caulk'] });
+    expect(aiRun).toHaveBeenCalledWith('@cf/baai/bge-base-en-v1.5', { text: ['shower caulk'] }, expect.objectContaining({ gateway: expect.objectContaining({ cacheTtl: 86400 }) }));  // 3rd arg: AI Gateway (Wave 2 item 5)
     const body = JSON.parse(((fetchMock.mock.calls as any[])[0][1] as any).body);
     expect(body.query_text).toBe('shower caulk');
     expect(body.query_embedding).toEqual([0.1, 0.2]);
