@@ -23,6 +23,7 @@
 import type { Env } from './env';
 import { authHeaders } from './auth';
 import { McpError, mapUpstreamStatus } from './errors';
+import { guardedStFetch, parseRetryAfterSeconds } from './rate-limit-guard';
 import { rewriteTenantPlaceholders } from './tenant';
 
 export interface ReadSTContext {
@@ -106,9 +107,15 @@ export async function readST<T = unknown>(
   // (dev/test), so existing 000000000 URL assertions still hold.
   const resolved = rewriteTenantPlaceholders(env, endpoint);
   const url = buildUrl(resolved, query);
-  const resp = await env.ST_PROXY.fetch(url, {
-    headers: authHeaders(env, ctx.correlation, ctx.actor),
-  });
+  // guardedStFetch consults the StRateLimiter DO before the call leaves the
+  // Worker and feeds a 429's Retry-After back into it. Every ST read that is
+  // not already paged through pagedStRead lands here, so this one wrapper is
+  // what puts ~60 tool files under the rate limiter.
+  const resp = await guardedStFetch(env, resolved, () =>
+    env.ST_PROXY.fetch(url, {
+      headers: authHeaders(env, ctx.correlation, ctx.actor),
+    }),
+  );
   if (!resp.ok) {
     const body = await resp.text().catch(() => '');
     throw new McpError(
@@ -118,7 +125,13 @@ export async function readST<T = unknown>(
       // slice truncates the actual message mid-word. That is exactly how the
       // ids-batch cap got misdiagnosed — "Simple IDs lookup should n…".
       `readST ${resp.status} on ${resolved}: ${body.slice(0, 600)}`,
-      { correlation: ctx.correlation },
+      {
+        correlation: ctx.correlation,
+        // A 429 without retry_after_ms is an error the caller cannot act on.
+        ...(resp.status === 429
+          ? { retry_after_ms: parseRetryAfterSeconds(resp.headers.get('Retry-After')) * 1000 }
+          : {}),
+      },
     );
   }
   return (await resp.json()) as T;
@@ -138,17 +151,26 @@ export async function readSTPost<T = unknown>(
 ): Promise<T> {
   const resolved = rewriteTenantPlaceholders(env, endpoint);
   const url = buildUrl(resolved);
-  const resp = await env.ST_PROXY.fetch(url, {
-    method: 'POST',
-    headers: { ...authHeaders(env, ctx.correlation, ctx.actor), 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  // Same gate as readST. This is the path st_run_report uses, and the reason
+  // the reporting family's 20/min cap was never consulted before Wave 2.
+  const resp = await guardedStFetch(env, resolved, () =>
+    env.ST_PROXY.fetch(url, {
+      method: 'POST',
+      headers: { ...authHeaders(env, ctx.correlation, ctx.actor), 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  );
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
     throw new McpError(
       mapUpstreamStatus(resp.status),
       `readSTPost ${resp.status} on ${resolved}: ${text.slice(0, 200)}`,
-      { correlation: ctx.correlation },
+      {
+        correlation: ctx.correlation,
+        ...(resp.status === 429
+          ? { retry_after_ms: parseRetryAfterSeconds(resp.headers.get('Retry-After')) * 1000 }
+          : {}),
+      },
     );
   }
   return (await resp.json()) as T;
@@ -178,6 +200,10 @@ const DEFAULT_MAX_PAGES = 50;
  * Paginated live ST read. Drains pages via `hasMore`, bounded by maxPages.
  * Caller's `query` is forwarded as-is on every page; pagination params
  * (`page`, `pageSize`) are injected by the helper.
+ *
+ * Rate limiting is inherited: every page goes through readST, so the limiter
+ * is consulted once PER PAGE — which is correct, since each page is a
+ * separate ST request against the quota.
  */
 export async function readSTPaged<T = unknown>(
   env: Env,

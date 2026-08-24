@@ -4,6 +4,7 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
 import { WriteGate } from '../../write-gate';
+import { guardedStFetch } from '../../rate-limit-guard';
 import type { ToolDef } from '../index';
 
 interface Args { appointmentId: number; technicianIds: number[]; dryRun?: boolean; confirmation_token?: string }
@@ -41,29 +42,35 @@ export const assign_technicians: ToolDef<Args> = {
     await gate.verifyToken('assign_technicians', businessArgs, actor, confirmation_token);
 
     // Call 1: unassign all current technicians from this appointment.
-    const unassignResp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-sync-key': env.MCP_SYNC_KEY, 'x-correlation-id': correlation, 'x-actor': actor },
-      body: JSON.stringify({
-        endpoint: `/jpm/v2/tenant/000000000/appointment-assignments/unassign-technicians`,
+    const unassignEndpoint = `/jpm/v2/tenant/000000000/appointment-assignments/unassign-technicians`;
+    const unassignResp = await guardedStFetch(env, unassignEndpoint, () =>
+      env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
         method: 'POST',
-        payload: { appointmentId },
-      }),
-    });
+        headers: { 'content-type': 'application/json', 'x-sync-key': env.MCP_SYNC_KEY, 'x-correlation-id': correlation, 'x-actor': actor },
+        body: JSON.stringify({
+          endpoint: unassignEndpoint,
+          method: 'POST',
+          payload: { appointmentId },
+        }),
+      })
+    );
     if (!unassignResp.ok) {
       throw new McpError('upstream_error', `assign_technicians: unassign step failed: ${unassignResp.status}`, { correlation });
     }
 
     // Call 2: assign the new technician set.
-    const assignResp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-sync-key': env.MCP_SYNC_KEY, 'x-correlation-id': correlation, 'x-actor': actor },
-      body: JSON.stringify({
-        endpoint: `/jpm/v2/tenant/000000000/appointment-assignments/assign-technicians`,
+    const assignEndpoint = `/jpm/v2/tenant/000000000/appointment-assignments/assign-technicians`;
+    const assignResp = await guardedStFetch(env, assignEndpoint, () =>
+      env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
         method: 'POST',
-        payload: { appointmentId, technicianIds },
-      }),
-    });
+        headers: { 'content-type': 'application/json', 'x-sync-key': env.MCP_SYNC_KEY, 'x-correlation-id': correlation, 'x-actor': actor },
+        body: JSON.stringify({
+          endpoint: assignEndpoint,
+          method: 'POST',
+          payload: { appointmentId, technicianIds },
+        }),
+      })
+    );
     if (!assignResp.ok) {
       throw new McpError('upstream_error', `assign_technicians: assign step failed: ${assignResp.status}`, { correlation });
     }

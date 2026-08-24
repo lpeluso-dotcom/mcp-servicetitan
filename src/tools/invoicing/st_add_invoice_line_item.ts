@@ -103,6 +103,7 @@ import { McpError } from '../../errors';
 import { WriteGate } from '../../write-gate';
 import { readST } from '../../st';
 import { rewriteTenantPlaceholders } from '../../tenant';
+import { guardedStFetch } from '../../rate-limit-guard';
 import {
   extractEntityId,
   intendedAmount,
@@ -272,16 +273,20 @@ async function stWrite(
   method: string,
   payload: unknown
 ): Promise<Response> {
-  return env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-sync-key': env.MCP_SYNC_KEY,
-      'x-correlation-id': ctx.correlation,
-      'x-actor': ctx.actor,
-    },
-    body: JSON.stringify({ endpoint, method, payload }),
-  });
+  // Gated: this bypasses readST, so without guardedStFetch every invoice
+  // PATCH was invisible to the accounting family's budget.
+  return guardedStFetch(env, endpoint, () =>
+    env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-sync-key': env.MCP_SYNC_KEY,
+        'x-correlation-id': ctx.correlation,
+        'x-actor': ctx.actor,
+      },
+      body: JSON.stringify({ endpoint, method, payload }),
+    })
+  );
 }
 
 /** Index a read-side items array by item id. */

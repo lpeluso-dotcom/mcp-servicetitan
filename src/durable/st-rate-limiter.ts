@@ -1,8 +1,21 @@
 // ============================================================
-// StRateLimiter — Durable Object for per-ST-endpoint-family rate limiting.
+// StRateLimiter — Durable Object for ServiceTitan API rate limiting.
 //
-// One DO instance per endpoint family (CRM, JPM, Pricebook, Memberships,
-// Dispatch, Reporting, Telecom, Forms, Tasks, Accounting).
+// ONE DO instance holds BOTH the global aggregate counter and every
+// per-family counter (the `families` Map). Callers must therefore address a
+// single fixed DO id — see LIMITER_DO_NAME in rate-limit-guard.ts.
+//
+// Wave 2 / workstream A fixed two design bugs here:
+//   * the aggregate cap used to be counted per-family, because the guard
+//     derived the DO id from the family name. AGGREGATE_CAP is a GLOBAL
+//     budget; splitting it per family multiplied the real ceiling by the
+//     number of families in play. The counters live together in one
+//     instance precisely so one round-trip enforces both.
+//   * FAMILY_CAP[family] returned `undefined` for any family it did not
+//     declare, and `count >= undefined` is `false` — so undeclared families
+//     (sales, inventory, payroll, marketing, taskmanagement) were UNLIMITED.
+//     DEFAULT_FAMILY_CAP now backstops every lookup.
+//
 // Strongly consistent counters persisted to DO storage so they survive
 // hibernation (CF evicts idle DO instances after ~10s).
 //
@@ -17,15 +30,47 @@ export const FAMILIES = [
   'crm', 'jpm', 'pricebook', 'memberships',
   'dispatch', 'reporting', 'telecom', 'forms', 'tasks', 'accounting',
 ] as const;
-export type Family = (typeof FAMILIES)[number];
+/**
+ * A family is whatever `familyFromEndpoint` pulled off the ST path, so it is
+ * a plain string — NOT a closed union. Typing it as a union is what let
+ * `FAMILY_CAP[family]` type-check while returning undefined at runtime.
+ */
+export type Family = string;
 
 const WINDOW_MS = 60_000;
 const AGGREGATE_CAP = 80;
 
-const FAMILY_CAP: Record<Family, number> = {
+/**
+ * Cap applied to any family FAMILY_CAP does not name. Deliberately
+ * conservative: an unrecognised path segment is either a new ST surface we
+ * have not budgeted for, or a malformed endpoint. Either way it should draw
+ * from a small allowance, never from an implicit infinity.
+ */
+export const DEFAULT_FAMILY_CAP = 20;
+
+export const FAMILY_CAP: Record<string, number> = {
   crm: 60, jpm: 60, pricebook: 30, memberships: 30,
   dispatch: 40, reporting: 20, telecom: 30, forms: 20, tasks: 30, accounting: 20,
+  // ── real ST path segments that were never declared (hence unlimited) ──
+  // `tasks` above never matched anything: ST's path segment is
+  // /taskmanagement/. Kept for back-compat, aliased here.
+  taskmanagement: 30,
+  sales: 30,
+  inventory: 30,
+  payroll: 20,
+  marketing: 20,
+  settings: 30,
+  schedulingpro: 20,
+  // Bucket for endpoints whose family could not be parsed. Previously these
+  // were charged to `crm`, inflating a real family's counter with traffic
+  // that was not its own.
+  other: DEFAULT_FAMILY_CAP,
 };
+
+/** Cap for a family, with an explicit floor instead of implicit infinity. */
+export function capForFamily(family: string): number {
+  return FAMILY_CAP[family] ?? DEFAULT_FAMILY_CAP;
+}
 
 interface FamilyState {
   count: number;
@@ -114,7 +159,10 @@ export class StRateLimiter {
       fs.windowStart = now;
     }
 
-    const cap = now < fs.halvedUntil ? Math.floor(FAMILY_CAP[family] / 2) : FAMILY_CAP[family];
+    const declared = capForFamily(family);
+    // Math.max(1, …) so a halved cap of a tiny family never becomes 0, which
+    // would wedge that family shut for the whole penalty window.
+    const cap = now < fs.halvedUntil ? Math.max(1, Math.floor(declared / 2)) : declared;
 
     if (fs.count >= cap) {
       return { allowed: false, retryAfter: Math.ceil((fs.windowStart + WINDOW_MS - now) / 1000) };

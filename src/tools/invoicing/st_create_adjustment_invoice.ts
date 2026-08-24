@@ -59,6 +59,7 @@ import { McpError } from '../../errors';
 import { WriteGate } from '../../write-gate';
 import { readST } from '../../st';
 import { rewriteTenantPlaceholders } from '../../tenant';
+import { guardedStFetch } from '../../rate-limit-guard';
 import { resolveSkuName, type SkuResolution } from './sku-resolve';
 import {
   extractEntityId,
@@ -341,16 +342,18 @@ export const st_create_adjustment_invoice: ToolDef<Args> = {
     }
     await gate.verifyToken('st_create_adjustment_invoice', businessArgs, actor, confirmation_token);
 
-    const resp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-sync-key': env.MCP_SYNC_KEY,
-        'x-correlation-id': correlation,
-        'x-actor': actor,
-      },
-      body: JSON.stringify({ endpoint: rewriteTenantPlaceholders(env, endpoint), method: 'POST', payload }),
-    });
+    const resp = await guardedStFetch(env, endpoint, () =>
+      env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-sync-key': env.MCP_SYNC_KEY,
+          'x-correlation-id': correlation,
+          'x-actor': actor,
+        },
+        body: JSON.stringify({ endpoint: rewriteTenantPlaceholders(env, endpoint), method: 'POST', payload }),
+      })
+    );
     if (!resp.ok) {
       // The proxy's failure body carries the ST error message ({error: "ST
       // API 4xx …"}) — surface it; a bare status number is useless during a

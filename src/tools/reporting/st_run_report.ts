@@ -16,8 +16,47 @@
 import { z } from 'zod';
 import { McpError } from '../../errors';
 import { readST, readSTPost } from '../../st';
+import { cacheGet } from '../../cache';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
+
+// ── Wave 2: 429 containment ─────────────────────────────────
+//
+// Reporting is the most expensive ST surface and FAMILY_CAP budgets it at
+// 20/min. readSTPost is now gated, which stops us OVERSHOOTING. These two
+// mechanisms handle what happens when ST throttles us anyway:
+//
+//   1. RESULT CACHE — an identical run (same category, report, parameters,
+//      page, pageSize) inside the TTL is served from D1's mcp_cache instead
+//      of spending an ST request. Reports are heavy and agents re-run them
+//      verbatim; the TTL is deliberately short so the numbers stay current.
+//   2. POST-429 COOLDOWN — after ST answers 429 we hold off `run` locally
+//      for the Retry-After window and fail fast with a usable
+//      retry_after_ms, rather than spending another request to be told the
+//      same thing.
+//
+// Scope note on the cooldown: it is ISOLATE-LOCAL, not global. The global
+// half of the reaction is reportBackoff(), which the readSTPost gate already
+// fires into the StRateLimiter DO (halving the reporting cap for the penalty
+// window) — that IS shared across isolates. This local gate is the cheap
+// first line for the common case, an agent immediately retrying in the same
+// isolate. It is deliberately not another DO round trip.
+
+/** Result-cache namespace and TTL for mode=run. */
+export const REPORT_CACHE_NS = 'servicetitan:report_run';
+export const REPORT_RUN_TTL_SEC = 300; // 5 minutes
+
+/**
+ * Epoch ms until which mode=run fails fast. Keyed to the whole tool, not to
+ * one report: ST throttles the reporting API per tenant, so a 429 on report A
+ * predicts a 429 on report B.
+ */
+let reportRunCooldownUntil = 0;
+
+/** Test seam — resets the isolate-local cooldown. */
+export function _resetReportCooldown(): void {
+  reportRunCooldownUntil = 0;
+}
 
 const ReportMode = z.enum(['list_categories', 'list_reports', 'describe_report', 'run']);
 
@@ -131,18 +170,59 @@ export const st_run_report: ToolDef<Args> = {
       page: args.page ?? 1,
     };
 
-    const data = await readSTPost<unknown>(
-      env,
-      { actor, correlation },
-      `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports/${args.reportId}/data`,
-      runBody,
-    );
+    // ── post-429 cooldown ────────────────────────────────────
+    const now = Date.now();
+    if (reportRunCooldownUntil > now) {
+      const remainingMs = reportRunCooldownUntil - now;
+      throw new McpError(
+        'rate_limited',
+        `st_run_report: ServiceTitan's reporting API returned 429 recently; mode=run is in a ` +
+          `${Math.ceil(remainingMs / 1000)}s cooldown. Retry after that, or re-run a report you already ` +
+          `pulled in the last ${REPORT_RUN_TTL_SEC / 60} minutes (it is served from cache and costs nothing).`,
+        { correlation, retry_after_ms: remainingMs },
+      );
+    }
+
+    // ── short result cache ───────────────────────────────────
+    // The key must include EVERY input that changes the rows: two runs that
+    // differ by one parameter are different reports.
+    const cacheKey = JSON.stringify({
+      c: String(args.categoryId),
+      r: String(args.reportId),
+      p: runBody.page,
+      s: runBody.pageSize,
+      params: args.parameters,
+    });
+
+    let hitUpstream = false;
+    let data: unknown;
+    try {
+      data = await cacheGet<unknown>(env, REPORT_CACHE_NS, cacheKey, REPORT_RUN_TTL_SEC, async () => {
+        hitUpstream = true;
+        return readSTPost<unknown>(
+          env,
+          { actor, correlation },
+          `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports/${args.reportId}/data`,
+          runBody,
+        );
+      });
+    } catch (err) {
+      // Both an ST 429 and our own limiter's deny arrive as rate_limited.
+      // Either means "stop asking" — arm the cooldown from the error's own
+      // retry_after_ms so the window matches what we were told.
+      if (err instanceof McpError && err.code === 'rate_limited') {
+        reportRunCooldownUntil = Date.now() + (err.retry_after_ms ?? 60_000);
+      }
+      throw err;
+    }
+
     return {
       mode: 'run',
       categoryId: args.categoryId,
       reportId: args.reportId,
       data,
-      _source: 'live',
+      _source: hitUpstream ? 'live' : 'cache',
+      ...(hitUpstream ? {} : { _cache_ttl_seconds: REPORT_RUN_TTL_SEC }),
     };
   },
   transformResult: defaultShaper,

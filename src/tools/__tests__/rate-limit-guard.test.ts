@@ -18,8 +18,12 @@ describe('familyFromEndpoint', () => {
     expect(familyFromEndpoint('/unknown/path')).toBe('unknown');
   });
 
-  it('defaults to crm for root path', () => {
-    expect(familyFromEndpoint('/')).toBe('crm');
+  // Wave 2: the old default was 'crm', which charged every unparseable
+  // endpoint to a real family's 60/min budget. Unattributable traffic now
+  // gets its own 'other' bucket (DEFAULT_FAMILY_CAP) and still counts
+  // against the global aggregate.
+  it('buckets an unparseable path into "other", not crm', () => {
+    expect(familyFromEndpoint('/')).toBe('other');
   });
 });
 
@@ -50,6 +54,24 @@ describe('checkRateLimit', () => {
     };
 
     await expect(checkRateLimit(env as any, 'dispatch')).rejects.toThrow('ST rate limit: retry after 30s');
+  });
+
+  // Wave 2: the deny is an McpError('rate_limited') carrying retry_after_ms,
+  // not a bare Error the tool layer cannot classify.
+  it('denies with McpError(rate_limited) + retry_after_ms', async () => {
+    const env = {
+      ST_RATE_LIMITER: {
+        idFromName: vi.fn().mockReturnValue('do-id'),
+        get: vi.fn().mockReturnValue({
+          fetch: vi.fn(async () =>
+            new Response(JSON.stringify({ allowed: false, retryAfter: 30 }), { status: 200 })
+          ),
+        }),
+      },
+    };
+    const err = await checkRateLimit(env as any, 'dispatch').catch((e) => e as any);
+    expect(err.code).toBe('rate_limited');
+    expect(err.retry_after_ms).toBe(30_000);
   });
 
   it('defaults retryAfter to 60s if not provided', async () => {
