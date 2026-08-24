@@ -343,7 +343,10 @@ describe('dispatch_override_audit', () => {
     const result: any = await dispatch_override_audit.handler(env, {
       from: '2026-04-01', to: '2026-04-22',
     }, CTX);
-    expect(result).toHaveProperty('overrides');
+    // Renamed in Wave 2: `overrides` counted every appointment in the range
+    // with no reassignment detection anywhere in the tool.
+    expect(result).toHaveProperty('appointments');
+    expect(result).not.toHaveProperty('overrides');
   });
 });
 
@@ -481,7 +484,7 @@ describe('dispatch_override_audit — transformResult', () => {
   it('strips ST noise from doubly-nested technician items, preserves envelope + semantic fields', () => {
     const raw = {
       period: { from: '2026-04-01', to: '2026-04-22' },
-      overrides: [
+      appointments: [
         {
           appointmentId: 1001,
           jobId: 2002,
@@ -498,18 +501,18 @@ describe('dispatch_override_audit — transformResult', () => {
           isAutoDispatched: true,
         },
       ],
-      overrideCount: 1,
+      appointmentCount: 1,
       _composite: 'dispatch_override_audit',
       _source: 'live',
     };
     const shaped: any = dispatch_override_audit.transformResult!(raw);
-    expectNoiseStripped(shaped.overrides[0].technicians[0]);
-    expect(shaped.overrides[0].appointmentId).toBe(1001);
-    expect(shaped.overrides[0].technicians[0].technician_id).toBe(55);
-    expect(shaped.overrides[0].isAutoDispatched).toBe(true);
+    expectNoiseStripped(shaped.appointments[0].technicians[0]);
+    expect(shaped.appointments[0].appointmentId).toBe(1001);
+    expect(shaped.appointments[0].technicians[0].technician_id).toBe(55);
+    expect(shaped.appointments[0].isAutoDispatched).toBe(true);
     expect(shaped._composite).toBe('dispatch_override_audit');
     expect(shaped._source).toBe('live');
-    expect(shaped.overrideCount).toBe(1);
+    expect(shaped.appointmentCount).toBe(1);
   });
 });
 
