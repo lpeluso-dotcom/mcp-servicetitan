@@ -70,7 +70,21 @@ function scrub(text: string, auth: ApInboxAuth): string {
       const eq = part.indexOf('=');
       if (eq === -1) continue;
       const value = part.slice(eq + 1).trim();
-      if (value.length >= 8) out = out.split(value).join('[redacted]');
+      if (value.length < 8) continue;
+      out = out.split(value).join('[redacted]');
+      // An upstream page may echo the value URL-ENCODED (the browser stores
+      // some cookies that way, and error pages often re-encode). Scrub that
+      // form too. This is best-effort — an arbitrary re-encoding (base64,
+      // hex) cannot be caught here, which is one reason the error body is
+      // also capped at ERROR_BODY_CAP.
+      const enc = encodeURIComponent(value);
+      if (enc !== value) out = out.split(enc).join('[redacted]');
+      try {
+        const dec = decodeURIComponent(value);
+        if (dec !== value && dec.length >= 8) out = out.split(dec).join('[redacted]');
+      } catch {
+        /* value is not valid percent-encoding — nothing to decode */
+      }
     }
   }
   return out;

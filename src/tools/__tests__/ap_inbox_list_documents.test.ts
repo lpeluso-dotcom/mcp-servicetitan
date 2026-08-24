@@ -74,7 +74,10 @@ describe('ap_inbox_list_documents — spans the pending/created boundary', () =>
       vi.fn(async (_u: any, init: any) => {
         const st = JSON.parse(init.body).status;
         seen.push(st);
-        return jsonResponse({ result: [row({ status: st[0] })], totalCount: 1 });
+        return jsonResponse({
+          result: [row({ status: st[0], billWasCreated: st[0] === 3 })],
+          totalCount: 1,
+        });
       }),
     );
     await ap_inbox_list_documents.handler({} as any, { ...AUTH }, ctx);

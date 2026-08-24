@@ -30,7 +30,18 @@ import { z } from 'zod';
 import type { ToolDef } from '../index';
 
 /** Amounts must agree to the penny — the 2026-08-17 pre-check standard. */
-const AMOUNT_TOLERANCE = 0.01;
+/**
+ * "Agree to the penny" means EXACT cent equality, compared in integer cents.
+ *
+ * The first version used `Math.abs(a - b) < 0.01` — but 100.02 - 100.01 is
+ * 0.009999999999990905 in binary float, so a genuine ONE-CENT DIFFERENCE
+ * passed the tolerance and two different amounts were declared a confirmed
+ * duplicate. Rounding both sides to integer cents makes the rule mean what it
+ * says, in both directions (0.1 + 0.2 still equals 0.3).
+ */
+function centsEqual(a: number, b: number): boolean {
+  return Math.round(a * 100) === Math.round(b * 100);
+}
 
 /**
  * Uppercase, strip ALL whitespace, strip leading zeros.
@@ -234,8 +245,15 @@ export function dedupCheck(input: {
   pending_bills?: BillRef[];
 }): DedupResult {
   const { candidate } = input;
-  const created = input.created_bills ?? [];
+  // Presence is tracked PER SET, and `checks_run` lists only what actually
+  // ran. The first version defaulted an omitted set to [] and listed its
+  // check as run — so "I never gave you the filed bills" and "I checked the
+  // filed bills and found nothing" produced the same output. An MCP agent
+  // branches on `verdict`, not on a warning sentence buried in `reason`; the
+  // machine-readable field has to carry the whole truth.
+  const createdProvided = Array.isArray(input.created_bills);
   const pendingProvided = Array.isArray(input.pending_bills);
+  const created = input.created_bills ?? [];
   const pending = input.pending_bills ?? [];
 
   const inv = normalizeInvoiceNumber(candidate.vendor_invoice_number);
@@ -243,7 +261,10 @@ export function dedupCheck(input: {
   const amtP = parseAmount(candidate.total_amount);
   const normalized = { vendor_key: vendorKey, invoice_number: inv };
 
-  const checks_run = ['created_bills', ...(pendingProvided ? ['pending_self_join'] : [])];
+  const checks_run = [
+    ...(createdProvided ? ['created_bills'] : []),
+    ...(pendingProvided ? ['pending_self_join'] : []),
+  ];
 
   // No invoice number means no primary key. Refuse to judge rather than
   // return a confident "not a duplicate" — an unenriched row (see
@@ -294,7 +315,7 @@ export function dedupCheck(input: {
       if (rowInv !== inv) continue;
 
       const vendorVerdict = vendorsMatch(candidate, row);
-      const amountAgrees = Math.abs(rowAmt.value - amt) < AMOUNT_TOLERANCE;
+      const amountAgrees = centsEqual(rowAmt.value, amt);
 
       if (vendorVerdict === true && amountAgrees) {
         matched.push(toRow(row, source));
@@ -309,15 +330,22 @@ export function dedupCheck(input: {
     }
   };
 
-  scan(created, 'created');
+  if (createdProvided) scan(created, 'created');
   if (pendingProvided) scan(pending, 'pending');
 
   const is_duplicate = matched.length > 0;
+  // A found duplicate or ambiguity stands on whatever evidence produced it —
+  // a missing set can only ADD matches, never subtract one. But `clear`
+  // asserts a NEGATIVE across the whole estate, and the design contract is
+  // explicit that two independent checks are required: created catches the
+  // re-forwarded PDF, pending catches the intra-queue copy, and each is
+  // structurally blind to the other's case. `clear` therefore requires BOTH
+  // sets present and every row in them readable.
   const verdict: DedupVerdict = is_duplicate
     ? 'duplicate'
     : ambiguous.length > 0
       ? 'ambiguous'
-      : unjudgeable > 0
+      : unjudgeable > 0 || !createdProvided || !pendingProvided
         ? 'cannot_judge'
         : 'clear';
 
@@ -333,20 +361,23 @@ export function dedupCheck(input: {
       `does not agree with ${amt.toFixed(2)}. Could be a page split, a partial credit, or an OCR ` +
       `vendor-name variant. A human must look before filing.`;
   } else if (verdict === 'cannot_judge') {
+    const missing = [
+      ...(!createdProvided ? ['created_bills (catches a re-forwarded PDF already filed under a new documentId)'] : []),
+      ...(!pendingProvided ? ['pending_bills (catches a second copy elsewhere in the pending queue)'] : []),
+    ];
     reason =
-      `CANNOT JUDGE — ${unjudgeable} comparison row(s) had no readable invoice number or amount, so ` +
-      `they were never actually compared. Re-fetch them from ap_inbox_list_documents with enrich:true ` +
-      `(and page through next_cursor until it is null). This is NOT a clearance to file.`;
+      `CANNOT JUDGE — ` +
+      (missing.length > 0
+        ? `these comparison set(s) were not supplied, so their checks never ran: ${missing.join('; ')}. `
+        : '') +
+      (unjudgeable > 0
+        ? `${unjudgeable} supplied comparison row(s) had no readable invoice number or amount, so they ` +
+          `were never actually compared — re-fetch them from ap_inbox_list_documents with enrich:true ` +
+          `(and page through next_cursor until it is null). `
+        : '') +
+      `'clear' requires both sets present and every row readable. This is NOT a clearance to file.`;
   } else {
-    reason = `CLEAR — no duplicate found for invoice ${inv} across ${checks_run.join(' + ')}; every comparison row was readable.`;
-  }
-
-  // A caller who omits pending_bills gets only half the guarantee. Say so
-  // rather than letting a clean verdict imply both checks ran.
-  if (!pendingProvided) {
-    reason +=
-      ' WARNING: pending_bills was not supplied, so the intra-pending self-join did NOT run. ' +
-      'This verdict cannot see a duplicate that is sitting elsewhere in the pending queue.';
+    reason = `CLEAR — no duplicate found for invoice ${inv} across ${checks_run.join(' + ')}; both comparison sets were present and every row was readable.`;
   }
 
   return {
@@ -396,13 +427,18 @@ export const ap_inbox_dedup_check: ToolDef<Args> = {
       .array(BillRefSchema)
       .optional()
       .describe(
-        'Rows already filed in ServiceTitan (billWasCreated === true, status 3). This is the set the skill is structurally blind to and the reason QUA-1167 exists.',
+        'Rows already filed in ServiceTitan (billWasCreated === true, status 3). This is the set the ' +
+          "skill is structurally blind to and the reason QUA-1167 exists. OMITTING IT caps the verdict " +
+          "at 'cannot_judge' — a 'clear' requires both comparison sets to be present. A found " +
+          'duplicate stands on whatever set produced it.',
       ),
     pending_bills: z
       .array(BillRefSchema)
       .optional()
       .describe(
-        'Other rows still pending (status 2), for the intra-pending self-join. Omitting this disables that check and the result says so — supply it whenever you have it.',
+        'Other rows still pending (status 2), for the intra-pending self-join. OMITTING IT caps the ' +
+          "verdict at 'cannot_judge' — a 'clear' requires both comparison sets to be present. Pass an " +
+          'empty array only if the pending queue is genuinely empty.',
       ),
   },
   stEndpoint: { method: 'GET', path: '(computed — no ServiceTitan call)', source: 'computed' },

@@ -182,6 +182,8 @@ describe('dedup: a comparison set it cannot read is not a clean result', () => {
   });
 
   it('reports clear only when every comparison row was actually readable', () => {
+    // Both sets must be PRESENT for a 'clear' — see ap_inbox_review2.test.ts
+    // [P1-D]. An omitted set is not an empty set.
     const r = dedupCheck({
       candidate: {
         document_id: 1,
@@ -199,6 +201,7 @@ describe('dedup: a comparison set it cannot read is not a clean result', () => {
           total_amount: 4947.88,
         },
       ],
+      pending_bills: [],
     });
     expect(r.verdict).toBe('clear');
     expect(r.unjudgeable_comparison_rows).toBe(0);
@@ -337,9 +340,18 @@ describe('list: an incomplete comparison set must not look complete', () => {
   // orderBy is date desc, so truncation drops the OLDEST filed bills first —
   // exactly where a re-forwarded invoice from two months ago lives.
   it('THROWS when fewer rows come back than totalCount claims', async () => {
+    // Unique ids per page (a repeated identity is its own, different error —
+    // see review2 [P1-C]); the point here is the totalCount completeness gate.
+    let n = 0;
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => jsonResponse({ result: [{ id: 1, ocrResultId: 1, status: 3 }], totalCount: 591 })),
+      vi.fn(async () => {
+        n++;
+        return jsonResponse({
+          result: [{ id: n, ocrResultId: n, status: 3, billWasCreated: true }],
+          totalCount: 591,
+        });
+      }),
     );
     await expect(
       ap_inbox_list_documents.handler({} as any, { ...AUTH, statuses: [3], page_size: 1 }, ctx),
@@ -358,6 +370,7 @@ describe('list: an incomplete comparison set must not look complete', () => {
           id: start + i + 1,
           ocrResultId: start + i + 1,
           status: 3,
+          billWasCreated: true,
         }));
         return jsonResponse({ result, totalCount: 5 });
       }),
@@ -378,6 +391,7 @@ describe('list: enrich_note must describe what actually happened', () => {
       id: 100 + i,
       ocrResultId: 200 + i,
       status: 2,
+      billWasCreated: false,
       totalAmount: 1,
       vendorName: 'V',
     }));
@@ -415,23 +429,30 @@ describe('list: enrich_note must describe what actually happened', () => {
 });
 
 describe('list: status assertion must not misdiagnose its own tolerance', () => {
-  // slim() defaults a missing status to 0, but the assertion treated the same
-  // absence as proof ServiceTitan dropped the filter. Two lines apart, and
-  // only one can be right.
-  it('does not blame ServiceTitan for a row with no status field', async () => {
+  // REVERSED by the second adversarial review. The original version of this
+  // test asserted a row with NO status field resolves fine (slim() defaulted
+  // it to 0 = "pending"). That coercion fabricates a classification — the
+  // review2 [P1-B] rule is that missing classification data is rejected, with
+  // a MISSING-FIELD error, not misdiagnosed as ServiceTitan dropping the
+  // filter.
+  it('rejects a row with no status field as missing data, not as a dropped filter', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => jsonResponse({ result: [{ id: 1, ocrResultId: 1 }], totalCount: 1 })),
+      vi.fn(async () => jsonResponse({ result: [{ id: 1, ocrResultId: 1, billWasCreated: false }], totalCount: 1 })),
     );
-    await expect(
-      ap_inbox_list_documents.handler({} as any, { ...AUTH, statuses: [2] }, ctx),
-    ).resolves.toBeDefined();
+    const err: any = await ap_inbox_list_documents
+      .handler({} as any, { ...AUTH, statuses: [2] }, ctx)
+      .catch((e: unknown) => e);
+    expect(String(err.message)).toMatch(/missing|malform/i);
+    expect(String(err.message)).not.toMatch(/dropped the.*filter/i);
   });
 
   it('still throws on a row whose status is genuinely wrong', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => jsonResponse({ result: [{ id: 1, ocrResultId: 1, status: 1 }], totalCount: 1 })),
+      vi.fn(async () =>
+        jsonResponse({ result: [{ id: 1, ocrResultId: 1, status: 1, billWasCreated: false }], totalCount: 1 }),
+      ),
     );
     await expect(
       ap_inbox_list_documents.handler({} as any, { ...AUTH, statuses: [2] }, ctx),
@@ -444,7 +465,10 @@ describe('list: status assertion must not misdiagnose its own tolerance', () => 
       'fetch',
       vi.fn(async (_u: any, init: any) => {
         bodies.push(JSON.parse(init.body));
-        return jsonResponse({ result: [{ id: 1, ocrResultId: 1, status: 2 }], totalCount: 1 });
+        return jsonResponse({
+          result: [{ id: 1, ocrResultId: 1, status: 2, billWasCreated: false }],
+          totalCount: 1,
+        });
       }),
     );
     const out: any = await ap_inbox_list_documents.handler(
@@ -468,7 +492,9 @@ describe('list: the invoice number returned must match the PDF a human opens', (
               billData: { vendorDocumentNumber: { value: '396175 01' } },
             })
           : jsonResponse({
-              result: [{ id: 1, ocrResultId: 1, status: 2, totalAmount: 1, vendorName: 'V' }],
+              result: [
+                { id: 1, ocrResultId: 1, status: 2, billWasCreated: false, totalAmount: 1, vendorName: 'V' },
+              ],
               totalCount: 1,
             }),
       ),

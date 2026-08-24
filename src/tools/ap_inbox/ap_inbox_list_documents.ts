@@ -58,7 +58,8 @@ interface SlimDocument {
   ocr_result_id: number;
   original_filename: string;
   vendor_name: string;
-  total_amount: number;
+  /** null = the header total never arrived or was unreadable. NOT zero. */
+  total_amount: number | null;
   status: number;
   scan_complete: boolean;
   bill_was_created: boolean;
@@ -74,14 +75,47 @@ interface SlimDocument {
 // createBillPantheonDemo response, whose field name was never captured (all 44
 // calls on 2026-08-17 returned None). Shipping an always-null field would
 // imply the question is answerable. It is not.
+/**
+ * Validate one GetBillDocuments row, throwing on anything that would force a
+ * guess downstream.
+ *
+ * The first version coerced: missing status -> 0, missing billWasCreated ->
+ * false, missing totalAmount -> 0. Each coercion is a fabricated FACT — a row
+ * with no billWasCreated emitted as `false` is exactly how an already-filed
+ * bill gets filed again, and a fabricated $0.00 total let two broken rows be
+ * reported as a confirmed $0.00 duplicate. Identity and classification fields
+ * are REQUIRED; the money field degrades to null (unknown), never to zero.
+ */
+function validateRow(r: RawRow, correlation?: string): void {
+  const fail = (field: string, why: string) => {
+    throw new McpError(
+      'upstream_error',
+      `GetBillDocuments returned a row missing or malforming \`${field}\` (${why}) — document ` +
+        `${r?.id ?? '?'}/${r?.ocrResultId ?? '?'}. Refusing to guess: a fabricated value here ` +
+        `becomes an authoritative fact in the duplicate check.`,
+      { correlation },
+    );
+  };
+  if (typeof r?.id !== 'number' || !Number.isFinite(r.id)) fail('id', 'the document identity');
+  if (typeof r?.ocrResultId !== 'number' || !Number.isFinite(r.ocrResultId))
+    fail('ocrResultId', 'the per-bill identity');
+  if (typeof r?.status !== 'number') fail('status', 'cannot classify pending vs created without it');
+  if (typeof r?.billWasCreated !== 'boolean')
+    fail('billWasCreated', 'the idempotency flag — defaulting it to false is how a filed bill gets refiled');
+}
+
 function slim(r: RawRow): SlimDocument {
+  const amt = Number(r.totalAmount);
   return {
     document_id: r.id, // the row calls it `id`; ReadBillDocument calls it documentId
     ocr_result_id: r.ocrResultId,
     original_filename: r.originalFilename ?? '',
     vendor_name: r.vendorName ?? '',
-    total_amount: Number(r.totalAmount ?? 0),
-    status: Number(r.status ?? 0),
+    // null = UNKNOWN, and stays unknown. Never 0: ap_inbox_dedup_check treats
+    // 0 as a readable amount, and two unknown-total rows must come back
+    // cannot_judge, not "confirmed $0.00 duplicate".
+    total_amount: r.totalAmount !== undefined && r.totalAmount !== null && Number.isFinite(amt) ? amt : null,
+    status: Number(r.status),
     scan_complete: !!r.scanComplete,
     bill_was_created: !!r.billWasCreated,
     vendor_invoice_number: null,
@@ -108,7 +142,10 @@ export const ap_inbox_list_documents: ToolDef<Args> = {
     'per document (bounded by enrich_limit, resumable via next_cursor — the full sweep is ~0.45 ' +
     'rows/sec and will not fit in one request). Source: live ST — the session-cookie internal API at ' +
     'go.servicetitan.com/app/api/accounting/inbox, which has no OAuth equivalent, so the caller must ' +
-    'supply a browser session. Nothing is stored.',
+    'supply a browser session. Session credentials are NEVER stored, logged, or echoed. Result DATA ' +
+    'is different: a response over 80KB (a full inbox listing routinely is) is offloaded by the MCP ' +
+    'result layer to KV and retained for 15 min as an mcp-st://results resource — vendor names, ' +
+    'filenames, totals, and enriched invoice numbers included.',
   zodSchema: {
     session_cookie: z
       .string()
@@ -123,7 +160,7 @@ export const ap_inbox_list_documents: ToolDef<Args> = {
         'URL-DECODED value of the X-CSRF-Token cookie from the same capture. Never stored; redacted from the audit log.',
       ),
     statuses: z
-      .array(z.number().int())
+      .array(z.number().int().min(1).max(4))
       .optional()
       .describe(
         'Which document statuses to fetch: 1=scan pending, 2=pending/Ready, 3=created/Reviewed, 4=empty. Default [2,3]. Narrowing to [2] reintroduces the QUA-1167 blind spot — do it only for a deliberate pending-only view.',
@@ -155,7 +192,16 @@ export const ap_inbox_list_documents: ToolDef<Args> = {
       .int()
       .min(0)
       .optional()
-      .describe('Row offset to resume enrichment from. Pass the previous call\'s next_cursor. Default 0.'),
+      .describe(
+        "Row offset to resume enrichment from — pass the previous call's next_cursor. Default 0. " +
+          'CONTRACT: each call enriches ONLY its own window and re-fetches the whole list, so to ' +
+          'assemble a fully-enriched set you MUST merge responses by (document_id, ocr_result_id), ' +
+          'keeping the row whose vendor_invoice_number is non-null. The cursor is positional over a ' +
+          'date-desc list: valid only while the inbox is unchanged between calls. In-call drift is ' +
+          'detected and rejected; BETWEEN calls it cannot be — if counts look inconsistent across ' +
+          'windows, restart from enrich_cursor 0. No single response is a complete enriched set ' +
+          'unless enriched_count equals count.',
+      ),
   },
   stEndpoint: {
     method: 'POST',
@@ -195,8 +241,16 @@ export const ap_inbox_list_documents: ToolDef<Args> = {
       // ordered date-desc, so truncation drops the OLDEST filed bills first,
       // which is exactly where a re-forwarded invoice from two months ago
       // lives. An incomplete comparison set must never look complete.
+      // Identity tracking across pages. Row COUNT is not row COVERAGE: offset
+      // pages over a date-desc list shift when documents are inserted, removed
+      // or change status mid-scan, so page 2 can re-serve a page-1 row while a
+      // never-seen document falls between the cracks — and rows.length still
+      // reaches totalCount. A repeated identity is the observable symptom of
+      // that drift, so it is treated as fatal, not deduplicated away.
+      const seen = new Set<string>();
+
       for (; pageIndex <= MAX_PAGES; pageIndex++) {
-        const page = await apInboxFetch<{ result?: RawRow[]; totalCount?: number }>(
+        const page = await apInboxFetch<{ result?: unknown; totalCount?: unknown }>(
           auth,
           '/GetBillDocuments',
           {
@@ -206,32 +260,93 @@ export const ap_inbox_list_documents: ToolDef<Args> = {
           },
         );
 
-        const batch = page.result ?? [];
-        if (page.totalCount !== undefined) totalCount = Number(page.totalCount);
-
-        // Assert the filter was actually applied. A wrong answer is worse than
-        // no answer: silently accepting rows of another status would make a
-        // "pending only" view quietly include filed bills, or vice versa.
-        //
-        // Only rows that ACTUALLY CARRY a different status count. A row with
-        // no status field is missing data, not evidence ServiceTitan dropped
-        // the filter — `slim()` already tolerates that, and the two must
-        // agree.
-        const wrong = batch.find((r) => r.status !== undefined && Number(r.status) !== status);
-        if (wrong) {
+        // ── Envelope validation. A JSON HTTP-200 is NOT proof of a valid
+        // response: `{}` parsed fine and became "the inbox is empty", which is
+        // one tool call away from "no duplicates found". Contract drift and
+        // JSON-shaped error bodies must fail loudly, never read as data.
+        if (!Array.isArray(page?.result)) {
           throw new McpError(
             'upstream_error',
-            `GetBillDocuments was asked for status ${status} but returned a row with status ` +
-              `${wrong.status} (document ${wrong.id}). ServiceTitan appears to have dropped the ` +
-              `status filter and returned an unfiltered page. Refusing to return data that would ` +
-              `look like a filtered result.`,
+            `GetBillDocuments returned a 200 whose \`result\` is ${page?.result === undefined ? 'missing' : 'not an array'} — ` +
+              `the response envelope does not match the known contract. This may be an upstream ` +
+              `change or a JSON-formatted error page. Refusing to interpret it as an empty inbox.`,
             { correlation },
           );
+        }
+        const tc = page.totalCount;
+        if (typeof tc !== 'number' || !Number.isInteger(tc) || tc < 0) {
+          // NaN is the nastiest case: `rows.length < NaN` is false, so a
+          // malformed totalCount would sail through the completeness gate.
+          throw new McpError(
+            'upstream_error',
+            `GetBillDocuments returned totalCount=${JSON.stringify(tc)} — not a nonnegative ` +
+              `integer. Completeness cannot be proven without it; refusing rather than guessing.`,
+            { correlation },
+          );
+        }
+        if (totalCount !== null && tc !== totalCount) {
+          throw new McpError(
+            'upstream_error',
+            `totalCount changed mid-scan for status ${status}: page 1 reported ${totalCount}, ` +
+              `page ${pageIndex} reports ${tc}. The inbox is mutating under the scan, so offset ` +
+              `pages cannot be proven complete. Retry when the inbox is quiet.`,
+            { correlation },
+          );
+        }
+        totalCount = tc;
+        const batch = page.result as RawRow[];
+
+        for (const r of batch) {
+          // Identity + classification fields are required (see validateRow).
+          validateRow(r, correlation);
+
+          // Assert the filter was actually applied. A wrong answer is worse
+          // than no answer: silently accepting rows of another status would
+          // make a "pending only" view quietly include filed bills.
+          if (Number(r.status) !== status) {
+            throw new McpError(
+              'upstream_error',
+              `GetBillDocuments was asked for status ${status} but returned a row with status ` +
+                `${r.status} (document ${r.id}). ServiceTitan appears to have dropped the ` +
+                `status filter and returned an unfiltered page. Refusing to return data that ` +
+                `would look like a filtered result.`,
+              { correlation },
+            );
+          }
+
+          // A row whose status and billWasCreated contradict each other is
+          // hostile data: status 3 IS "created" and status 2 IS "pending", so
+          // a mismatch means one of the two fields is lying — and the dedup
+          // check trusts bill_was_created to split the comparison sets.
+          const created = Number(r.status) === STATUS.CREATED;
+          const pendingSt = Number(r.status) === STATUS.PENDING;
+          if ((created && r.billWasCreated === false) || (pendingSt && r.billWasCreated === true)) {
+            throw new McpError(
+              'upstream_error',
+              `Document ${r.id}/${r.ocrResultId} carries status ${r.status} but billWasCreated=` +
+                `${r.billWasCreated} — these contradict each other, and the duplicate check splits ` +
+                `pending from created on this flag. Refusing to classify contradictory data.`,
+              { correlation },
+            );
+          }
+
+          const key = `${r.id}/${r.ocrResultId}`;
+          if (seen.has(key)) {
+            throw new McpError(
+              'upstream_error',
+              `Duplicate identity: document ${key} appeared twice while paging status ${status}. ` +
+                `Offset pages over a date-desc list drift when the inbox changes mid-scan, so a ` +
+                `repeated row means some OTHER document was silently skipped — the count would ` +
+                `match totalCount while coverage is incomplete. Retry when the inbox is quiet.`,
+              { correlation },
+            );
+          }
+          seen.add(key);
         }
 
         rows.push(...batch);
         if (batch.length === 0) break;
-        if (totalCount !== null && rows.length >= totalCount) break;
+        if (rows.length >= totalCount) break;
       }
 
       if (totalCount !== null && rows.length < totalCount) {

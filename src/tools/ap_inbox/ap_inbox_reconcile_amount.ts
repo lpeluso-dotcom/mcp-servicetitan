@@ -115,18 +115,13 @@ export type ReconcileMode =
   | 'tax_inclusive'
   | 'extended_tax_inclusive';
 
-/**
- * Do two modes post the same per-line amounts?
- *
- * Unit-family modes derive each line as cost x qty; extended-family modes take
- * cost as the line total already. Two modes from the same family disagreeing
- * only on tax/shipping still split the LINES identically, so there is nothing
- * for a human to arbitrate.
- */
-function sameLineBasis(a: ReconcileMode, b: ReconcileMode): boolean {
-  const extended = (m: ReconcileMode) => m.startsWith('extended');
-  return extended(a) === extended(b);
-}
+// NOTE: an earlier `sameLineBasis(a, b)` helper compared mode FAMILIES as a
+// proxy for per-line equivalence, alongside an aggregate-sums check. Both were
+// removed by the second adversarial review: equal aggregates (and even equal
+// families' totals) do not prove equal allocations — qty [2, 0.5] at costs
+// [10, 20] gives unit [20, 10] vs extended [10, 20], same total, opposite
+// split. Ambiguity is decided by comparing the actual per-line allocations in
+// cents (see `allocations` at the match site). Do not reintroduce a shortcut.
 
 export interface ReconcileInput {
   header_total: number;
@@ -228,6 +223,28 @@ export function reconcileAmount(input: ReconcileInput): ReconcileResult {
     );
   }
 
+  // A POPULATED but unreadable tax/shipping is not zero. parseMoneyOrZero
+  // already distinguishes "absent" (a legitimate 0) from "present but
+  // unparseable" — but the first version computed the flags and then ignored
+  // them, so tax:"USD 8" reconciled with applied.tax:0. Same defect class as
+  // the line items, one field over.
+  if (!taxP.ok) {
+    return hold(
+      `The tax field is populated but unreadable — it cannot be parsed as a money amount. ` +
+        `Unreadable is NOT zero: filing with tax 0 on a taxed bill misstates the job cost. HOLD ` +
+        `and open the PDF.`,
+      base,
+    );
+  }
+  if (!shippingP.ok) {
+    return hold(
+      `The shipping field is populated but unreadable — it cannot be parsed as a money amount. ` +
+        `Unreadable is NOT zero: shipping participates in every reconciliation formula. HOLD ` +
+        `and open the PDF.`,
+      base,
+    );
+  }
+
   const nonPositiveQty = lines.filter((l) => l.quantity.value <= 0);
   if (nonPositiveQty.length > 0) {
     return hold(
@@ -315,18 +332,24 @@ export function reconcileAmount(input: ReconcileInput): ReconcileResult {
 
   if (matches.length > 0) {
     const winner = matches[0]; // unit-first precedence, as the skill has always done
-    // AMBIGUITY. `mode` decides how each LINE is posted, not just the header
-    // total, and AP lines map to jobs. Two modes can only both land inside
-    // tolerance when their sums are within $0.10 of each other — but when they
-    // do, picking the first silently misallocates cost across jobs.
+    // AMBIGUITY is a PER-LINE property, not an aggregate one. `mode` decides
+    // how each LINE is posted, and AP lines map to jobs — so two modes are
+    // interchangeable only when every line's amount agrees under both, to the
+    // cent.
     //
-    // Identical sums are NOT ambiguous: with every quantity at 1, unit and
-    // extended are the same arithmetic and produce the same per-line amounts.
-    // Only a genuine per-line disagreement is worth holding for.
+    // The first version compared aggregate sums as a proxy: qty [2, 0.5] with
+    // costs [10, 20] gives unit allocations [20, 10] and extended [10, 20] —
+    // identical totals (30), opposite per-line splits. It filed as `unit`,
+    // silently putting each cost on the wrong line. Equal aggregates prove
+    // nothing about allocations; only the allocations themselves do.
+    const allocations = (mode: ReconcileMode): number[] =>
+      lines.map((l) =>
+        mode.startsWith('extended') ? cents(l.unit_cost.value) : cents(l.unit_cost.value * l.quantity.value),
+      );
+    const winnerAlloc = allocations(winner.mode);
     const rivals = matches
       .slice(1)
-      .filter((c) => Math.abs(cents(c.total) - cents(winner.total)) !== 0 || !sameLineBasis(c.mode, winner.mode))
-      .filter((c) => cents(sums.unit) !== cents(sums.extended));
+      .filter((c) => allocations(c.mode).some((v, i) => v !== winnerAlloc[i]));
 
     if (rivals.length > 0) {
       return {
