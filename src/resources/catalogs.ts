@@ -1,7 +1,7 @@
 // ============================================================
-// resources/catalogs.ts — Phase 2 Task 2.5
+// resources/catalogs.ts — Phase 2 Task 2.5 (+ workstream D items 2/5)
 //
-// 3 read-only, fixed-URI (not templated) MCP resources so clients can
+// 4 read-only, fixed-URI (not templated) MCP resources so clients can
 // browse ST reference data without spending a tool call:
 //
 //   - mcp-st://catalog/pricebook-categories — pb_categories D1 mirror
@@ -9,6 +9,14 @@
 //   - mcp-st://catalog/technicians          — technicians D1 mirror,
 //     PII-stripped (id/name/business_unit/role/active ONLY — no phone,
 //     email, or address, even if the underlying row carries one).
+//   - mcp-st://catalog/business-units       — business_units D1 mirror,
+//     id + name. The trivial fourth: this table already backed
+//     name-resolver's businessUnitName argument AND the completion cache,
+//     but there was no way to browse the id->name map without burning a
+//     tool call — which is the entire point of a catalog resource. Served
+//     through name-cache's KV-cached loader (the `reports` catalog is the
+//     precedent for a KV-cached resource), so a polling client does not
+//     re-read D1 every time.
 //   - mcp-st://catalog/reports              — ST native report-category +
 //     report catalog. Discovered live via the SAME two endpoints
 //     st_run_report's list_categories/list_reports modes hit (readST
@@ -37,13 +45,33 @@
 // The technicians mapper below is an EXPLICIT allow-list (tech_id, name,
 // business_unit, role, active only), not a trust-the-SQL-projection
 // approach — so even if a future readD1 call (or a stray extra column on
-// the row) carries phone/email, the resource can never echo it.
+// the row) carries phone/email, the resource can never echo it. (It also
+// means the `synced_at` the freshness stamp reads off the raw row is
+// stripped from the output — the stamp republishes it as `_stale_hours` /
+// `_rows_synced_hours` instead.)
+//
+// FRESHNESS. All three D1-backed catalogs carry a stampMirrorFreshness()
+// envelope. The header at the top of this file used to cite `fetchTableMax`
+// in prose without ever calling it — so a frozen mirror handed a client an
+// empty-but-confident roster, which is precisely the QUA-1141 failure this
+// worker has already been bitten by twice in production (`opportunities`,
+// `job_timesheets`). A browsable resource is the worst place for a silent
+// zero: nothing in the client transcript even records that a read happened.
+//
+// STILL MISSING (noted, deliberately NOT built here):
+//   - campaigns and membership types — both would need a cached LIVE ST
+//     read, since neither has a usable mirror table; the `reports` catalog
+//     above is the working precedent for that shape (readST + KV TTL).
+//   - job types — no mirror table AND no ST endpoint wired anywhere in this
+//     repo, so it is a genuine new integration, not a copy of a block here.
 // ============================================================
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { readD1 } from '../d1';
 import { readST } from '../st';
 import { newCorrelationId } from '../auth';
+import { listBusinessUnitsStamped } from '../name-cache';
+import { stampMirrorFreshness, fetchTableMax } from '../mirror-freshness';
 import type { Env } from '../env';
 
 const REPORTS_CACHE_KEY = 'catalog:reports';
@@ -209,12 +237,21 @@ export function registerCatalogResources(server: McpServer, env: Env): void {
       mimeType: 'application/json',
     },
     async (uri) => {
-      const { rows } = await readD1<Record<string, unknown>>(
-        env,
-        'SELECT id, name, parent_id, active, category_type FROM pb_categories ORDER BY name',
-      );
+      // fetchTableMax never rejects (it degrades to {}), so racing it with
+      // the row read cannot turn a healthy read into a failed one.
+      const [{ rows }, tableMax] = await Promise.all([
+        readD1<Record<string, unknown>>(
+          env,
+          'SELECT id, name, parent_id, active, category_type, synced_at FROM pb_categories ORDER BY name',
+        ),
+        fetchTableMax(env, ['pb_categories']),
+      ]);
       const categories = rows.map(mapPbCategory);
-      return jsonResourceContents(uri.href, { categories, count: categories.length });
+      return jsonResourceContents(uri.href, {
+        categories,
+        count: categories.length,
+        ...stampMirrorFreshness(rows, { table: 'pb_categories', tableMax }),
+      });
     },
   );
 
@@ -228,12 +265,38 @@ export function registerCatalogResources(server: McpServer, env: Env): void {
       mimeType: 'application/json',
     },
     async (uri) => {
-      const { rows } = await readD1<Record<string, unknown>>(
-        env,
-        'SELECT tech_id, name, business_unit, role, active FROM technicians ORDER BY name',
-      );
+      const [{ rows }, tableMax] = await Promise.all([
+        readD1<Record<string, unknown>>(
+          env,
+          'SELECT tech_id, name, business_unit, role, active, synced_at FROM technicians ORDER BY name',
+        ),
+        fetchTableMax(env, ['technicians']),
+      ]);
       const technicians = rows.map(mapTechnician);
-      return jsonResourceContents(uri.href, { technicians, count: technicians.length });
+      return jsonResourceContents(uri.href, {
+        technicians,
+        count: technicians.length,
+        ...stampMirrorFreshness(rows, { table: 'technicians', tableMax }),
+      });
+    },
+  );
+
+  server.registerResource(
+    'business-units',
+    'mcp-st://catalog/business-units',
+    {
+      title: 'Business unit roster',
+      description:
+        'QSC business units — id + name for every ACTIVE BU, mirrored from taylor-ai D1 business_units and cached in KV (30m TTL). The id->name map behind every businessUnitId argument and every businessUnitName resolution; browse it here instead of spending a tool call. Carries a mirror-freshness stamp.',
+      mimeType: 'application/json',
+    },
+    async (uri) => {
+      // Shares name-cache's KV entry with the businessUnitId completion, so
+      // a client polling this resource costs at most one D1 load per TTL.
+      // listBusinessUnitsStamped never throws: a mirror failure surfaces as
+      // an empty list WITH `_freshness: 'unknown'` and a warning, which is
+      // the honest answer, rather than as a broken resource read.
+      return jsonResourceContents(uri.href, await listBusinessUnitsStamped(env));
     },
   );
 
