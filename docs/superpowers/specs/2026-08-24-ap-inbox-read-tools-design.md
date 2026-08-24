@@ -3,7 +3,7 @@
 **Date:** 2026-08-24
 **Repo:** `mcp-servicetitan`
 **Tickets:** QUA-1167 (primary), QUA-672, QUA-1082, QUA-1244
-**Status:** DRAFT — blocked on Probe 0. Do not implement until §2 resolves.
+**Status:** Probe 0 **PASSED** 2026-08-24 — architecture is viable. Awaiting sign-off to implement.
 
 ---
 
@@ -37,42 +37,44 @@ first.
 
 ---
 
-## 2. PROBE 0 — the blocking unknown
+## 2. PROBE 0 — RESOLVED, PASSED (2026-08-24)
 
-**Nothing in §5 may be implemented until this is answered empirically.**
+The blocking question was whether a Worker on Cloudflare's edge can reach the inbox API with
+replayed session cookies. **It can.** Run against `GetBillDocuments` with a live jar:
 
-The `st-internal-api` skill states:
+| Leg | Transport | Egress | Result |
+|---|---|---|---|
+| Baseline (control) | `curl` | dev box | **200**, `totalCount: 99`, 1774 bytes |
+| Probe 0 | Worker `fetch`, `wrangler dev --remote` | Cloudflare edge | **200**, `totalCount: 99`, 1774 bytes |
+
+`content-type: application/json`, no `cf-mitigated` header, no challenge page, byte-identical
+bodies. The architecture in §5 is viable.
+
+### 2.1 Two claims this disproves
+
+**The skill's TLS-fingerprint claim is wrong**, at least for this endpoint today. It states:
 
 > **Why a real browser (not curl/node):** curl from the dev boxes returns 401 even with valid
 > replayed cookies — ST's edge rejects raw HTTP clients (TLS fingerprint / session binding).
 > Only a real Chromium TLS profile passes.
 
-Memory contradicts this for dev boxes (2026-08-05, supersedes the skill):
+The baseline leg is plain `curl` — a TLS fingerprint nothing like Chrome's — and it returned
+200. This confirms and extends the 2026-08-01/08-05 memory findings that already superseded
+the skill. Worth correcting in `st-internal-api` (QUA-1244 territory).
 
-> Whole pipeline — GetBillDocuments, ReadBillDocument, getFilteredJobs, validateVdn, Print,
-> createBillPantheonDemo, DeleteDocuments — ran on curl + urllib with no browser and no
-> Chromium profile lock.
+**Cloudflare-to-Cloudflare egress is not penalised.** The concern was that ST sits behind
+Cloudflare (`__cf_bm` in the jar) and might score Worker egress IPs differently. It does not,
+with `cf_clearance` and `__cf_bm` present in the replayed jar.
 
-Both can be true and still leave us blocked. "curl from dev02 works" does **not** imply "a
-Cloudflare Worker's `fetch` works." Three reasons to expect a difference:
+### 2.2 What this does NOT establish
 
-1. ST sits behind Cloudflare (the `__cf_bm` bot-management cookie is in the jar). A
-   Worker egresses *from* Cloudflare's network — bot-management may score it differently.
-2. `__cf_bm` has a ~30 min TTL. Any Worker path inherits a much tighter freshness window
-   than the ~24h `.AspNetCore.AUTH*` cookies.
-3. Session cookies may be IP-bound. Worker egress IPs are not Luke's.
-
-**The probe:** replay one `GetBillDocuments` call from a `wrangler dev` Worker using a fresh
-cookie jar, and assert HTTP 200 with a JSON body.
-
-- **200** → proceed with §5 as written.
-- **401 / Cloudflare challenge HTML** → **stop**. The tools cannot live in the Worker on a
-  plain `fetch` transport. Do not build a workaround. Options then become: keep the logic in
-  the skill; or split pure-compute tools (§5.2, §5.3, which need no network) into the Worker
-  and leave §5.1 in the skill. Escalate to Luke either way.
-
-This is the "stop and flag" case the scoping prompt named. It is cheap to answer and
-expensive to guess wrong.
+- **Durability.** One 200 is not a stable contract. `__cf_bm` (~30 min) and `cf_clearance`
+  are bot-management tokens; ST or Cloudflare can tighten scoring at any time with no notice.
+  The tools must treat a challenge page as a **typed, actionable error** — never retry into it,
+  never fall back to a partial result.
+- **Write paths.** Probe 0 exercised a read. `createBillPantheonDemo` is out of scope (§8) and
+  unprobed.
+- **Sustained volume.** A single call says nothing about 516 sequential reads (§5.1).
 
 ---
 
@@ -134,17 +136,33 @@ Returns `{result: [...], totalCount: N}`. `pageSize: 2000` returns everything in
 
 **Status codes:** `1` = scan pending · `2` = pending/"Ready" · `3` = created/"Reviewed" · `4` = empty.
 
-Row fields — note `id`, not `documentId`:
+Row fields — **verified live 2026-08-24**, exactly 13 keys, no more:
+
+```
+billWasCreated  currentDocument  date  documentCount  documentType  filename  id
+ocrResultId  originalFilename  scanComplete  status  totalAmount  vendorName
+```
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | int | **this is the documentId.** Called `documentId` on ReadBillDocument, `id` as the Print query param |
+| `id` | int | **this is the documentId.** Called `documentId` on ReadBillDocument, `id` as the Print query param — three names for one key |
 | `ocrResultId` | int | consistent everywhere |
-| `originalFilename` | string | |
-| `totalAmount` | number | **the invoice header total — the reconciliation target.** Lives only here, not in `billData` |
+| `originalFilename` | string | `filename` is a separate field (the temp path) |
+| `vendorName` | string | **present on the row.** See correction below |
+| `totalAmount` | number | **the invoice header total — the reconciliation target.** Lives only here, not in `billData`. Returned at high precision (`669.7500000000000000000`) |
 | `status` | int | see codes above |
 | `scanComplete` | bool | |
 | `billWasCreated` | bool | idempotency flag |
+| `documentCount` / `currentDocument` | int | page within a multi-bill PDF |
+
+**Correction to both reference docs:** `vendorName` **is** a list-row field. The skill's
+`endpoints.md` omits it, and a grep of the skill source finds zero hits — the scripts read the
+vendor from `billData.purchasingVendor.text` via a per-document `ReadBillDocument` instead.
+That is an unnecessary round-trip for the vendor half of a dedup key.
+
+**`vendorDocumentNumber` is genuinely absent** from the row (confirmed against the 13-key
+list). The invoice number still requires enrichment. So dedup gets vendor and amount for free,
+but not its primary key.
 
 Grain is `(documentId, ocrResultId)` = one bill. A multi-invoice PDF yields several rows
 sharing one `id` with distinct `ocrResultId`.
@@ -210,9 +228,9 @@ original_filename     string
 total_amount          number   (header total)
 status                int
 bill_was_created      bool
-vendor_name           string|null   ← enrich-only; billData.purchasingVendor.text
-vendor_id             int|null      ← enrich-only; .value, often null
+vendor_name           string        ← FREE, on the list row (normalized per §6.2)
 vendor_invoice_number string|null   ← enrich-only; normalized, see §6.1
+vendor_id             int|null      ← enrich-only; purchasingVendor.value, often null
 is_bill_duplicate     bool|null     ← enrich-only; ST's flag. ADVISORY ONLY, see §6.3
 ```
 
@@ -222,10 +240,14 @@ surface. The row carries only the boolean `billWasCreated`. The billId appears s
 ways: `j.billId || j.id || j.Id || j`). There is no way to ask ST "which bill did this
 document become." Omit the field rather than ship one that is always null.
 
-**Correction 2 — `vendorName` / `vendorInvoiceNumber` are not list-row fields.** They come
-only from `ReadBillDocument`. So they are `null` unless `enrich: true`. The response must
-carry `enriched: bool` and `next_cursor: int|null` so a caller cannot mistake an unenriched
-`null` for "this bill has no invoice number."
+**Correction 2 — `vendor_name` is free; `vendor_invoice_number` is not.** Verified live
+(§4.1): `vendorName` is on the list row, `vendorDocumentNumber` is not. So an unenriched call
+still yields two of the three dedup components (vendor, amount) at zero per-row cost — useful
+for a cheap pre-screen, but it cannot confirm a duplicate, because the invoice number is the
+primary key and the §5.3 gate requires all three.
+
+The response must carry `enriched: bool` and `next_cursor: int|null` so a caller cannot
+mistake an unenriched `null` invoice number for "this bill has no invoice number."
 
 That distinction is load-bearing: silently returning `null` for an unfetched field is the same
 class of defect as ST's silent filter drop that `rejectUnsupportedSTFilters` exists to prevent.
@@ -392,6 +414,13 @@ survive a future rename.
 The coverage gate fails preflight unless each tool declares an `stEndpoint` or is added to
 `COVERAGE_EXEMPT` in *both* `src/routes/admin-endpoints.ts` and `coverage_gate.test.ts`.
 
+> ⚠ **Blocker for the gates, found 2026-08-24:** the repo's vendored wrangler is **corrupt** —
+> `node_modules/wrangler/wrangler-dist/cli.js` has binary garbage at line 31109 and any
+> `npx wrangler` invocation dies with `SyntaxError: Invalid or unexpected token`. Probe 0 was
+> run against a clean wrangler installed in a scratch directory instead. `scripts/preflight.sh`
+> shells out to wrangler, so it cannot pass until `node_modules` is rebuilt (`npm ci`). Fix
+> this before the implementation pass, or "preflight passes" will be unverifiable.
+
 ---
 
 ## 8. Out of scope
@@ -476,7 +505,8 @@ larger live exposure than anything the three tools in this doc address.
 
 ## 10. Open questions
 
-1. **Probe 0** (§2) — does a Worker `fetch` reach the inbox API? Blocks everything.
+1. ~~**Probe 0** — does a Worker `fetch` reach the inbox API?~~ **Answered 2026-08-24: yes.**
+   See §2.
 2. `source: 'computed'` vs `COVERAGE_EXEMPT` for §5.2/§5.3 — prefer the former.
 3. Should §5.1 expose `validateVdn`? The skill never calls it, and its real path is unknown
    (four guesses 404'd on 2026-08-17). It is also structurally blind to intra-pending
