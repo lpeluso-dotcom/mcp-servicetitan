@@ -9,6 +9,7 @@ import { z } from 'zod';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { embedQuery, sbRpc, shapePriceRow } from '../../supabase';
+import { goldAsOf } from '../../gold-watermark';
 
 interface Args { query: string; topK?: number; }
 
@@ -27,17 +28,21 @@ export const search_pricebook_semantic: ToolDef<Args> = {
   async handler(env: Env, args: Args) {
     const limit = Math.min(args.topK ?? 10, 20);
     const embedding = await embedQuery(env, args.query);
-    const rows = await sbRpc<Array<Record<string, unknown>>>(env, 'search_pricebook_hybrid', {
-      query_text: args.query,
-      limit_rows: limit,
-      query_embedding: embedding,     // null → lexical-only path in the RPC
-      match_count: 50,
-    });
+    const [rows, asOf] = await Promise.all([
+      sbRpc<Array<Record<string, unknown>>>(env, 'search_pricebook_hybrid', {
+        query_text: args.query,
+        limit_rows: limit,
+        query_embedding: embedding,     // null → lexical-only path in the RPC
+        match_count: 50,
+      }),
+      goldAsOf(env, 'pricebook'),
+    ]);
     return {
       matches: (rows ?? []).map((r) => shapePriceRow(r)),
       query: args.query,
       _source: 'supabase-hybrid',
       _embedded: embedding !== null,
+      ...asOf,
     };
   },
 };

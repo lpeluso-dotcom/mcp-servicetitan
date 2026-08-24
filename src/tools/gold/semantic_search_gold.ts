@@ -42,6 +42,7 @@ import { z } from 'zod';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { embedQuery, sbRpc } from '../../supabase';
+import { goldAsOf } from '../../gold-watermark';
 import { buildTradeWarning, getTradeCoverage } from './trade_coverage';
 import { redactFreeText } from './redact';
 
@@ -212,13 +213,22 @@ export const semantic_search_gold: ToolDef<Args> = {
     const fetchK = Math.min(Math.max(k * OVERFETCH_MULTIPLIER, MIN_OVERFETCH), MAX_OVERFETCH);
 
     // CRITICAL: all 5 named params, even null (see file header, gotcha #2).
-    const rows = await sbRpc<MatchRow[]>(env, 'match_entities', {
-      query_embedding: embedding,
-      p_entity_key: args.entity_key ?? null,
-      p_grain: null,
-      p_trade: args.trade ?? null,
-      p_k: fetchK,
-    }, 'vec'); // schema selection (see file header, gotcha #1)
+    //
+    // `vec`, not `gold`: this index is bounded by BOTH the nightly re-embed
+    // that wrote these chunks and the gold build they were derived from. The
+    // 2026-07-21..26 incident is exactly the case where those diverge — gold
+    // frozen for five nights while the vector refresh re-embedded it and
+    // reported success — so watermarking only one of them would miss it.
+    const [rows, asOf] = await Promise.all([
+      sbRpc<MatchRow[]>(env, 'match_entities', {
+        query_embedding: embedding,
+        p_entity_key: args.entity_key ?? null,
+        p_grain: null,
+        p_trade: args.trade ?? null,
+        p_k: fetchK,
+      }, 'vec'), // schema selection (see file header, gotcha #1)
+      goldAsOf(env, 'vec'),
+    ]);
 
     const raw = rows ?? [];
     const warnings: string[] = [];
@@ -250,6 +260,7 @@ export const semantic_search_gold: ToolDef<Args> = {
         query: args.query,
         _relevance_floor: DEFAULT_RELEVANCE_FLOOR,
         _source: 'supabase-vec-gold',
+        ...asOf,
         _warnings: warnings,
       };
     }
@@ -299,6 +310,7 @@ export const semantic_search_gold: ToolDef<Args> = {
       query: args.query,
       _relevance_floor: DEFAULT_RELEVANCE_FLOOR,
       _source: 'supabase-vec-gold',
+      ...asOf,
       // Disclose rather than silently altering what the caller reads.
       ...(redactedCount > 0 ? { _redacted_matches: redactedCount } : {}),
       ...(warnings.length > 0 ? { _warnings: warnings } : {}),

@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { sbRpc, sbSelect, shapePriceRow } from '../../supabase';
+import { goldAsOf } from '../../gold-watermark';
 
 interface Args { code: string; itemType?: 'service' | 'material' | 'equipment' | 'fee'; }
 
@@ -26,9 +27,15 @@ export const find_packages_with_item: ToolDef<Args> = {
     // 1. Resolve st_id from (code,item_type) for the services reverse link.
     let stId: number | null = null;
     const typeFilter = args.itemType ? `&item_type=eq.${encodeURIComponent(args.itemType)}` : '';
-    const idRows = await sbSelect<Array<{ st_id: number | null }>>(
-      env, `pricebook_items?code=eq.${encodeURIComponent(args.code)}${typeFilter}&select=st_id&limit=1`,
-    );
+    // BOTH pipelines: this tool joins the item mirror (09:45 UTC cron) to the
+    // template mirror (09:30). The answer is no fresher than the older of the
+    // two, so both are probed and goldAsOf takes the oldest.
+    const [idRows, asOf] = await Promise.all([
+      sbSelect<Array<{ st_id: number | null }>>(
+        env, `pricebook_items?code=eq.${encodeURIComponent(args.code)}${typeFilter}&select=st_id&limit=1`,
+      ),
+      goldAsOf(env, ['pricebook', 'pricebook_templates']),
+    ]);
     if (idRows?.[0]?.st_id != null) stId = idRows[0].st_id;
 
     // 2. templates_with_item keys on code; services_with_item keys on st_id.
@@ -43,6 +50,7 @@ export const find_packages_with_item: ToolDef<Args> = {
       templates: (templates ?? []).map((r) => shapePriceRow(r)),
       services: (services ?? []).map((r) => shapePriceRow(r)),
       _source: 'supabase',
+      ...asOf,
     };
   },
 };
