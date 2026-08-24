@@ -16,7 +16,16 @@
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { StRateLimiter, DEFAULT_FAMILY_CAP } from '../../durable/st-rate-limiter';
+import {
+  StRateLimiter,
+  DEFAULT_FAMILY_CAP,
+  AGGREGATE_CAP,
+  AGGREGATE_WINDOW_MS,
+  ST_DOCUMENTED_CALLS_PER_SECOND,
+  IDENTITY_WINDOW_MS,
+  capForFamily,
+} from '../../durable/st-rate-limiter';
+import { MAX_PACE_WAIT_MS, MAX_PACE_ATTEMPTS, _setPacingSleep } from '../../rate-limit-guard';
 import { familyFromEndpoint, checkRateLimit } from '../../rate-limit-guard';
 import { readST, readSTPost } from '../../st';
 import { McpError } from '../../errors';
@@ -44,13 +53,15 @@ function makeDOState(storage: ReturnType<typeof makeStorage>): any {
   };
 }
 
-async function doCheck(rl: StRateLimiter, family: string) {
+async function doCheck(rl: StRateLimiter, family: string, identity?: string) {
   const req = new Request('https://do/check', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ family }),
+    body: JSON.stringify(identity === undefined ? { family } : { family, identity }),
   });
-  return rl.fetch(req).then((r) => r.json<{ allowed: boolean; retryAfter?: number }>());
+  return rl
+    .fetch(req)
+    .then((r) => r.json<{ allowed: boolean; retryAfter?: number; reason?: string }>());
 }
 
 /**
@@ -276,16 +287,30 @@ describe('aggregate cap', () => {
     const { ns, instances } = makeLiveLimiterNamespace();
     const env = { ST_RATE_LIMITER: ns } as any;
 
-    // AGGREGATE_CAP is 80. crm and jpm each cap at 60, so 40 + 40 stays
-    // under both per-family caps but exhausts the global budget.
-    for (let i = 0; i < 40; i++) await checkRateLimit(env, 'crm');
-    for (let i = 0; i < 40; i++) await checkRateLimit(env, 'jpm');
+    // Split the aggregate budget across two families, keeping each side under
+    // its own per-family fairness cap so ONLY the aggregate can deny the next
+    // call.
+    const half = Math.floor(AGGREGATE_CAP / 2);
+    const rest = AGGREGATE_CAP - half;
+    expect(half).toBeLessThan(DEFAULT_FAMILY_CAP);
+    expect(rest).toBeLessThan(DEFAULT_FAMILY_CAP);
+
+    for (let i = 0; i < half; i++) await checkRateLimit(env, 'crm');
+    for (let i = 0; i < rest; i++) await checkRateLimit(env, 'jpm');
 
     // Every ST call routes to ONE limiter instance.
     expect(instances.size).toBe(1);
 
-    await expect(checkRateLimit(env, 'crm')).rejects.toMatchObject({ code: 'rate_limited' });
-    await expect(checkRateLimit(env, 'dispatch')).rejects.toMatchObject({ code: 'rate_limited' });
+    // Read that instance's verdict directly rather than through
+    // checkRateLimit: the guard PACES a sub-second budget denial (see the
+    // pacing tests below), which would refill the window and hide the very
+    // thing this test exists to prove.
+    const rl = instances.values().next().value as StRateLimiter;
+    // A THIRD family, untouched so far — under the old per-family DO ids its
+    // instance would have been empty and this would be allowed.
+    const verdict = await doCheck(rl, 'dispatch');
+    expect(verdict.allowed).toBe(false);
+    expect(verdict.reason).toBe('aggregate');
   });
 
   it('checkRateLimit and reportBackoff address the same DO id for every family', async () => {
@@ -299,6 +324,146 @@ describe('aggregate cap', () => {
 
     const names = new Set((idFromName.mock.calls as any[][]).map((c) => c[0]));
     expect(names.size).toBe(1);
+  });
+});
+
+// ── 4b. the aggregate is shaped like ST's REAL limit ────────
+//
+// ServiceTitan documents 60 calls per SECOND per application per tenant for
+// regular APIs. A 60-second aggregate window is the wrong shape for a
+// per-second limit: it either throttles a burst that is comfortably legal, or
+// waves through 3,600 calls inside one second.
+
+describe('aggregate window shape and headroom', () => {
+  it('measures the aggregate over a ~1s window, not a minute', () => {
+    expect(AGGREGATE_WINDOW_MS).toBeLessThanOrEqual(1_000);
+  });
+
+  it("leaves real headroom under ST's documented 60/s even at a window boundary", () => {
+    expect(ST_DOCUMENTED_CALLS_PER_SECOND).toBe(60);
+    // Worst case for a fixed window: a full budget at the end of one window
+    // and another full budget at the start of the next, inside ~1 second.
+    expect(AGGREGATE_CAP * 2).toBeLessThan(ST_DOCUMENTED_CALLS_PER_SECOND);
+    // ...and we must NOT budget the whole tenant quota for this worker —
+    // taylor-ai and other callers share it.
+    expect(AGGREGATE_CAP).toBeLessThanOrEqual(ST_DOCUMENTED_CALLS_PER_SECOND / 2);
+  });
+
+  it('is no longer ~45x stricter than ST — sustained ceiling is well above the old 80/min', () => {
+    const sustainedPerMinute = AGGREGATE_CAP * (60_000 / AGGREGATE_WINDOW_MS);
+    expect(sustainedPerMinute).toBeGreaterThanOrEqual(1_000);
+  });
+
+  it('refills after the window elapses instead of locking out for a minute', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-08-24T12:00:00.000Z'));
+      const rl = new StRateLimiter(makeDOState(makeStorage()));
+
+      // Spread across families so the per-family fairness cap never fires.
+      for (let i = 0; i < AGGREGATE_CAP; i++) {
+        const r = await doCheck(rl, i % 2 === 0 ? 'crm' : 'jpm');
+        expect(r.allowed).toBe(true);
+      }
+      expect((await doCheck(rl, 'crm')).allowed).toBe(false);
+
+      vi.setSystemTime(new Date(Date.now() + AGGREGATE_WINDOW_MS + 1));
+      expect((await doCheck(rl, 'crm')).allowed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ── 4c. reporting carries no invented volume cap ────────────
+//
+// ST documents NO per-family volume limit. The reporting constraint it does
+// document is "1 of the same report per minute per tenant" — an identity
+// rule, not a bucket. `reporting: 20/min` modelled a limit that never existed.
+
+describe('reporting family', () => {
+  it('gets the same fairness cap as every other family — no special number', () => {
+    expect(capForFamily('reporting')).toBe(DEFAULT_FAMILY_CAP);
+    for (const f of ['crm', 'jpm', 'pricebook', 'accounting', 'sales', 'whatever']) {
+      expect(capForFamily(f)).toBe(DEFAULT_FAMILY_CAP);
+    }
+  });
+});
+
+// ── 4d. same-report-within-60s (ST's real reporting limit) ──
+
+describe('same-report identity limit', () => {
+  it('exposes a 60s identity window', () => {
+    expect(IDENTITY_WINDOW_MS).toBe(60_000);
+  });
+
+  it('rejects the SAME identity inside the window with an accurate retryAfter', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-08-24T12:00:00.000Z'));
+      const rl = new StRateLimiter(makeDOState(makeStorage()));
+
+      expect((await doCheck(rl, 'reporting', 'report:7:params-a')).allowed).toBe(true);
+
+      vi.setSystemTime(new Date(Date.now() + 20_000));
+      const again = await doCheck(rl, 'reporting', 'report:7:params-a');
+      expect(again.allowed).toBe(false);
+      expect(again.reason).toBe('same_report_within_window');
+      expect(again.retryAfter).toBe(40);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('allows a DIFFERENT identity immediately', async () => {
+    const rl = new StRateLimiter(makeDOState(makeStorage()));
+    expect((await doCheck(rl, 'reporting', 'report:7:params-a')).allowed).toBe(true);
+    expect((await doCheck(rl, 'reporting', 'report:7:params-b')).allowed).toBe(true);
+    expect((await doCheck(rl, 'reporting', 'report:8:params-a')).allowed).toBe(true);
+  });
+
+  it('allows the same identity again once the window has passed', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-08-24T12:00:00.000Z'));
+      const rl = new StRateLimiter(makeDOState(makeStorage()));
+      expect((await doCheck(rl, 'reporting', 'r')).allowed).toBe(true);
+      vi.setSystemTime(new Date(Date.now() + IDENTITY_WINDOW_MS + 1));
+      expect((await doCheck(rl, 'reporting', 'r')).allowed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT spend aggregate or family budget on an identity rejection', async () => {
+    const storage = makeStorage();
+    const rl = new StRateLimiter(makeDOState(storage));
+
+    await doCheck(rl, 'reporting', 'r');
+    const afterFirst = (storage.map.get('ratelimit') as any).aggregateCount;
+    await doCheck(rl, 'reporting', 'r'); // rejected
+    await doCheck(rl, 'reporting', 'r'); // rejected
+    expect((storage.map.get('ratelimit') as any).aggregateCount).toBe(afterFirst);
+  });
+
+  it('surfaces the identity rejection through checkRateLimit as rate_limited', async () => {
+    const { ns } = makeLiveLimiterNamespace();
+    const env = { ST_RATE_LIMITER: ns } as any;
+
+    await checkRateLimit(env, 'reporting', { identity: 'report:7' });
+    const err: any = await checkRateLimit(env, 'reporting', { identity: 'report:7' }).catch((e) => e);
+    expect(err).toBeInstanceOf(McpError);
+    expect(err.code).toBe('rate_limited');
+    expect(err.retry_after_ms).toBeGreaterThan(0);
+    expect(err.message).toMatch(/same report/i);
+  });
+
+  it('does not track identities for ordinary non-report calls', async () => {
+    const storage = makeStorage();
+    const rl = new StRateLimiter(makeDOState(storage));
+    for (let i = 0; i < 5; i++) expect((await doCheck(rl, 'crm')).allowed).toBe(true);
+    const stored: any = storage.map.get('ratelimit');
+    expect(stored.identities ?? []).toHaveLength(0);
   });
 });
 
@@ -327,5 +492,113 @@ describe('rate-limit-guard', () => {
     expect(familyFromEndpoint('/')).toBe('other');
     expect(familyFromEndpoint('no-leading-slash')).toBe('other');
     expect(familyFromEndpoint('/crm/v2/customers')).toBe('crm');
+  });
+});
+
+// ── 6. bounded pacing on sub-second budget denials ──────────
+//
+// The aggregate window is ~1s, so a burst that overshoots refills almost
+// immediately. Throwing at the caller would turn an extra second into a hard
+// failure — `get_configurable_equipment_children` fans out up to 25 parallel
+// readST calls, which is a legitimate bounded operation that must not fail
+// just because it exceeds a one-second budget.
+
+function pacingLimiter(replies: Array<{ allowed: boolean; retryAfterMs?: number; retryAfter?: number; reason?: string }>) {
+  let i = 0;
+  const doFetch = vi.fn(async (url: string): Promise<Response> => {
+    if (!url.endsWith('/check')) return new Response('{}', { status: 200 });
+    const reply = replies[Math.min(i, replies.length - 1)];
+    i++;
+    return new Response(JSON.stringify(reply), { status: 200 });
+  });
+  return {
+    doFetch,
+    ns: { idFromName: vi.fn((n: string) => n), get: vi.fn(() => ({ fetch: doFetch })) } as any,
+    checks: () => (doFetch.mock.calls as any[][]).filter((c) => String(c[0]).endsWith('/check')).length,
+  };
+}
+
+describe('bounded pacing', () => {
+  it('exposes its bounds so the worst-case added latency is auditable', () => {
+    expect(MAX_PACE_WAIT_MS).toBeGreaterThan(0);
+    expect(MAX_PACE_WAIT_MS).toBeLessThanOrEqual(2_000);
+    expect(MAX_PACE_ATTEMPTS).toBeGreaterThanOrEqual(1);
+    expect(MAX_PACE_ATTEMPTS).toBeLessThanOrEqual(5);
+  });
+
+  it('waits out a SHORT budget denial instead of failing the caller', async () => {
+    const limiter = pacingLimiter([
+      { allowed: false, retryAfterMs: 5, retryAfter: 1, reason: 'aggregate' },
+      { allowed: true },
+    ]);
+    const env = { ST_RATE_LIMITER: limiter.ns } as any;
+
+    await expect(checkRateLimit(env, 'crm')).resolves.toBeUndefined();
+    expect(limiter.checks()).toBe(2);
+  });
+
+  it('gives up after MAX_PACE_ATTEMPTS rather than waiting forever', async () => {
+    const limiter = pacingLimiter([
+      { allowed: false, retryAfterMs: 2, retryAfter: 1, reason: 'family' },
+    ]);
+    const env = { ST_RATE_LIMITER: limiter.ns } as any;
+
+    await expect(checkRateLimit(env, 'crm')).rejects.toMatchObject({ code: 'rate_limited' });
+    // one initial check + MAX_PACE_ATTEMPTS retries
+    expect(limiter.checks()).toBe(1 + MAX_PACE_ATTEMPTS);
+  });
+
+  it('does NOT wait when the refill is far away — fails fast instead', async () => {
+    const limiter = pacingLimiter([
+      { allowed: false, retryAfterMs: 45_000, retryAfter: 45, reason: 'aggregate' },
+      { allowed: true },
+    ]);
+    const env = { ST_RATE_LIMITER: limiter.ns } as any;
+
+    const started = Date.now();
+    await expect(checkRateLimit(env, 'crm')).rejects.toMatchObject({
+      code: 'rate_limited',
+      retry_after_ms: 45_000,
+    });
+    expect(limiter.checks()).toBe(1);
+    expect(Date.now() - started).toBeLessThan(MAX_PACE_WAIT_MS);
+  });
+
+  it('NEVER paces a same-report rejection, even a short one', async () => {
+    // Waiting out ST's one-per-minute report rule would hold a request open
+    // for up to a minute. Fail fast and let the caller use the cache.
+    const limiter = pacingLimiter([
+      { allowed: false, retryAfterMs: 5, retryAfter: 1, reason: 'same_report_within_window' },
+      { allowed: true },
+    ]);
+    const env = { ST_RATE_LIMITER: limiter.ns } as any;
+
+    await expect(checkRateLimit(env, 'reporting', { identity: 'r' })).rejects.toMatchObject({
+      code: 'rate_limited',
+    });
+    expect(limiter.checks()).toBe(1);
+  });
+
+  it('lets a 25-wide parallel burst through instead of failing part of it', async () => {
+    // The get_configurable_equipment_children shape: one bounded fan-out,
+    // wider than the per-second budget, all on one family. Driven against a
+    // virtual clock — the pacing loop is real, the seconds are not.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-24T12:00:00.000Z'));
+    const restore = _setPacingSleep(async (ms: number) => {
+      vi.setSystemTime(new Date(Date.now() + ms));
+    });
+    try {
+      const { ns } = makeLiveLimiterNamespace();
+      const env = { ST_RATE_LIMITER: ns } as any;
+
+      const results = await Promise.allSettled(
+        Array.from({ length: 25 }, () => checkRateLimit(env, 'pricebook')),
+      );
+      expect(results.filter((r) => r.status === 'rejected')).toHaveLength(0);
+    } finally {
+      _setPacingSleep(restore);
+      vi.useRealTimers();
+    }
   });
 });

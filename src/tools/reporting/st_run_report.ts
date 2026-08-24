@@ -48,14 +48,51 @@ export const REPORT_RUN_TTL_SEC = 300; // 5 minutes
 
 /**
  * Epoch ms until which mode=run fails fast. Keyed to the whole tool, not to
- * one report: ST throttles the reporting API per tenant, so a 429 on report A
- * predicts a 429 on report B.
+ * one report: an ST 429 means the TENANT is being throttled, so a 429 on
+ * report A predicts a 429 on report B.
+ *
+ * Deliberately NOT armed by the limiter's same-report rejection — that one is
+ * per report identity, and blocking every other report for a minute because
+ * one report repeated would be its own "the server got slow" bug.
  */
 let reportRunCooldownUntil = 0;
 
 /** Test seam — resets the isolate-local cooldown. */
 export function _resetReportCooldown(): void {
   reportRunCooldownUntil = 0;
+}
+
+/**
+ * The canonical identity of one report RUN: the report itself plus every
+ * input that changes the rows it returns.
+ *
+ * This single string is used for BOTH the result-cache key and the limiter's
+ * `identity`, so the two can never disagree about what "the same report"
+ * means. Parameters are sorted by name first — `[From, To]` and `[To, From]`
+ * are the same report, and treating them as different would both miss the
+ * cache and spend a second ST call against a limit that would reject it.
+ *
+ * Note on ST's wording: the docs say "1 of the same report per minute per
+ * tenant" without defining whether paging counts as the same report. We
+ * include page/pageSize in the identity, i.e. we treat page 2 as a DIFFERENT
+ * run. Excluding them would make ordinary pagination unusable; if ST turns
+ * out to count paged calls as repeats, this is the line to change.
+ */
+export function reportRunIdentity(args: {
+  categoryId?: string | number;
+  reportId?: string | number;
+  parameters?: ReportParam[];
+  page: unknown;
+  pageSize: unknown;
+}): string {
+  const params = [...(args.parameters ?? [])].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return JSON.stringify({
+    c: String(args.categoryId),
+    r: String(args.reportId),
+    p: args.page,
+    s: args.pageSize,
+    params,
+  });
 }
 
 const ReportMode = z.enum(['list_categories', 'list_reports', 'describe_report', 'run']);
@@ -184,33 +221,42 @@ export const st_run_report: ToolDef<Args> = {
     }
 
     // ── short result cache ───────────────────────────────────
-    // The key must include EVERY input that changes the rows: two runs that
-    // differ by one parameter are different reports.
-    const cacheKey = JSON.stringify({
-      c: String(args.categoryId),
-      r: String(args.reportId),
-      p: runBody.page,
-      s: runBody.pageSize,
-      params: args.parameters,
+    // One canonical string is both the cache key and the limiter identity —
+    // see reportRunIdentity. This cache is the REAL fix for st_run_report's
+    // 429s: ST's reporting limit is "1 of the same report per minute", so the
+    // 429s were repeat runs of the same report, and a repeat inside the TTL
+    // now never leaves the Worker.
+    const identity = reportRunIdentity({
+      categoryId: args.categoryId,
+      reportId: args.reportId,
+      parameters: args.parameters,
+      page: runBody.page,
+      pageSize: runBody.pageSize,
     });
 
     let hitUpstream = false;
     let data: unknown;
     try {
-      data = await cacheGet<unknown>(env, REPORT_CACHE_NS, cacheKey, REPORT_RUN_TTL_SEC, async () => {
+      data = await cacheGet<unknown>(env, REPORT_CACHE_NS, identity, REPORT_RUN_TTL_SEC, async () => {
         hitUpstream = true;
         return readSTPost<unknown>(
           env,
           { actor, correlation },
           `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports/${args.reportId}/data`,
           runBody,
+          { identity },
         );
       });
     } catch (err) {
-      // Both an ST 429 and our own limiter's deny arrive as rate_limited.
-      // Either means "stop asking" — arm the cooldown from the error's own
-      // retry_after_ms so the window matches what we were told.
-      if (err instanceof McpError && err.code === 'rate_limited') {
+      // An ST 429 means the TENANT is throttled — arm the tool-wide cooldown
+      // from the error's own retry_after_ms. The limiter's same-report
+      // rejection is NOT that: it is scoped to one report identity, and
+      // arming a tool-wide cooldown from it would block every other report.
+      if (
+        err instanceof McpError &&
+        err.code === 'rate_limited' &&
+        (err.details as { reason?: string } | undefined)?.reason !== 'same_report_within_window'
+      ) {
         reportRunCooldownUntil = Date.now() + (err.retry_after_ms ?? 60_000);
       }
       throw err;

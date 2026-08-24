@@ -49,16 +49,43 @@ function makeCacheDB() {
   };
 }
 
-function makeEnv(stImpl: (url: string, init?: any) => Promise<Response>) {
+/**
+ * Limiter double that records every /check body, so the tests can assert the
+ * report IDENTITY st_run_report sends. `deny` lets a test simulate the DO's
+ * same-report-within-60s rejection.
+ */
+function makeLimiter(deny?: { retryAfter: number; reason: string }) {
+  const doFetch = vi.fn(async (url: string, init?: any): Promise<Response> => {
+    if (url.endsWith('/check')) {
+      if (deny) {
+        return new Response(
+          JSON.stringify({ allowed: false, retryAfter: deny.retryAfter, reason: deny.reason }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({ allowed: true }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  });
+  return {
+    doFetch,
+    ns: { idFromName: vi.fn((n: string) => n), get: vi.fn(() => ({ fetch: doFetch })) } as any,
+    checkBodies(): any[] {
+      return (doFetch.mock.calls as any[][])
+        .filter((c) => String(c[0]).endsWith('/check'))
+        .map((c) => JSON.parse(c[1].body));
+    },
+  };
+}
+
+function makeEnv(
+  stImpl: (url: string, init?: any) => Promise<Response>,
+  limiter: ReturnType<typeof makeLimiter> = makeLimiter()
+) {
   const stFetch = vi.fn(stImpl);
   return {
     ST_PROXY: { fetch: stFetch },
-    ST_RATE_LIMITER: {
-      idFromName: vi.fn((n: string) => n),
-      get: vi.fn(() => ({
-        fetch: vi.fn(async () => new Response(JSON.stringify({ allowed: true }), { status: 200 })),
-      })),
-    },
+    ST_RATE_LIMITER: limiter.ns,
     MCP_SYNC_KEY: 'k',
     MCP_SERVICE_VERSION: '0.0.0-test',
     ST_TENANT_ID: '000000000',
@@ -177,5 +204,108 @@ describe('st_run_report post-429 cooldown', () => {
     const cats: any = await st_run_report.handler(env, { mode: 'list_categories' }, CTX);
     expect(cats.mode).toBe('list_categories');
     expect(calls).toBe(2);
+  });
+});
+
+// ── report IDENTITY: ST's real reporting limit is "1 of the SAME report per
+// minute per tenant", so the identity must be the full report identity —
+// report id AND parameters — not just the id.
+
+describe('st_run_report report identity', () => {
+  it('sends the full report identity (category + report + params + paging) to the limiter', async () => {
+    const limiter = makeLimiter();
+    const env = makeEnv(async () => new Response(JSON.stringify({ rows: [] }), { status: 200 }), limiter);
+
+    await st_run_report.handler(env, { ...RUN_ARGS }, CTX);
+
+    const bodies = limiter.checkBodies();
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].family).toBe('reporting');
+    expect(typeof bodies[0].identity).toBe('string');
+    expect(bodies[0].identity).toContain('cat1');
+    expect(bodies[0].identity).toContain('r1');
+    expect(bodies[0].identity).toContain('2026-01-01');
+  });
+
+  it('gives two runs that differ only by a parameter DIFFERENT identities', async () => {
+    const limiter = makeLimiter();
+    const env = makeEnv(async () => new Response(JSON.stringify({ rows: [] }), { status: 200 }), limiter);
+
+    await st_run_report.handler(env, { ...RUN_ARGS }, CTX);
+    await st_run_report.handler(
+      env,
+      { ...RUN_ARGS, parameters: [{ name: 'From', value: '2026-02-01' }] },
+      CTX
+    );
+
+    const ids = limiter.checkBodies().map((b) => b.identity);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it('treats reordered parameters as the SAME report (canonical identity)', async () => {
+    const limiter = makeLimiter();
+    const env = makeEnv(async () => new Response(JSON.stringify({ rows: [] }), { status: 200 }), limiter);
+    const a = { name: 'From', value: '2026-01-01' };
+    const b = { name: 'To', value: '2026-01-31' };
+
+    const first: any = await st_run_report.handler(
+      env,
+      { ...RUN_ARGS, parameters: [a, b] },
+      CTX
+    );
+    const second: any = await st_run_report.handler(
+      env,
+      { ...RUN_ARGS, parameters: [b, a] },
+      CTX
+    );
+
+    // Same report -> served from cache, so ST is hit once and the limiter is
+    // never asked to spend a second identity.
+    expect(first._source).toBe('live');
+    expect(second._source).toBe('cache');
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not send an identity on the discovery modes', async () => {
+    const limiter = makeLimiter();
+    const env = makeEnv(
+      async () => new Response(JSON.stringify({ data: [{ id: 'cat1' }] }), { status: 200 }),
+      limiter
+    );
+
+    await st_run_report.handler(env, { mode: 'list_categories' }, CTX);
+
+    const bodies = limiter.checkBodies();
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].identity).toBeUndefined();
+  });
+
+  it("surfaces the DO's same-report rejection as rate_limited without calling ST", async () => {
+    const limiter = makeLimiter({ retryAfter: 42, reason: 'same_report_within_window' });
+    const env = makeEnv(async () => new Response(JSON.stringify({ rows: [] }), { status: 200 }), limiter);
+
+    const err: any = await st_run_report.handler(env, { ...RUN_ARGS }, CTX).catch((e) => e);
+    expect(err.code).toBe('rate_limited');
+    expect(err.retry_after_ms).toBe(42_000);
+    // The identity rejection happened in the DO — ST was never called.
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
+  });
+
+  it('a same-report rejection must NOT arm the tool-wide cooldown', async () => {
+    // "1 of the same report per minute" is per report identity. Blocking every
+    // OTHER report for a minute because one report repeated would be the
+    // "server got slow" failure mode all over again. Only a real ST 429 — which
+    // signals tenant-wide throttling — arms the tool-wide cooldown.
+    const denying = makeLimiter({ retryAfter: 42, reason: 'same_report_within_window' });
+    const env = makeEnv(async () => new Response(JSON.stringify({ rows: [] }), { status: 200 }), denying);
+
+    await st_run_report.handler(env, { ...RUN_ARGS }, CTX).catch(() => undefined);
+
+    // A different report, with an allowing limiter, must go straight through.
+    env.ST_RATE_LIMITER = makeLimiter().ns;
+    const ok: any = await st_run_report.handler(env, { ...RUN_ARGS, reportId: 'r9' }, CTX);
+    expect(ok.mode).toBe('run');
+    expect(ok._source).toBe('live');
   });
 });

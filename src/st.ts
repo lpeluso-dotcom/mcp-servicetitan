@@ -148,17 +148,28 @@ export async function readSTPost<T = unknown>(
   ctx: ReadSTContext,
   endpoint: string,
   body: unknown,
+  /**
+   * `identity` names WHICH ServiceTitan report this is (id + every input that
+   * changes the rows). ST allows 1 run of the same report per minute per
+   * tenant — an identity rule, not a volume bucket — so the limiter can only
+   * enforce it when the caller supplies this. Only st_run_report does.
+   */
+  opts: { identity?: string } = {},
 ): Promise<T> {
   const resolved = rewriteTenantPlaceholders(env, endpoint);
   const url = buildUrl(resolved);
   // Same gate as readST. This is the path st_run_report uses, and the reason
   // the reporting family's 20/min cap was never consulted before Wave 2.
-  const resp = await guardedStFetch(env, resolved, () =>
-    env.ST_PROXY.fetch(url, {
-      method: 'POST',
-      headers: { ...authHeaders(env, ctx.correlation, ctx.actor), 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+  const resp = await guardedStFetch(
+    env,
+    resolved,
+    () =>
+      env.ST_PROXY.fetch(url, {
+        method: 'POST',
+        headers: { ...authHeaders(env, ctx.correlation, ctx.actor), 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    opts,
   );
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
