@@ -8,6 +8,7 @@ import type { Env } from '../env';
 import { authHeaders } from '../auth';
 import { McpError, mapUpstreamStatus } from '../errors';
 import { WriteGate } from '../write-gate';
+import { guardedFamilyFetch } from '../rate-limit-guard';
 import type { ToolDef } from './index';
 import { toStPricebookPayload } from './pricebook-payload';
 
@@ -98,6 +99,13 @@ interface DurableWriteOpts {
   target: { id: string; type?: string };
   payload: unknown;
   correlation: string;
+  /**
+   * ST endpoint family this write bills to. All four callers
+   * (service/material create+patch) are pricebook writes, so that is the
+   * default; pass explicitly if durableWrite ever grows a non-pricebook
+   * operation.
+   */
+  family?: string;
   _pollIntervalMs?: number;
   _pollMaxAttempts?: number;
 }
@@ -105,15 +113,22 @@ interface DurableWriteOpts {
 export async function durableWrite(env: Env, opts: DurableWriteOpts): Promise<unknown> {
   const {
     actor, operation, target, payload, correlation,
+    family = 'pricebook',
     _pollIntervalMs = POLL_INTERVAL_MS,
     _pollMaxAttempts = POLL_MAX_ATTEMPTS,
   } = opts;
 
-  const submitResp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/durable-write', {
-    method: 'POST',
-    headers: { ...authHeaders(env, correlation, actor), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ actor, operation, target, payload, dry_run: false, correlation }),
-  });
+  // Only the SUBMIT is gated. The status poll below talks to the proxy's own
+  // workflow state, never to ServiceTitan, so charging it to ST's budget
+  // would throttle us against a quota it does not consume — and a long poll
+  // could exhaust the family cap on a single write.
+  const submitResp = await guardedFamilyFetch(env, family, () =>
+    env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/durable-write', {
+      method: 'POST',
+      headers: { ...authHeaders(env, correlation, actor), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actor, operation, target, payload, dry_run: false, correlation }),
+    })
+  );
 
   if (!submitResp.ok) {
     const body = await submitResp.text().catch(() => '');

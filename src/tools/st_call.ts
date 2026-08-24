@@ -3,7 +3,25 @@ import { McpError } from '../errors';
 import { WriteGate } from '../write-gate';
 import { normalizePath, normalizeBody } from '../st-path-builder';
 import { rewriteTenantPlaceholders } from '../tenant';
+import { guardedStFetch, parseRetryAfterSeconds } from '../rate-limit-guard';
 import type { ToolDef } from './index';
+
+/**
+ * st_call error shaping. A 429 must surface as rate_limited with a usable
+ * retry_after_ms — the old `upstream_error: st_call GET failed: 429` told the
+ * caller nothing about when to come back.
+ */
+function stCallError(method: string, resp: Response, correlation: string): McpError {
+  if (resp.status === 429) {
+    const seconds = parseRetryAfterSeconds(resp.headers.get('Retry-After'));
+    return new McpError(
+      'rate_limited',
+      `st_call ${method} rate limited by ServiceTitan (429) — retry after ${seconds}s`,
+      { correlation, retry_after_ms: seconds * 1000 },
+    );
+  }
+  return new McpError('upstream_error', `st_call ${method} failed: ${resp.status}`, { correlation });
+}
 
 // ── Tool ─────────────────────────────────────────────────────
 
@@ -61,17 +79,21 @@ export const st_call: ToolDef<Args> = {
         for (const [k, v] of Object.entries(query)) qs.set(k, String(v));
         endpointPath += `?${qs}`;
       }
-      const resp = await env.ST_PROXY.fetch(
-        `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(endpointPath)}`,
-        {
-          headers: {
-            'x-sync-key': env.MCP_SYNC_KEY,
-            'x-correlation-id': correlation,
-            'x-actor': actor,
-          },
-        }
+      // st_call is the raw ST passthrough — it bypasses readST entirely, so
+      // it carries its own gate. Family comes from the caller's path.
+      const resp = await guardedStFetch(env, path, () =>
+        env.ST_PROXY.fetch(
+          `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(endpointPath)}`,
+          {
+            headers: {
+              'x-sync-key': env.MCP_SYNC_KEY,
+              'x-correlation-id': correlation,
+              'x-actor': actor,
+            },
+          }
+        )
       );
-      if (!resp.ok) throw new McpError('upstream_error', `st_call GET failed: ${resp.status}`, { correlation });
+      if (!resp.ok) throw stCallError('GET', resp, correlation);
       return { result: await resp.json(), _path: rewriteTenantPlaceholders(env, path), method };
     }
 
@@ -89,17 +111,19 @@ export const st_call: ToolDef<Args> = {
     }
     await gate.verifyToken('st_call', businessArgs, actor, confirmation_token);
 
-    const resp = await env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-sync-key': env.MCP_SYNC_KEY,
-        'x-correlation-id': correlation,
-        'x-actor': actor,
-      },
-      body: JSON.stringify({ endpoint: path, method, payload }),
-    });
-    if (!resp.ok) throw new McpError('upstream_error', `st_call ${method} failed: ${resp.status}`, { correlation });
+    const resp = await guardedStFetch(env, path, () =>
+      env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-sync-key': env.MCP_SYNC_KEY,
+          'x-correlation-id': correlation,
+          'x-actor': actor,
+        },
+        body: JSON.stringify({ endpoint: path, method, payload }),
+      })
+    );
+    if (!resp.ok) throw stCallError(method, resp, correlation);
     return { dryRun: false, tool: 'st_call', result: await resp.json(), correlation };
   },
 };

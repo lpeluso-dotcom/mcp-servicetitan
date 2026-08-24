@@ -14,7 +14,7 @@ Claude Code  ──Streamable HTTP/MCP──▶  mcp-servicetitan (Cloudflare Wo
                           ┌───────────────────┼─────────────────────┐
                           ▼                   ▼                     ▼
                     own D1 mcp-servicetitan   service binding         Durable Objects:
-                    audit_log, error_log,    ST_PROXY       StRateLimiter (per ST family)
+                    audit_log, error_log,    ST_PROXY       StRateLimiter (one global instance)
                     confirmation_tokens,        │            CustomerSnapshotSingleflight
                     mcp_roles, mcp_cache,       ▼            (per customerId fanout guard)
                     endpoint_registry,    /api/st/read
@@ -175,7 +175,7 @@ JWT clients can send `Authorization: Bearer <JWT>` instead. The JWT must be sign
 | `ST_PROXY` | service | upstream ServiceTitan proxy worker, used for `/api/st/read`, `/api/st/write`, and `queryD1` RPC |
 | `PROXY_STATE` | KV | optional shared heartbeat namespace |
 | `MCP_METRICS` | Analytics Engine | p50/p95/p99 + error-rate timeseries |
-| `ST_RATE_LIMITER` | Durable Object | per-ST-family adaptive rate limiter (Retry-After-aware) |
+| `ST_RATE_LIMITER` | Durable Object | global ST rate limiter — one instance holds the 20/s aggregate, the per-family fairness counters and the same-report ledger (Retry-After-aware) |
 | `CUSTOMER_SNAPSHOT_FLIGHT` | Durable Object | per-customerId fanout guard for `customer_snapshot` |
 
 ## Public Deployment Notes
