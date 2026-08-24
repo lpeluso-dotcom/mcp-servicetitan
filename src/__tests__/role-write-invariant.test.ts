@@ -55,6 +55,16 @@ const POST_AS_READ_EXEMPT = new Map<string, string>([
   ['get_capacity', 'POST /dispatch/v2/.../capacity — capacity query in body, returns availability'],
   ['st_get_capacity_slots', 'POST /dispatch/v2/.../capacity — same endpoint, slot-shaped response'],
   ['st_run_report', 'POST /reporting/v2/.../reports/{id}/data — report parameters in body, returns rows'],
+  [
+    'ap_inbox_list_documents',
+    'POST /app/api/accounting/inbox/GetBillDocuments — the AP-inbox LIST endpoint. It is a ' +
+      'read: the POST body carries the query ({search, status[], orderBy, desc, pageIndex, ' +
+      'pageSize}) and the response is {result[], totalCount}. Nothing is created or mutated. ' +
+      'Confirmed live 2026-08-24 (Probe 0) — repeated calls returned byte-identical bodies and ' +
+      'the inbox was unchanged. The two AP-inbox WRITES (createBillPantheonDemo, DeleteDocuments) ' +
+      'are deliberately NOT implemented in this worker; if either is ever added it must declare ' +
+      'isWrite:true and go through write-tool-factory, never onto this list.',
+  ],
 ]);
 
 /**
