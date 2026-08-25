@@ -3,11 +3,11 @@ import { McpError } from '../../errors';
 import { authHeaders } from '../../auth';
 import { readST } from '../../st';
 import { pagedStRead } from '../../paged-st-read';
-import { readD1 } from '../../d1';
-import { chunk, ST_IDS_BATCH_MAX, D1_BIND_PARAM_MAX } from '../../chunk';
+import { chunk, ST_IDS_BATCH_MAX } from '../../chunk';
 import { resolveBusinessUnit, resolveTechnician } from '../../name-resolver';
 import { defaultShaper } from '../../response-shape';
-import { stampMirrorFreshness, fetchTableMax, type FreshnessStamp } from '../../mirror-freshness';
+import { stampMirrorFreshness, type FreshnessStamp } from '../../mirror-freshness';
+import { fetchMirrorTableMax, readMirror } from '../../mirror-pg';
 import type { ToolDef } from '../index';
 
 interface AssignmentRow {
@@ -45,7 +45,7 @@ const TENANT_ID = '000000000';
  * reported under a name that means "a dispatch decision was overridden".
  * There is no reassignment detection here and none is possible from these
  * sources: ST's /jpm/v2 appointments feed carries no dispatch history, and the
- * D1 `appointment_assignments` mirror stores the CURRENT assignment with no
+ * Supabase `appointment_assignments` mirror stores the CURRENT assignment with no
  * prior-assignee column to diff against. Detecting a real override needs a
  * change feed (webhook/audit trail) this worker does not have.
  *
@@ -55,7 +55,7 @@ const TENANT_ID = '000000000';
  */
 const NO_OVERRIDE_DETECTION_NOTE =
   'This tool does NOT detect technician reassignments. `appointmentCount` is the number of appointments ' +
-  'in the range, each annotated with its CURRENT technician assignment from the D1 appointment_assignments ' +
+  'in the range, each annotated with its CURRENT technician assignment from the Supabase appointment_assignments ' +
   'mirror. Neither ST /jpm/v2 appointments nor that mirror exposes a prior assignee or a dispatch change ' +
   'history, so an override rate cannot be derived here — do not read this count as overrides.';
 
@@ -64,12 +64,12 @@ export const dispatch_override_audit: ToolDef<Args> = {
   description:
     'L5 composite: appointments in a date range with their CURRENT technician assignments. ' +
     'It does NOT detect technician reassignments — no override rate is computed, because neither the live ST appointments feed ' +
-    'nor the D1 appointment_assignments mirror carries a prior assignee or dispatch change history; `appointmentCount` counts appointments, not overrides. ' +
+    'nor the Supabase mirror appointment_assignments carries a prior assignee or dispatch change history; `appointmentCount` counts appointments, not overrides. ' +
     'Joins appointment_assignments + appointments + technicians. Paginates the range (up to 20 pages x 200) and reports `pageCount` + `_truncated`. ' +
     'v1.4 accepts technicianName / businessUnitName as alternatives to numeric IDs. ' +
     'v1.5.1 (ST-77): pass `includeAutoDispatchedFlag: true` to annotate each row with `isAutoDispatched` (boolean) by batch-fetching the parent jobs (chunked to 50 ids per ST call). ' +
-    'Source: mixed (live ST appointments joined to D1 appointment_assignments; optional live ST jobs batch for isAutoDispatched). ' +
-    'The freshness stamp (_mirror_table/_freshness/_stale_hours) covers ONLY the D1 appointment_assignments join that fills each row\'s `technicians`; the appointments/jobs data itself is live ServiceTitan.',
+    'Source: mixed (live ST appointments joined to Supabase mirror appointment_assignments; optional live ST jobs batch for isAutoDispatched). ' +
+    'The freshness stamp (_mirror_table/_freshness/_stale_hours) covers ONLY the mirror appointment_assignments join that fills each row\'s `technicians`; the appointments/jobs data itself is live ServiceTitan.',
   zodSchema: {
     from: z.string().describe('Start date (ISO 8601)'),
     to: z.string().describe('End date (ISO 8601)'),
@@ -134,7 +134,7 @@ export const dispatch_override_audit: ToolDef<Args> = {
     const appointments = paged.items;
 
     // ST /jpm/v2/appointments does NOT carry technician assignments, so join the
-    // synced D1 appointment_assignments table to populate `technicians` per
+    // synced Supabase mirror appointment_assignments table to populate `technicians` per
     // appointment (previously `appt.technicians` was always undefined → []).
     const techsByAppt = new Map<number, Omit<AssignmentRow, 'synced_at'>[]>();
     const apptIds = appointments.map((a) => a.id).filter((id: unknown): id is number => typeof id === 'number');
@@ -148,26 +148,18 @@ export const dispatch_override_audit: ToolDef<Args> = {
     // concatenated into the existing _warnings array.
     let freshness: Omit<FreshnessStamp, '_warning'> | null = null;
     if (apptIds.length > 0) {
-      // The IN (…) list is chunked: a full 200-row appointment page bound 200
-      // variables against SQLite's ~100 ceiling, which is where the
-      // `too many SQL variables` failures came from. Chunks are read in
-      // parallel and the rows concatenated, so the freshness stamp still sees
-      // one combined row set and judges the mirror once.
-      const batches = chunk(apptIds, D1_BIND_PARAM_MAX);
-      const [chunkResults, tableMax] = await Promise.all([
-        Promise.all(
-          batches.map((ids) =>
-            readD1<AssignmentRow>(
-              env,
-              `SELECT appointment_id, technician_id, technician_name, status, synced_at
-           FROM appointment_assignments WHERE appointment_id IN (${ids.map(() => '?').join(',')})`,
-              ids,
-            ),
-          ),
+      const [rows, tableMax] = await Promise.all([
+        readMirror<AssignmentRow>(
+          env,
+          `SELECT appointment_id::double precision AS appointment_id,
+                  technician_id::double precision AS technician_id,
+                  technician_name, status, synced_at::text AS synced_at
+           FROM mirror.appointment_assignments
+           WHERE appointment_id = ANY($1::bigint[])`,
+          [apptIds],
         ),
-        fetchTableMax(env, ['appointment_assignments']),
+        fetchMirrorTableMax(env, ['appointment_assignments']),
       ]);
-      const rows = chunkResults.flatMap((r) => r.rows);
       const { _warning: freshnessWarning, ...stamp } = stampMirrorFreshness(rows, {
         table: 'appointment_assignments',
         tableMax,

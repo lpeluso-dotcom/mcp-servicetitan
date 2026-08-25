@@ -45,6 +45,10 @@ export interface Env {
   SUPABASE_URL: string;      // secret — https://<ref>.supabase.co
   SUPABASE_PB_KEY: string;   // secret — dedicated connector service key
 
+  // Read-only Hyperdrive role limited to the operational mirror tables used by
+  // the audit composites. This keeps mirror private from the Data API.
+  MIRROR_HYPERDRIVE: Hyperdrive;
+
   // Embedding-refresh Workflow binding
   EMBED_WORKFLOW: Workflow;  // cloudflare Workflows binding
 

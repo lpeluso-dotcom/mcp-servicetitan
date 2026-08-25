@@ -2,7 +2,7 @@
 // dispatch_override_audit — freshness disclosure (MB-1 / QUA-1141)
 //
 // HYBRID tool: appointments come from LIVE ServiceTitan (authoritative, not
-// stamped); the per-appointment `technicians` arrays are joined from the D1
+// stamped); the per-appointment `technicians` arrays are joined from the Supabase
 // `appointment_assignments` mirror. Only that mirror-sourced portion gets a
 // stamp — `_mirror_table: 'appointment_assignments'` scopes it. The trap:
 // with the mirror empty/frozen, every appointment shows `technicians: []`,
@@ -10,6 +10,12 @@
 // ============================================================
 import { describe, it, expect, vi } from 'vitest';
 import { dispatch_override_audit } from '../dispatch_override_audit';
+import { fetchMirrorTableMax, readMirror } from '../../../mirror-pg';
+
+vi.mock('../../../mirror-pg', () => ({
+  readMirror: vi.fn(),
+  fetchMirrorTableMax: vi.fn(),
+}));
 
 const CTX = { actor: 'vitest', correlation: 'c1' };
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
@@ -17,24 +23,11 @@ const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString
 const ARGS = { from: '2026-07-01', to: '2026-07-27' };
 
 /**
- * Route the live appointments read, the D1 assignments read, and the
- * fetchTableMax probe (matched on `AS t,`; defaults to a fresh 1h MAX).
+ * Route the live appointments read and prime the Supabase mirror join.
  */
 function makeEnv(appointments: any[], assignmentRows: any[], tableMax: string | null = hoursAgo(1)) {
-  const bodies: Array<{ sql: string; params: unknown[] }> = [];
   const fetcher = vi.fn(async (url: any, init?: RequestInit) => {
     const u = typeof url === 'string' ? url : url.toString();
-    if (u.includes('/api/sql/read')) {
-      const body = init?.body ? JSON.parse(init.body as string) : {};
-      bodies.push(body);
-      if (/ AS t,/.test(String(body.sql))) {
-        return new Response(
-          JSON.stringify({ success: true, results: [{ t: 'appointment_assignments', m: tableMax }] }),
-          { status: 200 },
-        );
-      }
-      return new Response(JSON.stringify({ success: true, results: assignmentRows }), { status: 200 });
-    }
     if (u.includes('/api/st/read')) {
       return new Response(JSON.stringify({ data: appointments }), { status: 200 });
     }
@@ -48,6 +41,8 @@ function makeEnv(appointments: any[], assignmentRows: any[], tableMax: string | 
       fetch: vi.fn(async () => new Response(JSON.stringify({ allowed: true }), { status: 200 })),
     }),
   };
+  vi.mocked(readMirror).mockResolvedValue(assignmentRows as any);
+  vi.mocked(fetchMirrorTableMax).mockResolvedValue({ appointment_assignments: tableMax });
   return {
     env: {
       ST_TENANT_ID: '000000000',
@@ -56,7 +51,6 @@ function makeEnv(appointments: any[], assignmentRows: any[], tableMax: string | 
       MCP_SYNC_KEY: 'k',
       MCP_SERVICE_VERSION: '0.0.0-test',
     } as any,
-    bodies,
   };
 }
 
@@ -66,12 +60,12 @@ const asg = (synced_at: string | null) => ({
 });
 
 describe('dispatch_override_audit freshness disclosure (MB-1 / QUA-1141)', () => {
-  it('the appointment_assignments SELECT carries synced_at', async () => {
-    const { env, bodies } = makeEnv([APPT], []);
+  it('reads mirror.appointment_assignments and carries synced_at', async () => {
+    const { env } = makeEnv([APPT], []);
     await dispatch_override_audit.handler(env, ARGS, CTX);
-    const asgSql = bodies.map((b) => b.sql).find((s) => s.includes('FROM appointment_assignments'));
-    expect(asgSql, 'never queried appointment_assignments').toBeDefined();
-    expect(asgSql!).toContain('synced_at');
+    const statement = String(vi.mocked(readMirror).mock.calls[0][1]);
+    expect(statement).toContain('mirror.appointment_assignments');
+    expect(statement).toContain('synced_at');
   });
 
   it('stamps ONLY the mirror-sourced portion — live appointments stay authoritative', async () => {
