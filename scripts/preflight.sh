@@ -131,6 +131,65 @@ grep -q 'binding = "DB"' wrangler.toml && pass "D1 binding DB" || fail "D1 bindi
 grep -q 'binding = "ST_PROXY"' wrangler.toml && pass "service binding ST_PROXY" || fail "ST_PROXY service binding missing"
 grep -q 'binding = "PROXY_STATE"' wrangler.toml && pass "KV binding PROXY_STATE" || fail "PROXY_STATE KV binding missing"
 grep -q 'placement = { mode = "smart" }' wrangler.toml && pass "smart placement" || fail "smart placement missing"
+grep -q 'binding = "MCP_CACHE"' wrangler.toml && pass "KV binding MCP_CACHE (cache store)" || fail "MCP_CACHE KV binding missing"
+
+# ── 3c. Wave-2 platform config (workstream E) ───────────────────────────────
+# These are the wrangler-side halves of features whose code halves are unit
+# tested in src/__tests__/wrangler-platform-config.test.ts. That test asserts on
+# the file's CONTENT; this asserts the same invariants at the deploy boundary,
+# where a config that content-checks fine can still be missing an account
+# resource. Neither proves Cloudflare enforces the gate — only a real deploy does.
+echo ""
+echo "[3c] Wave-2 platform config"
+
+# secrets.required — the enforced form of the old comment block. wrangler deploy
+# aborts when any listed secret is unset, which is the whole point of listing them.
+if grep -q '^\[secrets\]' wrangler.toml; then
+  pass "[secrets] block present (deploy gate armed)"
+  for s in MCP_SYNC_KEY SIRO_API_TOKEN ST_WEBHOOK_SECRET JWT_SECRET \
+           ACCESS_CLIENT_ID ACCESS_ISSUER ACCESS_CLIENT_SECRET \
+           SUPABASE_URL SUPABASE_PB_KEY; do
+    grep -q "\"$s\"" wrangler.toml || fail "$s missing from secrets.required"
+  done
+  pass "all 9 prod secrets enumerated in secrets.required"
+  grep -q '^\[env.dev.secrets\]' wrangler.toml \
+    && pass "[env.dev.secrets] declared explicitly (not inherited)" \
+    || fail "[env.dev.secrets] missing — dev must state its own required list"
+else
+  fail "[secrets] block missing — the required-secret list is back to being a comment"
+fi
+
+# Tracing: free through 2026-09-30, BILLED from 2026-10-01. An unset
+# head_sampling_rate defaults to 1.0 (100% of requests), so the rate being
+# EXPLICIT is the check that matters, not merely that tracing is on.
+grep -q '^\[observability.traces\]' wrangler.toml \
+  && pass "observability.traces enabled (prod)" \
+  || fail "observability.traces missing (prod)"
+grep -q '^\[env.dev.observability.traces\]' wrangler.toml \
+  && pass "observability.traces enabled (dev)" \
+  || fail "observability.traces missing (dev)"
+[ "$(grep -cE '^head_sampling_rate = ' wrangler.toml)" = "2" ] \
+  && pass "explicit trace head_sampling_rate for both envs" \
+  || fail "head_sampling_rate must be set explicitly for prod AND dev (the 1.0 default bills 100% of requests from 2026-10-01)"
+
+# Native edge rate limit. It does NOT replace the ST_RATE_LIMITER DO — assert
+# both still exist so a future edit cannot mistake one for the other.
+grep -q 'name = "MCP_EDGE_RL"' wrangler.toml \
+  && pass "native [[ratelimits]] binding MCP_EDGE_RL" \
+  || fail "MCP_EDGE_RL ratelimit binding missing"
+if grep -qE '^period = (10|60)$' wrangler.toml; then
+  pass "ratelimit period is 10 or 60 (the only accepted values)"
+else
+  fail "ratelimit simple.period must be 10 or 60"
+fi
+grep -q 'class_name = "StRateLimiter"' wrangler.toml \
+  && pass "ST_RATE_LIMITER DO still bound (global ST quota is a SEPARATE mechanism)" \
+  || fail "StRateLimiter DO binding disappeared — the native binding cannot replace it"
+
+# Cache cutover flag. Prod must ship "d1" until the KV path has run in dev.
+grep -qE '^CACHE_BACKEND = "(d1|dual|kv)"' wrangler.toml \
+  && pass "CACHE_BACKEND set to a known value" \
+  || fail "CACHE_BACKEND must be one of d1 | dual | kv"
 
 # F2: own D1 required
 grep -q 'database_name = "mcp-servicetitan"' wrangler.toml && pass "own D1 mcp-servicetitan bound (prod)" || fail "own D1 mcp-servicetitan not bound in wrangler.toml"
@@ -160,7 +219,12 @@ fi
 # ── 4. Required secrets (names only; secret values are never echoed) ─
 echo ""
 echo "[4] Required secrets (via wrangler secret put --env $ENV)"
-SECRETS_REQUIRED=("MCP_SYNC_KEY" "SIRO_API_TOKEN" "ST_WEBHOOK_SECRET" "JWT_SECRET")
+# Kept in sync with the [secrets] `required` array in wrangler.toml, which is
+# now the ENFORCING copy — wrangler deploy fails on a missing one. This loop
+# stays as an operator reminder of what to go set.
+SECRETS_REQUIRED=("MCP_SYNC_KEY" "SIRO_API_TOKEN" "ST_WEBHOOK_SECRET" "JWT_SECRET" \
+                  "ACCESS_CLIENT_ID" "ACCESS_ISSUER" "ACCESS_CLIENT_SECRET" \
+                  "SUPABASE_URL" "SUPABASE_PB_KEY")
 for s in "${SECRETS_REQUIRED[@]}"; do
   echo "  ℹ  Expect: $s (verify manually via 'wrangler secret list --env $ENV')"
 done

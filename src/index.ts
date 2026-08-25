@@ -26,6 +26,7 @@ import { unackedErrorsHandler } from './routes/admin-errors';
 import { endpointsHandler, endpointsCoverageHandler } from './routes/admin-endpoints';
 import { handleWebhook } from './webhook-ingest';
 import { createOAuthProvider, handleOAuthRoute } from './oauth';
+import { edgeRateLimitAllows, rateLimitedMcpResponse } from './edge-rate-limit';
 
 // Durable Object classes must be exported from the worker entry point.
 export { StRateLimiter } from './durable/st-rate-limiter';
@@ -326,6 +327,19 @@ async function defaultFetch(request: Request, env: Env, execCtx: ExecutionContex
     if (!auth.authenticated) {
       return unauthorizedMcpResponse(request);
     }
+
+    // Native [[ratelimits]] edge guard, keyed on the AUTHENTICATED actor (so it
+    // runs AFTER resolveAuth, never on a caller-chosen header or the client IP)
+    // and BEFORE buildServer, so a throttled caller costs one binding call
+    // instead of a server build plus a fan-out of DO round trips. Fail-open and
+    // a no-op when the binding is unbound — see src/edge-rate-limit.ts.
+    //
+    // This does NOT replace StRateLimiter: that DO enforces the accurate GLOBAL
+    // ServiceTitan quota; this bounds ONE CALLER approximately, at the edge.
+    if (request.method !== 'OPTIONS' && !(await edgeRateLimitAllows(env, auth.actor))) {
+      return rateLimitedMcpResponse(corsOptionsFor(request));
+    }
+
     const reqCtx: RequestContext = { actor: auth.actor, role: auth.role };
     const runtimeEnv = env; // tenant placeholder resolution is done at each data-helper call site (readST/stRead/write-factory)
 

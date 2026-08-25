@@ -26,7 +26,7 @@ describe('semantic_search_gold (Supabase vec.match_entities)', () => {
 
     const out: any = await semantic_search_gold.handler(env(aiRun), { query: 'tankless water heater install' }, ctx);
 
-    expect(aiRun).toHaveBeenCalledWith('@cf/baai/bge-base-en-v1.5', { text: ['tankless water heater install'] });
+    expect(aiRun).toHaveBeenCalledWith('@cf/baai/bge-base-en-v1.5', { text: ['tankless water heater install'] }, expect.objectContaining({ gateway: expect.objectContaining({ cacheTtl: 86400 }) }));  // 3rd arg: AI Gateway (Wave 2 item 5)
 
     const [url, init] = (fetchMock.mock.calls as any[])[0];
     expect(url).toBe('https://p.supabase.co/rest/v1/rpc/match_entities');
