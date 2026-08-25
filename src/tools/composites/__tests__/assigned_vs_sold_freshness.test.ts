@@ -56,6 +56,7 @@ describe('assigned_vs_sold_estimate_audit freshness disclosure (MB-1 / QUA-1141)
     await assigned_vs_sold_estimate_audit.handler({} as any, ARGS, ctx);
     expect(String(spy.mock.calls[0][1])).toMatch(/e\.synced_at/);
     expect(String(spy.mock.calls[0][1])).toContain('mirror.estimates');
+    expect(String(spy.mock.calls[0][1])).toContain('FROM mirror.appointment_assignments');
   });
 
   it('does NOT present "0 mismatches" as a clean audit when the mirror cannot prove liveness', async () => {
