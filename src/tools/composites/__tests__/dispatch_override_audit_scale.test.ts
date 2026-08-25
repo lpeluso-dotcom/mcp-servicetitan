@@ -6,7 +6,7 @@
 //  1. NAMING. `overrides = appointments.map(...)` and
 //     `overrideCount: overrides.length` counted EVERY appointment in the
 //     range. There is no reassignment detection anywhere in the tool — ST's
-//     /jpm/v2 appointments feed carries no dispatch history, and the D1
+//     /jpm/v2 appointments feed carries no dispatch history, and the Supabase
 //     appointment_assignments mirror holds current assignments only, with no
 //     prior-assignee column to diff against. So "overrideCount: 412" meant
 //     "412 appointments existed", which an operator reads as "412 dispatch
@@ -16,9 +16,8 @@
 //  2. ST ids batch. The optional isAutoDispatched join did
 //     `ids: jobIds.join(',')` with up to 200 ids. ST 400s above ~50.
 //
-//  3. D1 bind params. `IN (${apptIds.map(() => '?')})` bound up to 200
-//     variables against SQLite's ~100 ceiling — the origin of the
-//     `too many SQL variables` errors.
+//  3. Mirror query shape. A PostgreSQL array parameter must carry every
+//     appointment id in one read, without inheriting D1's SQLite bind ceiling.
 //
 // The mirror-freshness stamp (MB-1 / QUA-1141) must survive all of it: it is
 // the only thing telling an operator that `technicians: []` means "the sync
@@ -26,7 +25,13 @@
 // ============================================================
 import { describe, it, expect, vi } from 'vitest';
 import { dispatch_override_audit } from '../dispatch_override_audit';
-import { ST_IDS_BATCH_MAX, D1_BIND_PARAM_MAX } from '../../../chunk';
+import { ST_IDS_BATCH_MAX } from '../../../chunk';
+import { fetchMirrorTableMax, readMirror } from '../../../mirror-pg';
+
+vi.mock('../../../mirror-pg', () => ({
+  readMirror: vi.fn(),
+  fetchMirrorTableMax: vi.fn(),
+}));
 
 const CTX = { actor: 'vitest', correlation: 'scale-corr' };
 const ARGS = { from: '2026-07-01', to: '2026-07-27' };
@@ -39,7 +44,7 @@ interface Harness {
 
 /**
  * One full page of `count` appointments, then done. Records the `ids=` batches
- * sent to the jobs endpoint and every D1 statement issued.
+ * sent to the jobs endpoint and every Supabase mirror statement issued.
  */
 function harness(count: number, assignmentRows: any[] = []): Harness {
   const appointments = Array.from({ length: count }, (_, i) => ({
@@ -50,29 +55,8 @@ function harness(count: number, assignmentRows: any[] = []): Harness {
   const jobIdBatches: number[][] = [];
   const sqlBodies: Array<{ sql: string; params: unknown[] }> = [];
 
-  const fetcher = vi.fn(async (url: any, init?: RequestInit) => {
+  const fetcher = vi.fn(async (url: any) => {
     const u = typeof url === 'string' ? url : url.toString();
-    if (u.includes('/api/sql/read')) {
-      const body = init?.body ? JSON.parse(init.body as string) : {};
-      sqlBodies.push(body);
-      if (/ AS t,/.test(String(body.sql))) {
-        return new Response(
-          JSON.stringify({
-            success: true,
-            results: [{ t: 'appointment_assignments', m: new Date().toISOString() }],
-          }),
-          { status: 200 },
-        );
-      }
-      const wanted = new Set(body.params as number[]);
-      return new Response(
-        JSON.stringify({
-          success: true,
-          results: assignmentRows.filter((r) => wanted.has(r.appointment_id)),
-        }),
-        { status: 200 },
-      );
-    }
     if (u.includes('/api/st/read')) {
       const endpoint = decodeURIComponent(new URL(u).searchParams.get('endpoint') ?? '');
       const qs = new URLSearchParams(endpoint.split('?')[1] ?? '');
@@ -93,6 +77,15 @@ function harness(count: number, assignmentRows: any[] = []): Harness {
     return new Response(JSON.stringify({ error: 'no route' }), { status: 500 });
   });
 
+  vi.mocked(readMirror).mockImplementation(async (_env, statement, params) => {
+    const boundParams = params ?? [];
+    const body = { sql: String(statement), params: [...boundParams] };
+    sqlBodies.push(body);
+    const wanted = new Set((boundParams[0] as number[] | undefined) ?? []);
+    return assignmentRows.filter((r) => wanted.has(r.appointment_id)) as any;
+  });
+  vi.mocked(fetchMirrorTableMax).mockResolvedValue({ appointment_assignments: new Date().toISOString() });
+
   return {
     env: {
       ST_PROXY: { fetch: fetcher },
@@ -111,9 +104,9 @@ function harness(count: number, assignmentRows: any[] = []): Harness {
   };
 }
 
-/** D1 statements that are the assignments join (not the freshness probe). */
+/** Mirror statements that are the assignments join (not the freshness probe). */
 function assignmentStatements(h: Harness) {
-  return h.sqlBodies.filter((b) => /FROM appointment_assignments/.test(String(b.sql)));
+  return h.sqlBodies.filter((b) => /FROM mirror\.appointment_assignments/.test(String(b.sql)));
 }
 
 describe('dispatch_override_audit — the count must not claim to be overrides', () => {
@@ -175,19 +168,16 @@ describe('dispatch_override_audit — ST simple-IDs batching', () => {
   });
 });
 
-describe('dispatch_override_audit — D1 bind-parameter batching', () => {
-  it('never binds more than the SQLite variable ceiling in one statement', async () => {
+describe('dispatch_override_audit — Supabase mirror array parameter', () => {
+  it('passes every appointment id through one PostgreSQL array parameter', async () => {
     const h = harness(200);
     await dispatch_override_audit.handler(h.env, ARGS, CTX);
 
     const stmts = assignmentStatements(h);
-    expect(stmts.length).toBeGreaterThan(1);
-    for (const s of stmts) {
-      expect(s.params.length).toBeLessThanOrEqual(D1_BIND_PARAM_MAX);
-      // Placeholder count must match the bind count or D1 rejects the call.
-      const placeholders = (String(s.sql).match(/\?/g) ?? []).length;
-      expect(placeholders).toBe(s.params.length);
-    }
+    expect(stmts).toHaveLength(1);
+    expect(stmts[0].sql).toContain('ANY($1::bigint[])');
+    expect(stmts[0].params).toHaveLength(1);
+    expect(stmts[0].params[0]).toHaveLength(200);
   });
 
   it('joins technicians from every chunk, not just the first', async () => {

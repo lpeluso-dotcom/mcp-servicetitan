@@ -27,6 +27,12 @@ import { call_quality_review } from '../call_quality_review';
 import { membership_jackpot_leaderboard } from '../membership_jackpot_leaderboard';
 import { membership_outreach_list } from '../membership_outreach_list';
 import { pricebook_health_check_services } from '../pricebook_health_check_services';
+import { fetchMirrorTableMax, readMirror } from '../../../mirror-pg';
+
+vi.mock('../../../mirror-pg', () => ({
+  readMirror: vi.fn(),
+  fetchMirrorTableMax: vi.fn(),
+}));
 
 const CTX = { actor: 'vitest', correlation: 'wave2-corr' };
 
@@ -36,34 +42,18 @@ const MAX_PAGES = 20;
 interface Harness {
   env: any;
   stCalls: string[];
-  sqlBodies: Array<{ sql: string; params: unknown[] }>;
 }
 
 /**
- * ST_PROXY mock that serves paginated /api/st/read pages and stubs the D1
- * /api/sql/read surface (dispatch_override_audit joins appointment_assignments).
+ * ST_PROXY mock that serves paginated /api/st/read pages. The dispatch audit's
+ * Supabase mirror join is stubbed separately below.
  * `pageFor` receives the 1-based page number parsed out of the encoded
  * ST endpoint and returns the raw page body.
  */
 function harness(pageFor: (page: number) => { data: unknown[]; hasMore?: boolean }): Harness {
   const stCalls: string[] = [];
-  const sqlBodies: Array<{ sql: string; params: unknown[] }> = [];
-  const fetcher = vi.fn(async (url: any, init?: RequestInit) => {
+  const fetcher = vi.fn(async (url: any) => {
     const u = typeof url === 'string' ? url : url.toString();
-    if (u.includes('/api/sql/read')) {
-      const body = init?.body ? JSON.parse(init.body as string) : {};
-      sqlBodies.push(body);
-      if (/ AS t,/.test(String(body.sql))) {
-        return new Response(
-          JSON.stringify({
-            success: true,
-            results: [{ t: 'appointment_assignments', m: new Date().toISOString() }],
-          }),
-          { status: 200 },
-        );
-      }
-      return new Response(JSON.stringify({ success: true, results: [] }), { status: 200 });
-    }
     if (u.includes('/api/st/read')) {
       stCalls.push(u);
       const endpoint = decodeURIComponent(new URL(u).searchParams.get('endpoint') ?? '');
@@ -79,6 +69,8 @@ function harness(pageFor: (page: number) => { data: unknown[]; hasMore?: boolean
       fetch: vi.fn(async () => new Response(JSON.stringify({ allowed: true }), { status: 200 })),
     }),
   };
+  vi.mocked(readMirror).mockResolvedValue([]);
+  vi.mocked(fetchMirrorTableMax).mockResolvedValue({ appointment_assignments: new Date().toISOString() });
 
   return {
     env: {
@@ -89,7 +81,6 @@ function harness(pageFor: (page: number) => { data: unknown[]; hasMore?: boolean
       MCP_SERVICE_VERSION: '0.0.0-test',
     } as any,
     stCalls,
-    sqlBodies,
   };
 }
 
