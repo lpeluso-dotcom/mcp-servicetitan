@@ -114,7 +114,7 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
               e.synced_at::text AS synced_at,
               j.business_unit AS job_business_unit, j.job_type,
               (SELECT STRING_AGG(DISTINCT technician_name, ',')
-                 FROM appointment_assignments aa
+                 FROM mirror.appointment_assignments aa
                  WHERE aa.job_id = e.job_id) AS job_techs_csv
        FROM mirror.estimates e
        LEFT JOIN mirror.jobs j ON j.job_id = e.job_id
