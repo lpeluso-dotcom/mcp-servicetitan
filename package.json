@@ -1,7 +1,6 @@
 {
   "name": "mcp-servicetitan",
-  "version": "1.7.0",
-
+  "version": "1.8.0",
   "description": "ServiceTitan MCP server for QSC — Streamable HTTP via the Cloudflare Agents SDK. D1-first reads through the taylor-ai proxy with live-ST fallback; two-phase dryRun→HMAC-confirm writes; role gating (admin/default/readonly/lockdown); D1 audit log + Analytics Engine telemetry; response shaper; ST webhook ingest. Tool inventory and version: GET /health (toolCount) and /admin/endpoints — counts are not maintained in this field.",
   "license": "MIT",
   "private": true,
