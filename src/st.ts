@@ -154,10 +154,13 @@ export async function readSTPost<T = unknown>(
    * tenant — an identity rule, not a volume bucket — so the limiter can only
    * enforce it when the caller supplies this. Only st_run_report does.
    */
-  opts: { identity?: string } = {},
+  opts: { identity?: string; query?: Record<string, unknown> } = {},
 ): Promise<T> {
   const resolved = rewriteTenantPlaceholders(env, endpoint);
-  const url = buildUrl(resolved);
+  // Query goes on the ST path (buildUrl encodes the whole thing into
+  // ?endpoint=). `resolved` stays query-free so guardedStFetch's family
+  // classification is unaffected.
+  const url = buildUrl(resolved, opts.query);
   // Same gate as readST. This is the path st_run_report uses, and the reason
   // the reporting family's 20/min cap was never consulted before Wave 2.
   const resp = await guardedStFetch(
