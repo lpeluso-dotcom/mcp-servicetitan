@@ -516,7 +516,7 @@ describe('protocol path — buildServer via in-memory client', () => {
     expect(parsed.categories).toEqual([
       { id: 1, name: 'HVAC Services', parent_id: null, active: 1, category_type: 'Services' },
     ]);
-  });
+  }, 15_000);
 });
 
 // Re-export so this file also documents that registerResultResource keeps

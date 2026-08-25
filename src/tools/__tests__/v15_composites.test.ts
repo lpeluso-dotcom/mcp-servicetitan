@@ -3,6 +3,12 @@ import { job_cost_actuals } from '../composites/job_cost_actuals';
 import { tech_drive_time_summary } from '../composites/tech_drive_time_summary';
 import { assigned_vs_sold_estimate_audit } from '../composites/assigned_vs_sold_estimate_audit';
 import { open_opportunities_pulitzer_feed } from '../composites/open_opportunities_pulitzer_feed';
+import { fetchMirrorTableMax, readMirror } from '../../mirror-pg';
+
+vi.mock('../../mirror-pg', () => ({
+  readMirror: vi.fn(),
+  fetchMirrorTableMax: vi.fn(),
+}));
 
 // Reconciliation reference (2026-05-19 probe): job 77423990 / Brooks Hunsucker.
 // drive=24m, working=152m → labor_burden ≈ $132 at $45/hr.
@@ -165,62 +171,18 @@ describe('tech_drive_time_summary', () => {
 
 describe('assigned_vs_sold_estimate_audit', () => {
   it('flags sold_by_empty when status=Sold and sold_by is blank', async () => {
-    const fetcher = multiRouter([
-      {
-        matches: (sql) => sql.includes('FROM estimates e'),
-        rows: [
-          // No mismatch — sold_by matches a tech.
-          {
-            estimate_id: 1,
-            job_id: 100,
-            status: 'Sold',
-            total: 500,
-            sold_by: 'Brooks Hunsucker',
-            modified_at: '2026-05-15T12:00:00Z',
-            job_business_unit: 'PSR',
-            job_type: 'SC',
-            job_techs_csv: 'Brooks Hunsucker',
-          },
-          // Empty sold_by + Sold status → flagged.
-          {
-            estimate_id: 2,
-            job_id: 101,
-            status: 'Sold',
-            total: 700,
-            sold_by: '',
-            modified_at: '2026-05-15T13:00:00Z',
-            job_business_unit: 'PSR',
-            job_type: 'SC',
-            job_techs_csv: 'Brooks Hunsucker',
-          },
-          // Tech name mismatch.
-          {
-            estimate_id: 3,
-            job_id: 102,
-            status: 'Sold',
-            total: 900,
-            sold_by: 'Frank Mystery',
-            modified_at: '2026-05-15T14:00:00Z',
-            job_business_unit: 'PSR',
-            job_type: 'SC',
-            job_techs_csv: 'Brooks Hunsucker,Carlos Perez',
-          },
-          // No job link.
-          {
-            estimate_id: 4,
-            job_id: null,
-            status: 'Open',
-            total: 0,
-            sold_by: null,
-            modified_at: '2026-05-15T15:00:00Z',
-            job_business_unit: null,
-            job_type: null,
-            job_techs_csv: null,
-          },
-        ],
-      },
-    ]);
-    const env = makeEnv(fetcher);
+    vi.mocked(readMirror).mockResolvedValue([
+      // No mismatch — sold_by matches a tech.
+      { estimate_id: 1, job_id: 100, status: 'Sold', total: 500, sold_by: 'Brooks Hunsucker', modified_at: '2026-05-15T12:00:00Z', job_business_unit: 'PSR', job_type: 'SC', job_techs_csv: 'Brooks Hunsucker' },
+      // Empty sold_by + Sold status → flagged.
+      { estimate_id: 2, job_id: 101, status: 'Sold', total: 700, sold_by: '', modified_at: '2026-05-15T13:00:00Z', job_business_unit: 'PSR', job_type: 'SC', job_techs_csv: 'Brooks Hunsucker' },
+      // Tech name mismatch.
+      { estimate_id: 3, job_id: 102, status: 'Sold', total: 900, sold_by: 'Frank Mystery', modified_at: '2026-05-15T14:00:00Z', job_business_unit: 'PSR', job_type: 'SC', job_techs_csv: 'Brooks Hunsucker,Carlos Perez' },
+      // No job link.
+      { estimate_id: 4, job_id: null, status: 'Open', total: 0, sold_by: null, modified_at: '2026-05-15T15:00:00Z', job_business_unit: null, job_type: null, job_techs_csv: null },
+    ] as any);
+    vi.mocked(fetchMirrorTableMax).mockResolvedValue({ estimates: new Date().toISOString() });
+    const env = {} as any;
     const out: any = await assigned_vs_sold_estimate_audit.handler(
       env,
       { startDate: '2026-05-01', endDate: '2026-05-31' },

@@ -24,6 +24,7 @@
     "agents": "^0.17.3",
     "hono": "^4.13.3",
     "jose": "^6.2.3",
+    "postgres": "^3.4.9",
     "zod": "^4.4.3"
   },
   "devDependencies": {

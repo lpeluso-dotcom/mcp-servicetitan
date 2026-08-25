@@ -16,12 +16,12 @@
 //   2. Identify estimates that need manual reattribution
 //   3. Spot bulk-import or auto-create patterns that skip sold_by
 //
-// Source: D1 (estimates + appointment_assignments + jobs).
+// Source: Supabase mirror (estimates + appointment_assignments + jobs).
 // ============================================================
 import { z } from 'zod';
 import { defaultShaper } from '../../response-shape';
-import { readD1 } from '../../d1';
-import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
+import { stampMirrorFreshness } from '../../mirror-freshness';
+import { fetchMirrorTableMax, readMirror } from '../../mirror-pg';
 import type { ToolDef } from '../index';
 
 interface Args {
@@ -72,8 +72,8 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
     "Audit estimate credit attribution: returns estimates in a window where sold_by is empty, the " +
     "estimate has no job link, or sold_by doesn't match any tech on the source job's appointment_assignments. " +
     "Useful before commission runs and for spotting bulk-import patterns. " +
-    "Source: D1 estimates + appointment_assignments + jobs. Result cap `limit`, default 200, max 1000.",
-  stEndpoint: { method: 'GET', path: 'd1://estimates+appointment_assignments+jobs', source: 'd1' },
+    "Source: computed from Supabase mirror estimates + appointment_assignments + jobs. Result cap `limit`, default 200, max 1000.",
+  stEndpoint: { method: 'GET', path: 'supabase://mirror/estimates+appointment_assignments+jobs', source: 'computed' },
   zodSchema: {
     startDate: z.string().describe("ISO date 'YYYY-MM-DD'. estimates.modified_at >= startDate."),
     endDate: z.string().describe("ISO date 'YYYY-MM-DD'. estimates.modified_at <= endDate."),
@@ -92,37 +92,39 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
     const startTs = args.startDate.length === 10 ? `${args.startDate}T00:00:00` : args.startDate;
     const endTs = args.endDate.length === 10 ? `${args.endDate}T23:59:59` : args.endDate;
 
-    // taylor-ai estimates store the timestamp as `modified_date` (not modified_at).
+    // The mirror preserves taylor-ai's `modified_date` field (not modified_at).
     const where: string[] = [
-      'e.modified_date >= ?',
-      'e.modified_date <= ?',
+      'e.modified_date >= $1',
+      'e.modified_date <= $2',
     ];
     const params: unknown[] = [startTs, endTs];
     if (args.status !== undefined) {
-      where.push('e.status = ?');
+      where.push(`e.status = $${params.length + 1}`);
       params.push(args.status);
     }
     if (args.businessUnit !== undefined) {
-      where.push('j.business_unit = ?');
+      where.push(`j.business_unit = $${params.length + 1}`);
       params.push(args.businessUnit);
     }
 
     const sql =
-      `SELECT e.estimate_id, e.job_id, e.status, e.total, e.sold_by, e.modified_date AS modified_at,
-              e.synced_at,
+      `SELECT e.estimate_id::double precision AS estimate_id,
+              e.job_id::double precision AS job_id,
+              e.status, e.total::double precision AS total, e.sold_by, e.modified_date AS modified_at,
+              e.synced_at::text AS synced_at,
               j.business_unit AS job_business_unit, j.job_type,
-              (SELECT GROUP_CONCAT(DISTINCT technician_name)
+              (SELECT STRING_AGG(DISTINCT technician_name, ',')
                  FROM appointment_assignments aa
                  WHERE aa.job_id = e.job_id) AS job_techs_csv
-       FROM estimates e
-       LEFT JOIN jobs j ON j.job_id = e.job_id
+       FROM mirror.estimates e
+       LEFT JOIN mirror.jobs j ON j.job_id = e.job_id
        WHERE ${where.join(' AND ')}
        ORDER BY e.modified_date DESC
-       LIMIT ?`;
+       LIMIT $${params.length + 1}`;
 
-    const [{ rows }, tableMax] = await Promise.all([
-      readD1<EstimateAuditRow>(env, sql, [...params, limit * 3]),
-      fetchTableMax(env, ['estimates']),
+    const [rows, tableMax] = await Promise.all([
+      readMirror<EstimateAuditRow>(env, sql, [...params, limit * 3]),
+      fetchMirrorTableMax(env, ['estimates']),
     ]);
 
     // Filter to the mismatch cohort in JS so we can carry the reason cleanly.
@@ -185,7 +187,7 @@ export const assigned_vs_sold_estimate_audit: ToolDef<Args> = {
       },
       mismatches: out,
       _composite: 'assigned_vs_sold_estimate_audit',
-      _source: 'd1',
+      _source: 'supabase-mirror',
       ...freshness,
     };
   },

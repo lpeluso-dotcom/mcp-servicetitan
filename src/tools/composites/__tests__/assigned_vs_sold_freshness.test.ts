@@ -10,24 +10,26 @@
 // ============================================================
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { assigned_vs_sold_estimate_audit } from '../assigned_vs_sold_estimate_audit';
-import * as d1 from '../../../d1';
+import { fetchMirrorTableMax, readMirror } from '../../../mirror-pg';
+
+vi.mock('../../../mirror-pg', () => ({
+  readMirror: vi.fn(),
+  fetchMirrorTableMax: vi.fn(),
+}));
 
 const ctx = { actor: 'test', correlation: 'c1' } as any;
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
 
 const ARGS = { startDate: '2026-05-01', endDate: '2026-05-31' };
 
-/** Route the audit read and the fetchTableMax probe by SQL shape. */
+/** Prime the audit read and table-level freshness probe. */
 function primeMirror(
   rows: Array<Record<string, unknown>>,
   tableMax: string | null = hoursAgo(1),
 ) {
-  return vi.spyOn(d1, 'readD1').mockImplementation(async (_env: any, sql: any) => {
-    if (/ AS t,/.test(String(sql))) {
-      return { rows: [{ t: 'estimates', m: tableMax }] } as any;
-    }
-    return { rows } as any;
-  });
+  vi.mocked(readMirror).mockResolvedValue(rows as any);
+  vi.mocked(fetchMirrorTableMax).mockResolvedValue({ estimates: tableMax });
+  return vi.mocked(readMirror);
 }
 
 /** A flagged row (Sold, blank sold_by) with a controllable synced_at. */
@@ -49,10 +51,11 @@ beforeEach(() => {
 });
 
 describe('assigned_vs_sold_estimate_audit freshness disclosure (MB-1 / QUA-1141)', () => {
-  it('the SELECT carries e.synced_at — the rows must be able to prove their age', async () => {
+  it('reads the Supabase mirror and carries e.synced_at for the page-age disclosure', async () => {
     const spy = primeMirror([]);
     await assigned_vs_sold_estimate_audit.handler({} as any, ARGS, ctx);
     expect(String(spy.mock.calls[0][1])).toMatch(/e\.synced_at/);
+    expect(String(spy.mock.calls[0][1])).toContain('mirror.estimates');
   });
 
   it('does NOT present "0 mismatches" as a clean audit when the mirror cannot prove liveness', async () => {

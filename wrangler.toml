@@ -50,6 +50,13 @@ id = "0fc38122dc7b4f15b2e2c3403b688fa6"
 binding = "ST_PROXY"
 service = "your-servicetitan-proxy"
 
+# Least-privilege Supabase reader for the audit composites. Its database role
+# is limited to mirror.estimates, mirror.jobs, and mirror.appointment_assignments;
+# caching is disabled on the config.
+[[hyperdrive]]
+binding = "MIRROR_HYPERDRIVE"
+id = "2f2e40dee36e4d4ebf88f3f12d707e5a"
+
 [vars]
 MCP_SERVICE_VERSION = "1.7.0"
 # Stamped by .github/workflows/deploy.yml from the deployed commit; the deploy
@@ -158,6 +165,10 @@ id = "d7fb3c58f8604a43a57df60206638a3b"
 [[env.dev.services]]
 binding = "ST_PROXY"
 service = "your-servicetitan-proxy-dev"
+
+[[env.dev.hyperdrive]]
+binding = "MIRROR_HYPERDRIVE"
+id = "2f2e40dee36e4d4ebf88f3f12d707e5a"
 
 # Intentional: dev cron shares the same idempotent backstop target (prod Supabase) as the
 # prod worker's PricebookEmbedWorkflow cron — same predicate/model/projection, first writer
