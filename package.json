@@ -19,11 +19,11 @@
     "eval:tools": "tsx scripts/evals/tool-selection.ts"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^0.8.1",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "agents": "^0.17.3",
+    "@cloudflare/workers-oauth-provider": "^0.10.3",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "agents": "^0.21.0",
     "hono": "^4.13.3",
-    "jose": "^6.2.3",
+    "jose": "^6.2.10",
     "postgres": "^3.4.9",
     "zod": "^4.4.3"
   },
