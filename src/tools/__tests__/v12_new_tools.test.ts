@@ -216,7 +216,10 @@ describe('st_run_report', () => {
     ).rejects.toMatchObject({ code: 'validation_error' });
   });
 
-  it('mode=run POSTs to .../data with parameters body', async () => {
+  it('mode=run POSTs to .../data with parameters body and page/pageSize as query params', async () => {
+    // ST's Reporting v2 takes page/pageSize/includeTotal as QUERY parameters,
+    // not body fields (the body schema is additionalProperties:false and
+    // holds only `parameters`) — see src/tools/reporting/st_run_report.ts.
     const env = makeEnv(liveOkDirect({ rows: [] }));
     await st_run_report.handler(
       env,
@@ -231,11 +234,13 @@ describe('st_run_report', () => {
     );
     const [url, init] = env.ST_PROXY.fetch.mock.calls[0];
     expect(init.method).toBe('POST');
-    expect(url).toContain('reports%2Fr1%2Fdata');
+    const endpoint = new URL(url as string).searchParams.get('endpoint') ?? '';
+    expect(endpoint).toContain('reports/r1/data');
+    expect(endpoint).toContain('page=1');
+    expect(endpoint).toContain('pageSize=50');
+    expect(endpoint).toContain('includeTotal=true');
     const body = JSON.parse(init.body);
-    expect(body.parameters).toEqual([{ name: 'From', value: '2026-01-01' }]);
-    expect(body.pageSize).toBe(50);
-    expect(body.page).toBe(1);
+    expect(body).toEqual({ parameters: [{ name: 'From', value: '2026-01-01' }] });
   });
 });
 

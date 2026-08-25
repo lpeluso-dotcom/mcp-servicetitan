@@ -11,8 +11,9 @@
 // so page 1 and page 2 cached as distinct entries holding identical rows.
 // ============================================================
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readSTPost } from '../../st';
+import { st_run_report, _resetReportCooldown, REPORT_CACHE_NS } from '../reporting/st_run_report';
 
 const CTX = { actor: 'vitest', correlation: 'corr-c1' };
 
@@ -77,5 +78,92 @@ describe('readSTPost query support', () => {
 
     const endpoint = endpointOf(env.ST_PROXY.fetch.mock.calls[0][0] as string);
     expect(endpoint).not.toContain('?');
+  });
+});
+
+/** D1 mock backing the mcp_cache read-through with a real in-memory table. */
+function makeCacheDB() {
+  const rows = new Map<string, { value: string; expires_at: number }>();
+  return {
+    rows,
+    prepare: vi.fn((sql: string) => {
+      const captured: unknown[] = [];
+      const stmt: any = {
+        bind: vi.fn((...args: unknown[]) => {
+          captured.push(...args);
+          return stmt;
+        }),
+        run: vi.fn(async () => {
+          if (/INSERT OR REPLACE INTO mcp_cache/i.test(sql)) {
+            rows.set(`${captured[0]}|${captured[1]}`, {
+              value: String(captured[2]),
+              expires_at: Number(captured[3]),
+            });
+          }
+          return { success: true };
+        }),
+        first: vi.fn(async () => {
+          if (/FROM mcp_cache/i.test(sql)) return rows.get(`${captured[0]}|${captured[1]}`) ?? null;
+          return null;
+        }),
+      };
+      return stmt;
+    }),
+  };
+}
+
+function makeReportEnv(stImpl: (url: string, init?: any) => Promise<Response>) {
+  const env = makeEnv(stImpl);
+  env.DB = makeCacheDB();
+  return env;
+}
+
+const RUN_ARGS = {
+  mode: 'run' as const,
+  categoryId: 'cat1',
+  reportId: 'r1',
+  parameters: [{ name: 'From', value: '2026-01-01' }],
+};
+
+beforeEach(() => {
+  _resetReportCooldown();
+});
+
+describe('st_run_report pagination placement', () => {
+  it('sends page/pageSize/includeTotal as query params, body carries only parameters', async () => {
+    const env = makeReportEnv(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+
+    await st_run_report.handler(env, { ...RUN_ARGS, page: 2, pageSize: 3 }, CTX);
+
+    const [url, init] = env.ST_PROXY.fetch.mock.calls[0];
+    const endpoint = endpointOf(url as string);
+
+    expect(endpoint).toContain('page=2');
+    expect(endpoint).toContain('pageSize=3');
+    expect(endpoint).toContain('includeTotal=true');
+    expect(JSON.parse((init as any).body)).toEqual({ parameters: RUN_ARGS.parameters });
+  });
+
+  it('defaults to pageSize 1000 so honoring pageSize does not shrink existing callers', async () => {
+    const env = makeReportEnv(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+
+    await st_run_report.handler(env, { ...RUN_ARGS }, CTX);
+
+    const endpoint = endpointOf(env.ST_PROXY.fetch.mock.calls[0][0] as string);
+    expect(endpoint).toContain('pageSize=1000');
+    expect(endpoint).toContain('page=1');
+  });
+
+  it('uses a versioned cache namespace so pre-fix poisoned entries cannot serve', () => {
+    expect(REPORT_CACHE_NS).toBe('servicetitan:report_run:v2');
+  });
+
+  it('still treats a different page as a different run and hits ST twice', async () => {
+    const env = makeReportEnv(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+
+    await st_run_report.handler(env, { ...RUN_ARGS }, CTX);
+    await st_run_report.handler(env, { ...RUN_ARGS, page: 2 }, CTX);
+
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(2);
   });
 });

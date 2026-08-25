@@ -43,7 +43,9 @@ import { defaultShaper } from '../../response-shape';
 // isolate. It is deliberately not another DO round trip.
 
 /** Result-cache namespace and TTL for mode=run. */
-export const REPORT_CACHE_NS = 'servicetitan:report_run';
+// v2: entries written before 2026-08-25 were keyed on page/pageSize that
+// never reached ST, so they hold page-1 rows under page-2 keys. Abandon them.
+export const REPORT_CACHE_NS = 'servicetitan:report_run:v2';
 export const REPORT_RUN_TTL_SEC = 300; // 5 minutes
 
 /**
@@ -114,7 +116,7 @@ interface Args {
 export const st_run_report: ToolDef<Args> = {
   name: 'st_run_report',
   description:
-    'Run or discover ServiceTitan native reports. Modes: list_categories | list_reports (requires categoryId) | describe_report (requires categoryId + reportId — MANDATORY before first run on unknown reportId; parameter schema is dynamic) | run (requires categoryId + reportId, takes parameters[]). POST .../reports/{id}/data is the data fetch (returns rows synchronously). Source: live ST. mode=run: default page size 100, max 5000.',
+    'Run or discover ServiceTitan native reports. Modes: list_categories | list_reports (requires categoryId) | describe_report (requires categoryId + reportId — MANDATORY before first run on unknown reportId; parameter schema is dynamic) | run (requires categoryId + reportId, takes parameters[]). POST .../reports/{id}/data is the data fetch (returns rows synchronously). Source: live ST. mode=run: default page size 1000, max 1000 (ServiceTitan\'s cap).',
   zodSchema: {
     mode: ReportMode.describe('Reporting workflow step'),
     categoryId: z
@@ -134,9 +136,9 @@ export const st_run_report: ToolDef<Args> = {
       .number()
       .int()
       .positive()
-      .max(5000)
+      .max(1000)
       .optional()
-      .describe('Page size (run mode only, default 100)'),
+      .describe('Page size (run mode only, default 1000 = ServiceTitan default)'),
   },
   stEndpoint: {
     method: 'POST',
@@ -203,8 +205,17 @@ export const st_run_report: ToolDef<Args> = {
 
     const runBody: Record<string, unknown> = {
       parameters: args.parameters,
-      pageSize: args.pageSize ?? 100,
+    };
+
+    // ST's Reporting v2 takes these three as QUERY parameters. The body schema
+    // (Reporting.V2.ReportDataRequest) is additionalProperties:false and holds
+    // only `parameters` — sending them in the body meant ST discarded them.
+    // Default pageSize is 1000 (ST's own default) so honoring pageSize does not
+    // shrink result sets that callers already depend on.
+    const runQuery: Record<string, unknown> = {
       page: args.page ?? 1,
+      pageSize: args.pageSize ?? 1000,
+      includeTotal: true,
     };
 
     // ── post-429 cooldown ────────────────────────────────────
@@ -230,8 +241,8 @@ export const st_run_report: ToolDef<Args> = {
       categoryId: args.categoryId,
       reportId: args.reportId,
       parameters: args.parameters,
-      page: runBody.page,
-      pageSize: runBody.pageSize,
+      page: runQuery.page,
+      pageSize: runQuery.pageSize,
     });
 
     let hitUpstream = false;
@@ -244,7 +255,7 @@ export const st_run_report: ToolDef<Args> = {
           { actor, correlation },
           `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports/${args.reportId}/data`,
           runBody,
-          { identity },
+          { identity, query: runQuery },
         );
       });
     } catch (err) {

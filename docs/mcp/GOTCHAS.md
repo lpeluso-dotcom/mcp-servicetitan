@@ -66,8 +66,16 @@ fifth correction that should be central.
   `reportId` — the parameter schema is dynamic per report. Skipping it
   guarantees a 400 on `run` with an opaque "parameter not found" message.
 - `POST /reports/{id}/data` is the data fetch (not a job-trigger). Returns
-  rows synchronously. Large reports paginate via `page` + `pageSize` in the
-  body, not query string.
+  rows synchronously.
+- **Reporting `POST .../reports/{id}/data` takes `page`, `pageSize`, and
+  `includeTotal` as QUERY parameters, not body fields.** The body schema
+  (`Reporting.V2.ReportDataRequest`) is `additionalProperties: false` and
+  carries only `parameters`. ServiceTitan does NOT reject body-placed paging —
+  it silently ignores it and returns its own default page of up to 1000 rows
+  with `totalCount: null`. Verified by tenant probe 2026-08-25 on report
+  `accounting/155`: requested `pageSize: 3`, received 188 rows, echoed
+  `pageSize: 1000`. An earlier version of this file asserted the opposite and
+  is what put the parameters in the body.
 - Use `st_run_report` (mode discriminator) instead of hand-rolling — it
   validates required args per mode and emits a uniform shape.
 
