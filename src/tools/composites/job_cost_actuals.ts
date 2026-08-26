@@ -125,6 +125,12 @@ export const job_cost_actuals: ToolDef<Args> = {
     assignments: z.array(z.record(z.string(), z.unknown())).optional(),
     estimates: z.array(z.record(z.string(), z.unknown())).optional(),
     invoice: z.unknown().optional(),
+    // F-24: disclose invoice-grain omission (this composite keeps only the
+    // first invoice for the labor-burden join). Declared so structuredContent
+    // validation passes at runtime (see the MB-1 note below).
+    _invoice_count: z.number().optional(),
+    _invoices_omitted: z.boolean().optional(),
+    _truncated: z.array(z.string()).optional(),
     _partial: z.boolean().optional(),
     _failures: z.array(z.unknown()).optional(),
     _warnings: z.array(z.string()).optional(),
