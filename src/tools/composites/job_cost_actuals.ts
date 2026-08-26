@@ -15,7 +15,7 @@
 // ============================================================
 import { z } from 'zod';
 import { authHeaders } from '../../auth';
-import { gatherFetches, stRead } from '../../composite-helpers';
+import { gatherFetchesWithTruncation, stReadGuarded } from '../../composite-helpers';
 import { defaultShaper } from '../../response-shape';
 import { readD1 } from '../../d1';
 import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
@@ -125,6 +125,12 @@ export const job_cost_actuals: ToolDef<Args> = {
     assignments: z.array(z.record(z.string(), z.unknown())).optional(),
     estimates: z.array(z.record(z.string(), z.unknown())).optional(),
     invoice: z.unknown().optional(),
+    // F-24: disclose invoice-grain omission (this composite keeps only the
+    // first invoice for the labor-burden join). Declared so structuredContent
+    // validation passes at runtime (see the MB-1 note below).
+    _invoice_count: z.number().optional(),
+    _invoices_omitted: z.boolean().optional(),
+    _truncated: z.array(z.string()).optional(),
     _partial: z.boolean().optional(),
     _failures: z.array(z.unknown()).optional(),
     _warnings: z.array(z.string()).optional(),
@@ -196,18 +202,25 @@ export const job_cost_actuals: ToolDef<Args> = {
     // Live invoice fetch — D1 invoice_items don't carry the labor_burden column
     // ST renders on the invoice UI; the live invoice does. Fanout-style for the
     // typical "this job's invoice" join.
-    const invoiceFanout = await gatherFetches([
+    const invoiceFanout = await gatherFetchesWithTruncation([
       {
         name: 'invoice',
-        promise: stRead(env, headers, `/accounting/v2/tenant/${tenant}/invoices?jobId=${jobId}`),
+        promise: stReadGuarded(env, headers, `/accounting/v2/tenant/${tenant}/invoices?jobId=${jobId}`),
       },
     ]);
     const invoiceData = invoiceFanout.results.invoice;
-    const firstInvoice = Array.isArray(invoiceData)
-      ? invoiceData[0]
+    // F-24: this composite is designed around ONE invoice (the labor-burden
+    // join). Keep the first, but count the rest so the response discloses when
+    // it is not the whole set instead of silently presenting one as complete.
+    const invoiceList = Array.isArray(invoiceData)
+      ? invoiceData
       : invoiceData != null && typeof invoiceData === 'object' && 'data' in invoiceData
-        ? (invoiceData as { data?: unknown[] }).data?.[0] ?? null
-        : invoiceData;
+        ? ((invoiceData as { data?: unknown[] }).data ?? [])
+        : invoiceData != null
+          ? [invoiceData]
+          : [];
+    const firstInvoice = invoiceList[0] ?? null;
+    const invoiceCount = invoiceList.length;
 
     // Per-tech rollup of drive + work.
     const perTech = new Map<
@@ -333,8 +346,12 @@ export const job_cost_actuals: ToolDef<Args> = {
       assignments: asgRows.rows,
       estimates: estRows.rows.map((e) => ({ ...e, active: e.active !== 0 })),
       invoice: firstInvoice ?? null,
+      // F-24: disclose that `invoice` is one of possibly several.
+      _invoice_count: invoiceCount,
+      _invoices_omitted: invoiceCount > 1,
       _partial: invoiceFanout.partial,
       _failures: invoiceFanout.failures,
+      _truncated: invoiceFanout.truncated,
       ...(warnings.length > 0 ? { _warnings: warnings } : {}),
       ...freshness,
       _composite: 'job_cost_actuals',

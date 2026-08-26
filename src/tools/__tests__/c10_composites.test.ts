@@ -203,6 +203,42 @@ describe('job_closeout_report', () => {
     ]);
     expect(result.appointments).toBeNull();
   });
+
+  // ── F-24: preserve invoice grain + disclose omissions ──────
+  it('preserves the full invoices array and counts them (no silent 1:N collapse)', async () => {
+    const env = makeEnv(async (url: string) => {
+      if (!url.includes('/api/st/read')) return new Response('{}', { status: 200 });
+      if (decodeURIComponent(url).includes('/accounting/v2/')) {
+        return new Response(
+          JSON.stringify({ data: [{ id: 1, type: 'base' }, { id: 2, type: 'adjustment' }], hasMore: false }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    });
+    const result: any = await job_closeout_report.handler(env, { jobId: 500 }, CTX);
+    expect(result.invoice).toEqual({ id: 1, type: 'base' }); // back-compat: first
+    expect(result.invoices).toEqual([{ id: 1, type: 'base' }, { id: 2, type: 'adjustment' }]);
+    expect(result._invoice_count).toBe(2);
+  });
+
+  it('discloses _truncated when the invoices list itself has more pages', async () => {
+    const env = makeEnv(async (url: string) => {
+      if (!url.includes('/api/st/read')) return new Response('{}', { status: 200 });
+      if (decodeURIComponent(url).includes('/accounting/v2/')) {
+        return new Response(JSON.stringify({ data: [{ id: 1 }], hasMore: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    });
+    const result: any = await job_closeout_report.handler(env, { jobId: 500 }, CTX);
+    expect(result._truncated).toContain('invoices');
+  });
+
+  it('routes the closeout fanout through the rate limiter', async () => {
+    const env = makeEnv(liveOk([]));
+    await job_closeout_report.handler(env, { jobId: 500 }, CTX);
+    expect(env.ST_RATE_LIMITER.get).toHaveBeenCalled();
+  });
 });
 
 // ── C11 ──────────────────────────────────────────────────────
