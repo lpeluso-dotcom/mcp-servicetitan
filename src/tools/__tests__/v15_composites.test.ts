@@ -134,6 +134,40 @@ describe('job_cost_actuals', () => {
     // 120 min * 60/hr = 120 -> $120
     expect(out.summary.labor_burden_$).toBe(120);
   });
+
+  // ── F-24: disclose invoice omission (keeps single invoice for burden math) ──
+  it('discloses _invoice_count and _invoices_omitted when a job has multiple invoices', async () => {
+    const fetcher = multiRouter(
+      [
+        { matches: (sql) => sql.includes('FROM jobs'), rows: [{ job_id: 1, revenue: 0 }] },
+        { matches: (sql) => sql.includes('FROM job_timesheets'), rows: [] },
+        { matches: (sql) => sql.includes('FROM appointments'), rows: [] },
+        { matches: (sql) => sql.includes('FROM appointment_assignments'), rows: [] },
+        { matches: (sql) => sql.includes('FROM estimates'), rows: [] },
+      ],
+      { data: [{ id: 5001, total: 850 }, { id: 5002, total: 120 }], hasMore: false },
+    );
+    const out: any = await job_cost_actuals.handler(makeEnv(fetcher), { jobId: 1 }, { actor: 't', correlation: 'c' });
+    expect(out.invoice).toEqual({ id: 5001, total: 850 }); // first, for the burden join
+    expect(out._invoice_count).toBe(2);
+    expect(out._invoices_omitted).toBe(true);
+  });
+
+  it('_invoices_omitted is false for a single-invoice job', async () => {
+    const fetcher = multiRouter(
+      [
+        { matches: (sql) => sql.includes('FROM jobs'), rows: [{ job_id: 1, revenue: 0 }] },
+        { matches: (sql) => sql.includes('FROM job_timesheets'), rows: [] },
+        { matches: (sql) => sql.includes('FROM appointments'), rows: [] },
+        { matches: (sql) => sql.includes('FROM appointment_assignments'), rows: [] },
+        { matches: (sql) => sql.includes('FROM estimates'), rows: [] },
+      ],
+      { data: [{ id: 5001, total: 850 }], hasMore: false },
+    );
+    const out: any = await job_cost_actuals.handler(makeEnv(fetcher), { jobId: 1 }, { actor: 't', correlation: 'c' });
+    expect(out._invoice_count).toBe(1);
+    expect(out._invoices_omitted).toBe(false);
+  });
 });
 
 describe('tech_drive_time_summary', () => {

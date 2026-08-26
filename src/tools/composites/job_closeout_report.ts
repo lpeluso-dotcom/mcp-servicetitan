@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { authHeaders } from '../../auth';
-import { gatherFetches, stRead } from '../../composite-helpers';
+import { gatherFetchesWithTruncation, stReadGuarded } from '../../composite-helpers';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
 
@@ -10,7 +10,7 @@ interface Args { jobId: number }
 // forms_equipment D1 table done here at the composite layer.
 export const job_closeout_report: ToolDef<Args> = {
   name: 'job_closeout_report',
-  description: 'L5 composite: full job closeout report — job details, appointments, technicians, invoice, and form submissions. Note: form submissions use unit IDs (not equipment IDs); equipment join done via forms_equipment D1 table. Source: mixed (D1 + live ST). NOTE: portions of this rollup duplicate logic available via `st_run_report` (mode=run, ServiceTitan native reports). v1.3 candidate to migrate to native reporting where the saved-report ID exists.',
+  description: 'L5 composite: job closeout rollup — job details, appointments, technicians, invoices, and form submissions. Returns ALL invoices for the job as `invoices[]` (a job is 1:N invoices — base + adjustments) with `_invoice_count`; `invoice` is the first for back-compat only. `_truncated` lists any arm ST reported more pages for. Note: form submissions use unit IDs (not equipment IDs); equipment join done via forms_equipment D1 table. Source: mixed (D1 + live ST). Portions duplicate `st_run_report` (mode=run).',
   stEndpoint: { method: 'GET', path: '/jpm/v2/tenant/{tid}/jobs/{id}', source: 'mixed' },
   zodSchema: {
     jobId: z.number().int().positive().describe('ST job ID'),
@@ -20,22 +20,29 @@ export const job_closeout_report: ToolDef<Args> = {
     const h = authHeaders(env, correlation, actor);
     const tenant = '000000000';
 
-    const fanout = await gatherFetches([
-      { name: 'job',          promise: stRead(env, h, `/jpm/v2/tenant/${tenant}/jobs/${jobId}`) },
-      { name: 'appointments', promise: stRead(env, h, `/jpm/v2/tenant/${tenant}/appointments?jobId=${jobId}`) },
-      { name: 'invoices',     promise: stRead(env, h, `/accounting/v2/tenant/${tenant}/invoices?jobId=${jobId}`) },
+    const fanout = await gatherFetchesWithTruncation([
+      { name: 'job',          promise: stReadGuarded(env, h, `/jpm/v2/tenant/${tenant}/jobs/${jobId}`) },
+      { name: 'appointments', promise: stReadGuarded(env, h, `/jpm/v2/tenant/${tenant}/appointments?jobId=${jobId}`) },
+      { name: 'invoices',     promise: stReadGuarded(env, h, `/accounting/v2/tenant/${tenant}/invoices?jobId=${jobId}`) },
     ]);
 
+    // F-24: a job's invoices are 1:N (base + adjustments). Preserve the full
+    // array and its count; keep `invoice` (the first) for back-compat, but do
+    // not present it as the whole closeout.
     const invoiceData = fanout.results.invoices;
-    const firstInvoice = Array.isArray(invoiceData) ? invoiceData[0] : invoiceData;
+    const invoices = Array.isArray(invoiceData) ? invoiceData : invoiceData != null ? [invoiceData] : [];
+    const firstInvoice = invoices[0] ?? null;
 
     return {
       jobId,
       _partial: fanout.partial,
       _failures: fanout.failures,
+      _truncated: fanout.truncated,
       job: fanout.results.job,
       appointments: fanout.results.appointments,
-      invoice: firstInvoice ?? null,
+      invoice: firstInvoice,
+      invoices,
+      _invoice_count: invoices.length,
       _composite: 'job_closeout_report',
       _source: 'mixed',
       _note: 'form submissions and equipment join available via get_form_submission + forms_equipment D1 table',
