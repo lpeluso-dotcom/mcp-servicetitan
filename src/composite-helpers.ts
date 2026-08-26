@@ -14,6 +14,7 @@
 
 import type { Env } from './env';
 import { rewriteTenantPlaceholders } from './tenant';
+import { guardedStFetch } from './rate-limit-guard';
 
 /**
  * Extract the `data` payload from a servicetitan-proxy/ST response shape, falling back
@@ -111,6 +112,80 @@ export async function gatherFetches(calls: NamedCall[]): Promise<FanoutResult> {
   }
 
   return { results, partial: failures.length > 0, failures };
+}
+
+/** Like extractStData, but also reports ST's top-level `hasMore` flag. */
+function extractStPage<T = unknown>(json: unknown): { data: T; hasMore: boolean } {
+  if (json !== null && typeof json === 'object') {
+    const obj = json as { data?: T; hasMore?: boolean };
+    if ('data' in obj) return { data: obj.data as T, hasMore: obj.hasMore === true };
+  }
+  return { data: json as T, hasMore: false };
+}
+
+/**
+ * A `stRead` routed through `guardedStFetch`, so a composite fanout consults the
+ * ST family rate limiter instead of firing raw parallel calls that ignore the
+ * cap (F-11). The family is parsed from the (tenant-resolved) endpoint by
+ * guardedStFetch, matching the gate every single-fetch read already uses.
+ */
+export function stReadGuarded(
+  env: Env,
+  headers: Record<string, string>,
+  endpoint: string,
+  signal?: AbortSignal,
+): Promise<Response> {
+  return guardedStFetch(env, rewriteTenantPlaceholders(env, endpoint), () =>
+    stRead(env, headers, endpoint, signal),
+  );
+}
+
+/**
+ * gatherFetches + per-arm truncation disclosure. `results` is byte-identical to
+ * gatherFetches (the `.data` arrays); `truncated` names every arm whose ST
+ * response carried `hasMore: true`, so a caller can DISCLOSE an incomplete
+ * answer (and decline to cache it) instead of serving page one as if it were
+ * the whole set (F-11). A FAILED arm never appears in `truncated` — only a
+ * successful arm can be observed to have more pages.
+ */
+export async function gatherFetchesWithTruncation(
+  calls: NamedCall[],
+): Promise<FanoutResult & { truncated: string[] }> {
+  const settled = await Promise.allSettled(
+    calls.map(async (c) => {
+      const resp = await c.promise;
+      if (!resp.ok) {
+        throw tagged('HTTPError', `${resp.status} ${resp.statusText || ''}`.trim());
+      }
+      try {
+        return extractStPage(await resp.json<unknown>());
+      } catch (e) {
+        throw tagged('JSONParseError', e instanceof Error ? e.message : String(e));
+      }
+    }),
+  );
+
+  const results: Record<string, unknown> = {};
+  const failures: FanoutFailure[] = [];
+  const truncated: string[] = [];
+  for (let i = 0; i < settled.length; i++) {
+    const name = calls[i].name;
+    const res = settled[i];
+    if (res.status === 'fulfilled') {
+      results[name] = res.value.data;
+      if (res.value.hasMore) truncated.push(name);
+    } else {
+      results[name] = null;
+      const err = res.reason instanceof Error ? res.reason : new Error(String(res.reason));
+      failures.push({
+        call: name,
+        error_class: err.name || 'Error',
+        message: err.message || String(res.reason),
+      });
+    }
+  }
+
+  return { results, partial: failures.length > 0, failures, truncated };
 }
 
 // Re-export the v1.4 paginated read helper so composite authors only need
