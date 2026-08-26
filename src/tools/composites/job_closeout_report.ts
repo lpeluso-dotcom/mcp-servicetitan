@@ -10,7 +10,7 @@ interface Args { jobId: number }
 // forms_equipment D1 table done here at the composite layer.
 export const job_closeout_report: ToolDef<Args> = {
   name: 'job_closeout_report',
-  description: 'L5 composite: job closeout rollup — job details, appointments, technicians, invoices, and form submissions. Returns ALL invoices for the job as `invoices[]` (a job is 1:N invoices — base + adjustments) with `_invoice_count`; `invoice` is the first for back-compat only. `_truncated` lists any arm ST reported more pages for. Note: form submissions use unit IDs (not equipment IDs); equipment join done via forms_equipment D1 table. Source: mixed (D1 + live ST). Portions duplicate `st_run_report` (mode=run).',
+  description: 'L5 composite: job closeout rollup — job details, appointments, technicians, invoices, and form submissions. A job is 1:N invoices (base + adjustments): `invoices[]` holds the invoices returned with `_invoice_count`, and `_truncated` lists any arm ST reported more pages for (when it includes "invoices", the list is page one only, so `_invoice_count` is a lower bound). `invoice` is the first, for back-compat only. Note: form submissions use unit IDs (not equipment IDs); equipment join done via forms_equipment D1 table. Source: mixed (D1 + live ST). Portions duplicate `st_run_report` (mode=run).',
   stEndpoint: { method: 'GET', path: '/jpm/v2/tenant/{tid}/jobs/{id}', source: 'mixed' },
   zodSchema: {
     jobId: z.number().int().positive().describe('ST job ID'),
