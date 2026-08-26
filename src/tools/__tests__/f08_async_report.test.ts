@@ -120,3 +120,64 @@ describe('F-08 poll deadline (B1/B4)', () => {
     expect(pollGets).toBe(1);
   });
 });
+
+describe('F-08 async contract', () => {
+  it('200 inline returns rows without polling', async () => {
+    const env = makeEnv(async (url: string) => {
+      expect(decodeURIComponent(String(url))).toContain('/data/query');
+      return new Response(JSON.stringify({ rows: [{ a: 1 }] }), { status: 200 });
+    });
+    const out: any = await st_run_report.handler(env, { ...RUN }, CTX);
+    expect(out.mode).toBe('run');
+    expect(out.data).toEqual({ rows: [{ a: 1 }] });
+    // exactly one ST call (the POST); no poll GET
+    expect(env.ST_PROXY.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('202 -> poll 202 -> 200 returns rows', async () => {
+    let polls = 0;
+    const env = makeEnv(async (url: string) => {
+      const u = decodeURIComponent(String(url));
+      if (u.includes('/data/query')) return new Response(JSON.stringify({ token: 'tok9' }), { status: 202 });
+      polls++;
+      return polls < 2
+        ? new Response('', { status: 202 })
+        : new Response(JSON.stringify({ rows: [{ b: 2 }] }), { status: 200 });
+    });
+    const out: any = await st_run_report.handler(env, { ...RUN, _pollIntervalMs: 0 } as any, CTX);
+    expect(out.data).toEqual({ rows: [{ b: 2 }] });
+    expect(polls).toBe(2);
+  });
+
+  it('202 with no usable token fails loud naming the keys', async () => {
+    const env = makeEnv(async () => new Response(JSON.stringify({ status: 'pending', foo: 1 }), { status: 202 }));
+    const err: any = await st_run_report.handler(env, { ...RUN }, CTX).catch((e) => e);
+    expect(err.code).toBe('upstream_error');
+    expect(err.message).toMatch(/no usable token/);
+    expect(err.message).toMatch(/foo/); // dumps actual keys seen
+  });
+
+  it('B3: an upstream 500 body is NOT echoed to the caller', async () => {
+    const env = makeEnv(async (url: string) =>
+      decodeURIComponent(String(url)).includes('/data/query')
+        ? new Response('SECRET-UPSTREAM-STACKTRACE-xyz', { status: 500 })
+        : new Response('', { status: 202 }),
+    );
+    const err: any = await st_run_report.handler(env, { ...RUN }, CTX).catch((e) => e);
+    expect(err.code).toBe('upstream_error');
+    expect(err.message).not.toMatch(/SECRET-UPSTREAM-STACKTRACE/);
+  });
+
+  it('B2: a succeeding run caches; the same report re-run never re-enters upstream (cooldown-independent)', async () => {
+    let calls = 0;
+    const env = makeEnv(async () => {
+      calls++;
+      return new Response(JSON.stringify({ rows: [] }), { status: 200 });
+    });
+    const a: any = await st_run_report.handler(env, { ...RUN }, CTX);
+    const b: any = await st_run_report.handler(env, { ...RUN }, CTX);
+    expect(a._source).toBe('live');
+    expect(b._source).toBe('cache');
+    expect(calls).toBe(1);
+  });
+});
