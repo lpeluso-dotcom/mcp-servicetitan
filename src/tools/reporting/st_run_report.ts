@@ -5,55 +5,53 @@
 //   1. list_categories  — GET /reporting/v2/tenant/{tid}/report-categories
 //   2. list_reports     — GET /reporting/v2/tenant/{tid}/report-category/{cat}/reports
 //   3. describe_report  — GET /reporting/v2/tenant/{tid}/report-category/{cat}/reports/{id}
-//   4. run              — POST /reporting/v2/tenant/{tid}/report-category/{cat}/reports/{id}/data
+//   4. run              — POST .../reports/{id}/data/query   (ASYNC, ST-78)
 //
-// Mandatory: describe_report before first run on an unknown reportId — the
-// parameter schema is dynamic per report. The `parameters` array on `run`
-// must match what describe_report returns.
+// QUA-785 / F-08 — ST API release #78 deprecated the old SYNCHRONOUS
+// POST .../reports/{id}/data endpoint (which also silently ignored body-level
+// paging) in favor of an async token pattern:
+//   POST .../reports/{id}/data/query  → 200 (rows inline, done) | 202 (+ token)
+//   GET  data-queries/{token}         → 200 (rows, done)        | 202 (pending)
+//   DELETE data-queries/{token}       → best-effort cancel (frees ST's slot)
 //
-// canonical descriptor uses the run path (the actual data fetch).
+// The Wave 2 429-containment layer is preserved: a same-report repeat inside
+// REPORT_RUN_TTL_SEC is served from D1's mcp_cache, and a real ST 429 arms a
+// tool-wide post-429 cooldown. The async POST is routed through guardedStFetch
+// so the reporting-family limiter /check still fires with the report identity
+// (readSTPost can't be used here: 202 is resp.ok, so it can't tell "done" from
+// "pending, here's a token").
+//
+// UNVERIFIED WIRE CONTRACT: the 202 token field name (`token` vs `queryToken`
+// vs `id`) and the tenant-scoped data-queries path come from ST-78's release
+// notes, not a live probe. The code fails loud — dumping the actual response
+// keys it saw — the moment the live shape diverges, rather than hanging or
+// crashing opaquely. Needs one live smoke-test to confirm before merge.
 // ============================================================
 import { z } from 'zod';
-import { McpError } from '../../errors';
-import { readST, readSTPost } from '../../st';
+import { McpError, mapUpstreamStatus } from '../../errors';
+import { readST } from '../../st';
 import { cacheGet } from '../../cache';
+import { authHeaders } from '../../auth';
+import { rewriteTenantPlaceholders } from '../../tenant';
+import { guardedStFetch, parseRetryAfterSeconds } from '../../rate-limit-guard';
+import type { Env } from '../../env';
 import type { ToolDef } from '../index';
 import { defaultShaper } from '../../response-shape';
-
-// ── Wave 2: 429 containment ─────────────────────────────────
-//
-// Reporting is the most expensive ST surface and FAMILY_CAP budgets it at
-// 20/min. readSTPost is now gated, which stops us OVERSHOOTING. These two
-// mechanisms handle what happens when ST throttles us anyway:
-//
-//   1. RESULT CACHE — an identical run (same category, report, parameters,
-//      page, pageSize) inside the TTL is served from D1's mcp_cache instead
-//      of spending an ST request. Reports are heavy and agents re-run them
-//      verbatim; the TTL is deliberately short so the numbers stay current.
-//   2. POST-429 COOLDOWN — after ST answers 429 we hold off `run` locally
-//      for the Retry-After window and fail fast with a usable
-//      retry_after_ms, rather than spending another request to be told the
-//      same thing.
-//
-// Scope note on the cooldown: it is ISOLATE-LOCAL, not global. The global
-// half of the reaction is reportBackoff(), which the readSTPost gate already
-// fires into the StRateLimiter DO (halving the reporting cap for the penalty
-// window) — that IS shared across isolates. This local gate is the cheap
-// first line for the common case, an agent immediately retrying in the same
-// isolate. It is deliberately not another DO round trip.
 
 /** Result-cache namespace and TTL for mode=run. */
 export const REPORT_CACHE_NS = 'servicetitan:report_run';
 export const REPORT_RUN_TTL_SEC = 300; // 5 minutes
 
+/** Fixed poll cadence and default ceiling (wall-clock) for the async run. */
+const POLL_INTERVAL_MS = 2000;
+const DEFAULT_POLL_TIMEOUT_SECONDS = 180;
+
 /**
- * Epoch ms until which mode=run fails fast. Keyed to the whole tool, not to
- * one report: an ST 429 means the TENANT is being throttled, so a 429 on
- * report A predicts a 429 on report B.
- *
- * Deliberately NOT armed by the limiter's same-report rejection — that one is
- * per report identity, and blocking every other report for a minute because
- * one report repeated would be its own "the server got slow" bug.
+ * Epoch ms until which mode=run fails fast. Keyed to the whole tool, not one
+ * report: an ST 429 means the TENANT is throttled, so a 429 on report A
+ * predicts a 429 on report B. Deliberately NOT armed by the limiter's
+ * same-report rejection — that is per report identity, and blocking every
+ * other report for a minute because one report repeated would be its own bug.
  */
 let reportRunCooldownUntil = 0;
 
@@ -62,21 +60,34 @@ export function _resetReportCooldown(): void {
   reportRunCooldownUntil = 0;
 }
 
+const ReportMode = z.enum(['list_categories', 'list_reports', 'describe_report', 'run']);
+
+interface ReportParam {
+  name: string;
+  value: unknown;
+}
+
+interface Args {
+  mode: z.infer<typeof ReportMode>;
+  categoryId?: string | number;
+  reportId?: string | number;
+  parameters?: ReportParam[];
+  page?: number;
+  pageSize?: number;
+  pollTimeoutSeconds?: number;
+  /** Test seam — poll cadence override (not in zodSchema, never settable by a real caller). */
+  _pollIntervalMs?: number;
+  /** Test seam — injectable clock so the wall-clock deadline is testable without real waits. */
+  _now?: () => number;
+}
+
 /**
- * The canonical identity of one report RUN: the report itself plus every
- * input that changes the rows it returns.
- *
- * This single string is used for BOTH the result-cache key and the limiter's
- * `identity`, so the two can never disagree about what "the same report"
- * means. Parameters are sorted by name first — `[From, To]` and `[To, From]`
- * are the same report, and treating them as different would both miss the
- * cache and spend a second ST call against a limit that would reject it.
- *
- * Note on ST's wording: the docs say "1 of the same report per minute per
- * tenant" without defining whether paging counts as the same report. We
- * include page/pageSize in the identity, i.e. we treat page 2 as a DIFFERENT
- * run. Excluding them would make ordinary pagination unusable; if ST turns
- * out to count paged calls as repeats, this is the line to change.
+ * The canonical identity of one report RUN: the report itself plus every input
+ * that changes the rows it returns. Used for BOTH the result-cache key and the
+ * limiter identity so the two can never disagree. Parameters are sorted by name
+ * so `[From, To]` and `[To, From]` are the same report. page/pageSize are
+ * included — page 2 is a DIFFERENT run (excluding them would make pagination
+ * unusable; if ST counts paged calls as repeats, this is the line to change).
  */
 export function reportRunIdentity(args: {
   categoryId?: string | number;
@@ -95,26 +106,227 @@ export function reportRunIdentity(args: {
   });
 }
 
-const ReportMode = z.enum(['list_categories', 'list_reports', 'describe_report', 'run']);
-
-interface ReportParam {
-  name: string;
-  value: unknown;
+/** servicetitan-proxy read URL (GET/POST-as-read; NOT DELETE — see cancelDataQuery). */
+function readProxyUrl(path: string): string {
+  return `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(path)}`;
 }
 
-interface Args {
-  mode: z.infer<typeof ReportMode>;
-  categoryId?: string | number;
-  reportId?: string | number;
-  parameters?: ReportParam[];
-  page?: number;
-  pageSize?: number;
+/**
+ * Hard ceiling on any single upstream fetch (POST/poll/cancel) so a request
+ * that never resolves is ABORTED, not parked forever. Without a signal the
+ * wall-clock deadline can only be read between awaits — a hung await never
+ * yields to it (adversarial review, 2026-08-26). Bounded by the remaining
+ * budget to the poll deadline, with a floor so a nearly-expired budget still
+ * gets one honest, quickly-aborting attempt. Mirrors ap-inbox.ts / supabase.ts.
+ */
+const PER_FETCH_TIMEOUT_MS = 30_000;
+function fetchTimeoutSignal(remainingMs: number): AbortSignal {
+  const ms = Math.max(1, Math.min(PER_FETCH_TIMEOUT_MS, remainingMs));
+  return AbortSignal.timeout(ms);
+}
+
+/** True when an error is (or wraps) an AbortSignal.timeout / abort rejection. */
+function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === 'AbortError' || err.name === 'TimeoutError')
+  );
+}
+
+/** Checks the assumed token field, then the two stated aliases, in order. */
+function extractQueryToken(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null;
+  const obj = body as Record<string, unknown>;
+  for (const key of ['token', 'queryToken', 'id']) {
+    const v = obj[key];
+    if (typeof v === 'string' && v.length > 0) return v;
+  }
+  return null;
+}
+
+/**
+ * Best-effort cancel of a running data-query so we don't leave an orphaned
+ * query burning ST's concurrency slot after OUR poll loop gives up locally.
+ * DELETE isn't accepted by /api/st/read (GET/POST only) so this routes through
+ * /api/st/write's method-envelope, the established non-GET pattern in this
+ * codebase. Any error here is swallowed — it must never mask the real timeout.
+ */
+async function cancelDataQuery(
+  env: Env,
+  ctx: { actor: string; correlation: string },
+  token: string,
+): Promise<void> {
+  try {
+    const endpoint = rewriteTenantPlaceholders(env, `/reporting/v2/tenant/000000000/data-queries/${token}`);
+    await env.ST_PROXY.fetch('https://servicetitan-proxy/api/st/write', {
+      method: 'POST',
+      headers: { ...authHeaders(env, ctx.correlation, ctx.actor), 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint, method: 'DELETE', payload: {} }),
+      // Bound cleanup so a hung cancel can't itself park; errors are swallowed.
+      signal: fetchTimeoutSignal(PER_FETCH_TIMEOUT_MS),
+    });
+  } catch {
+    // best-effort — swallow
+  }
+}
+
+/**
+ * Poll GET data-queries/{token} at a fixed cadence until 200 (done), a
+ * non-200/202 status (fail loud, no upstream body echoed — B3), or the
+ * WALL-CLOCK ceiling is exceeded (B1). The ceiling is real elapsed time, not
+ * attempts × interval, so a report whose every poll hangs still trips it. No
+ * fetch is issued once the deadline has passed (B4).
+ */
+async function pollDataQuery(
+  env: Env,
+  ctx: { actor: string; correlation: string },
+  token: string,
+  pollTimeoutSeconds: number,
+  opts: { pollIntervalMs?: number; now?: () => number },
+): Promise<unknown> {
+  const now = opts.now ?? Date.now;
+  const sleepMs = opts.pollIntervalMs ?? POLL_INTERVAL_MS;
+  const start = now();
+  const deadline = start + pollTimeoutSeconds * 1000;
+  const pollPath = rewriteTenantPlaceholders(env, `/reporting/v2/tenant/000000000/data-queries/${token}`);
+
+  let attempt = 0;
+  while (now() < deadline) {
+    if (attempt > 0 && sleepMs > 0) await new Promise((r) => setTimeout(r, sleepMs));
+    if (now() >= deadline) break; // B4: never issue a fetch past the deadline
+    attempt++;
+
+    let resp: Response;
+    try {
+      // Bound the fetch itself by the remaining budget — a hung poll GET is
+      // aborted at the deadline instead of parking forever (a wall-clock check
+      // between awaits cannot rescue a non-resolving await). B1.
+      resp = await env.ST_PROXY.fetch(readProxyUrl(pollPath), {
+        headers: authHeaders(env, ctx.correlation, ctx.actor),
+        signal: fetchTimeoutSignal(deadline - now()),
+      });
+    } catch (err) {
+      if (isAbortError(err)) break; // budget exhausted mid-fetch → fall through to timeout
+      throw err;
+    }
+
+    if (resp.status === 200) {
+      return await resp.json();
+    }
+    if (resp.status === 202) {
+      continue;
+    }
+
+    // B3: report the status, not the upstream body.
+    throw new McpError(
+      mapUpstreamStatus(resp.status),
+      `report query poll failed: upstream returned ${resp.status} (correlation ${ctx.correlation})`,
+      { correlation: ctx.correlation },
+    );
+  }
+
+  // Ceiling exceeded locally — best-effort cancel so we don't burn ST's
+  // concurrency slot with an orphaned query, THEN fail loud with real elapsed.
+  await cancelDataQuery(env, ctx, token);
+  const elapsedSeconds = Math.round((now() - start) / 1000);
+  throw new McpError(
+    'timeout',
+    `report query ${token} timed out after ${elapsedSeconds}s (ceiling ${pollTimeoutSeconds}s) — canceled`,
+    { correlation: ctx.correlation },
+  );
+}
+
+/**
+ * POST .../data/query and either return the inline 200 result, or extract the
+ * 202 token and hand off to pollDataQuery. Routed through guardedStFetch so the
+ * reporting-family limiter /check fires with the report identity (the same gate
+ * readSTPost uses) while we still see the raw 200-vs-202 status.
+ */
+export async function runReportQueryAsync(
+  env: Env,
+  ctx: { actor: string; correlation: string },
+  categoryId: string | number,
+  reportId: string | number,
+  runBody: Record<string, unknown>,
+  pollTimeoutSeconds: number,
+  opts: { identity: string; pollIntervalMs?: number; now?: () => number },
+): Promise<unknown> {
+  const queryPath = rewriteTenantPlaceholders(
+    env,
+    `/reporting/v2/tenant/000000000/report-category/${categoryId}/reports/${reportId}/data/query`,
+  );
+
+  let initialResp: Response;
+  try {
+    initialResp = await guardedStFetch(
+      env,
+      queryPath,
+      () =>
+        env.ST_PROXY.fetch(readProxyUrl(queryPath), {
+          method: 'POST',
+          headers: { ...authHeaders(env, ctx.correlation, ctx.actor), 'content-type': 'application/json' },
+          body: JSON.stringify(runBody),
+          // Bound the submit too — a hung POST parks before polling ever starts.
+          signal: fetchTimeoutSignal(pollTimeoutSeconds * 1000),
+        }),
+      { identity: opts.identity },
+    );
+  } catch (err) {
+    if (isAbortError(err)) {
+      throw new McpError(
+        'timeout',
+        `report data/query POST did not respond within ${pollTimeoutSeconds}s (correlation ${ctx.correlation})`,
+        { correlation: ctx.correlation },
+      );
+    }
+    throw err;
+  }
+
+  if (initialResp.status === 200) {
+    return await initialResp.json();
+  }
+
+  if (initialResp.status !== 202) {
+    if (initialResp.status === 429) {
+      throw new McpError(
+        'rate_limited',
+        `report data/query rate-limited by ServiceTitan (correlation ${ctx.correlation})`,
+        {
+          correlation: ctx.correlation,
+          retry_after_ms: parseRetryAfterSeconds(initialResp.headers.get('Retry-After')) * 1000,
+        },
+      );
+    }
+    // B3: no upstream body echoed.
+    throw new McpError(
+      mapUpstreamStatus(initialResp.status),
+      `report data/query POST failed: upstream returned ${initialResp.status} (correlation ${ctx.correlation})`,
+      { correlation: ctx.correlation },
+    );
+  }
+
+  const body202 = await initialResp.json().catch(() => ({}));
+  const token = extractQueryToken(body202);
+  if (!token) {
+    const keys = body202 && typeof body202 === 'object' ? Object.keys(body202 as object) : [];
+    throw new McpError(
+      'upstream_error',
+      `report data/query returned 202 (still running) but no usable token field — checked token, queryToken, id, found none. Actual response keys seen: [${keys.join(', ')}]`,
+      { correlation: ctx.correlation },
+    );
+  }
+
+  return await pollDataQuery(env, ctx, token, pollTimeoutSeconds, {
+    pollIntervalMs: opts.pollIntervalMs,
+    now: opts.now,
+  });
 }
 
 export const st_run_report: ToolDef<Args> = {
   name: 'st_run_report',
   description:
-    'Run or discover ServiceTitan native reports. Modes: list_categories | list_reports (requires categoryId) | describe_report (requires categoryId + reportId — MANDATORY before first run on unknown reportId; parameter schema is dynamic) | run (requires categoryId + reportId, takes parameters[]). POST .../reports/{id}/data is the data fetch (returns rows synchronously). Source: live ST. mode=run: default page size 100, max 5000.',
+    'Run or discover ServiceTitan native reports. Modes: list_categories | list_reports (requires categoryId) | describe_report (requires categoryId + reportId — MANDATORY before first run on unknown reportId; parameter schema is dynamic) | run (requires categoryId + reportId, takes parameters[]). ' +
+    'run is ASYNC (ST-78 deprecated the old synchronous POST .../data endpoint — it is no longer called): POSTs .../reports/{id}/data/query, which returns fast reports\' rows inline (200) or a token (202) for slow reports. On a token, this tool polls GET data-queries/{token} every 2s until ready, to a WALL-CLOCK ceiling (default 180s; override with pollTimeoutSeconds, max 600), and best-effort cancels (DELETE) if the ceiling is hit. A same-report repeat inside 5 minutes is served from cache and costs no ST request. Source: live ST.',
   zodSchema: {
     mode: ReportMode.describe('Reporting workflow step'),
     categoryId: z
@@ -137,15 +349,26 @@ export const st_run_report: ToolDef<Args> = {
       .max(5000)
       .optional()
       .describe('Page size (run mode only, default 100)'),
+    pollTimeoutSeconds: z
+      .number()
+      .int()
+      .positive()
+      .max(600)
+      .optional()
+      .describe(
+        'mode=run only. Wall-clock ceiling (seconds) for polling a slow async report query before this tool cancels it and gives up. Default 180. Max 600. Raise for known-slow reports.',
+      ),
   },
   stEndpoint: {
     method: 'POST',
-    path: '/reporting/v2/tenant/{tid}/report-category/{cat}/reports/{reportId}/data',
+    path: '/reporting/v2/tenant/{tid}/report-category/{cat}/reports/{reportId}/data/query',
     source: 'live',
   },
   async handler(env, args, { actor, correlation }) {
-    // Per-mode required-arg validation (zod refinement is a flat object so we do it here).
-    const requireArg = (cond: unknown, msg: string) => {
+    // Per-mode required-arg validation. `asserts cond` narrows the checked
+    // expression for the rest of this function (so categoryId/reportId reach
+    // runReportQueryAsync as string|number without a cast).
+    const requireArg: (cond: unknown, msg: string) => asserts cond = (cond, msg) => {
       if (!cond) {
         throw new McpError('validation_error', msg, { correlation });
       }
@@ -198,7 +421,7 @@ export const st_run_report: ToolDef<Args> = {
     requireArg(args.reportId !== undefined, 'reportId required for mode=run');
     requireArg(
       Array.isArray(args.parameters),
-      'parameters[] required for mode=run (use describe_report to discover the schema)'
+      'parameters[] required for mode=run (use describe_report to discover the schema)',
     );
 
     const runBody: Record<string, unknown> = {
@@ -206,11 +429,15 @@ export const st_run_report: ToolDef<Args> = {
       pageSize: args.pageSize ?? 100,
       page: args.page ?? 1,
     };
+    const now = args._now ?? Date.now;
 
-    // ── post-429 cooldown ────────────────────────────────────
-    const now = Date.now();
-    if (reportRunCooldownUntil > now) {
-      const remainingMs = reportRunCooldownUntil - now;
+    // ── post-429 cooldown ─────────────────────────────────────
+    // Checked only on the path that would hit upstream. A cache hit never
+    // reaches here in a way that rejects — the cache read-through resolves
+    // inside cacheGet below without entering the miss() upstream path.
+    const nowMs = now();
+    if (reportRunCooldownUntil > nowMs) {
+      const remainingMs = reportRunCooldownUntil - nowMs;
       throw new McpError(
         'rate_limited',
         `st_run_report: ServiceTitan's reporting API returned 429 recently; mode=run is in a ` +
@@ -220,12 +447,6 @@ export const st_run_report: ToolDef<Args> = {
       );
     }
 
-    // ── short result cache ───────────────────────────────────
-    // One canonical string is both the cache key and the limiter identity —
-    // see reportRunIdentity. This cache is the REAL fix for st_run_report's
-    // 429s: ST's reporting limit is "1 of the same report per minute", so the
-    // 429s were repeat runs of the same report, and a repeat inside the TTL
-    // now never leaves the Worker.
     const identity = reportRunIdentity({
       categoryId: args.categoryId,
       reportId: args.reportId,
@@ -239,25 +460,27 @@ export const st_run_report: ToolDef<Args> = {
     try {
       data = await cacheGet<unknown>(env, REPORT_CACHE_NS, identity, REPORT_RUN_TTL_SEC, async () => {
         hitUpstream = true;
-        return readSTPost<unknown>(
+        return runReportQueryAsync(
           env,
           { actor, correlation },
-          `/reporting/v2/tenant/${tid}/report-category/${args.categoryId}/reports/${args.reportId}/data`,
+          args.categoryId!,
+          args.reportId!,
           runBody,
-          { identity },
+          args.pollTimeoutSeconds ?? DEFAULT_POLL_TIMEOUT_SECONDS,
+          { identity, pollIntervalMs: args._pollIntervalMs, now: args._now },
         );
       });
     } catch (err) {
       // An ST 429 means the TENANT is throttled — arm the tool-wide cooldown
       // from the error's own retry_after_ms. The limiter's same-report
-      // rejection is NOT that: it is scoped to one report identity, and
-      // arming a tool-wide cooldown from it would block every other report.
+      // rejection is NOT that: it is scoped to one report identity, and arming
+      // a tool-wide cooldown from it would block every other report.
       if (
         err instanceof McpError &&
         err.code === 'rate_limited' &&
         (err.details as { reason?: string } | undefined)?.reason !== 'same_report_within_window'
       ) {
-        reportRunCooldownUntil = Date.now() + (err.retry_after_ms ?? 60_000);
+        reportRunCooldownUntil = now() + (err.retry_after_ms ?? 60_000);
       }
       throw err;
     }
