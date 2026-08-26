@@ -9,7 +9,7 @@
 // ============================================================
 
 import { z } from 'zod';
-import { readST } from '../../st';
+import { readST, rejectUnsupportedSTFilters } from '../../st';
 import { codeVariants } from './search_pricebook_all';
 import { queryD1First } from '../../d1-proxy';
 import { stampMirrorFreshness, fetchTableMax } from '../../mirror-freshness';
@@ -60,10 +60,12 @@ async function lookupExactCode(
 export const search_materials: ToolDef<Args> = {
   name: 'search_materials',
   description:
-    'Search pricebook materials by exact `code` (e.g. "PRV-075"), or fuzzy `name`/category. ' +
-    'Exact-code path hits D1 directly (sub-100ms) and short-circuits on hit. ' +
-    'Fuzzy path falls through to live ST. ' +
-    'Source: D1 for exact code (pb_materials may be stale; falls through to live ST on miss); live ST for name/category fuzzy. Default page size 50, max 200.',
+    'Look up pricebook materials by exact `code` (e.g. "PRV-075") against D1 (sub-100ms), ' +
+    'or list them live via `active`/`page`/`pageSize`. ' +
+    'For fuzzy name/description matching use search_pricebook_all({query}) instead — ServiceTitan has ' +
+    'no name or category filter on this endpoint and silently ignores both (QUA-951), so passing them ' +
+    'would return an unfiltered first page that looks like matches. ' +
+    'Source: D1 for exact code (may be stale; a code miss returns an honest empty, not a live page); live ST for plain listing. Default page size 50, max 200.',
   zodSchema: {
     code: z
       .string()
@@ -71,16 +73,42 @@ export const search_materials: ToolDef<Args> = {
       .max(64)
       .optional()
       .describe(
-        'Exact material code (e.g. "PRV-075"). Wins over `name` if both provided. Tries the raw value, UPPERCASE, and UPPERCASE-hyphenated variants in order.',
+        'Exact material code (e.g. "PRV-075"). Tries the raw value, UPPERCASE, and UPPERCASE-hyphenated variants in order. Returns empty if no such code exists.',
       ),
-    name: z.string().optional().describe('Material name or token (partial match against live ST)'),
-    categoryId: z.number().int().positive().optional().describe('Filter by category ID'),
+    name: z
+      .string()
+      .optional()
+      .describe('NOT SUPPORTED by ServiceTitan on this endpoint — passing it returns a validation error. Use search_pricebook_all({query}).'),
+    categoryId: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('NOT SUPPORTED by ServiceTitan on this endpoint — passing it returns a validation error. Filter client-side against list_service_categories.'),
     active: z.boolean().optional().describe('Filter by active status (default: all)'),
     page: z.number().int().positive().default(1).describe('Page number'),
     pageSize: z.number().int().positive().max(200).default(50).describe('Page size, max 200'),
   },
   stEndpoint: { method: 'GET', path: '/pricebook/v2/tenant/{tid}/materials', source: 'live' },
   async handler(env, args, { actor, correlation }) {
+    // QUA-951 / F-09: verified live 2026-08-04 — `name` and `categoryId` are
+    // discarded by ST on /pricebook/v2/tenant/{tid}/materials (only `active`
+    // and `ids` are honoured). Forwarding them returned an unfiltered first
+    // page that looked like matches. Reject rather than return wrong data.
+    rejectUnsupportedSTFilters(
+      args as unknown as Record<string, unknown>,
+      {
+        name:
+          'ServiceTitan has no name filter on /pricebook/v2/tenant/{tid}/materials. ' +
+          'Use search_pricebook_all({query}) for fuzzy name/description matching, or ' +
+          'pass `code` here for an exact-code lookup.',
+        categoryId:
+          'ServiceTitan has no categoryId filter on /pricebook/v2/tenant/{tid}/materials. ' +
+          'Page the catalogue and filter client-side against list_service_categories.',
+      },
+      correlation,
+    );
+
     if (args.code) {
       // Table-level freshness probe (F1 redesign) — concurrent with the code
       // lookup; never rejects (degrades to {}).
@@ -100,11 +128,23 @@ export const search_materials: ToolDef<Args> = {
           ...stampMirrorFreshness([exact], { table: 'pb_materials', tableMax: await tableMaxP }),
         };
       }
+      // QUA-951 / F-09: no D1 row. This used to fall through to live ST with
+      // `name=<code>` — a parameter ST ignores — so an unknown code came back
+      // as an unfiltered page of ~50 arbitrary materials that looked like
+      // matches. There is no server-side code filter to fall back to, so the
+      // honest answer to "no such code" is an empty result.
+      return {
+        materials: [],
+        _source: 'd1-exact',
+        _matched_code: null,
+        _note: `No pricebook material found with code "${args.code}". Tried variants: ${codeVariants(args.code).join(', ')}. For fuzzy matching use search_pricebook_all({query}).`,
+        // Reuse the freshness probe fired above — no second D1 round-trip.
+        ...stampMirrorFreshness([], { table: 'pb_materials', tableMax: await tableMaxP }),
+      };
     }
 
+    // Plain listing — only ST-honoured params (active/page/pageSize).
     const query: Record<string, unknown> = {
-      name: args.name ?? args.code,
-      categoryId: args.categoryId,
       active: args.active,
       page: args.page ?? 1,
       pageSize: args.pageSize ?? 50,

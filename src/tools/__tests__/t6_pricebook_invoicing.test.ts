@@ -122,11 +122,46 @@ describe('search_materials', () => {
     expect(result.materials).toBeDefined();
   });
 
-  it('passes name filter', async () => {
+  // F-09: ST's /materials endpoint silently ignores name/categoryId (QUA-951),
+  // so forwarding them returns an unfiltered first page that looks like matches.
+  // The tool must REJECT them, not forward them.
+  it('rejects an unsupported name filter instead of forwarding it (F-09)', async () => {
+    const env = makeEnv(liveOk([{ id: 1, name: 'unrelated material' }]));
+    await expect(search_materials.handler(env, { name: 'R-22' }, CTX)).rejects.toMatchObject({
+      code: 'validation_error',
+    });
+    // and it never hit ST with the ignored filter
+    expect(env.ST_PROXY.fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unsupported categoryId filter (F-09)', async () => {
     const env = makeEnv(liveOk([]));
-    await search_materials.handler(env, { name: 'R-22' }, CTX);
-    const [url] = env.ST_PROXY.fetch.mock.calls[0];
-    expect(url).toContain('R-22');
+    await expect(search_materials.handler(env, { categoryId: 7 }, CTX)).rejects.toMatchObject({
+      code: 'validation_error',
+    });
+  });
+
+  it('a code miss returns a TRUE empty result, never an arbitrary ST page (F-09)', async () => {
+    // D1 returns no row; if the tool fell through to ST it would get these
+    // unrelated rows and present them as matches — the exact F-09 bug.
+    const env = makeEnv(liveOk([{ id: 999, name: 'totally unrelated' }]));
+    const result: any = await search_materials.handler(env, { code: 'NO-SUCH-CODE' }, CTX);
+    expect(result.materials).toEqual([]);
+    expect(result._matched_code).toBeNull();
+    expect(result._note).toMatch(/NO-SUCH-CODE/);
+    // The freshness/D1 probes may hit the proxy, but the materials LIST
+    // endpoint must never be called on a code miss (that was the F-09 bug).
+    const listCalls = (env.ST_PROXY.fetch.mock.calls as any[][]).filter((c) =>
+      decodeURIComponent(String(c[0])).includes('/pricebook/v2/tenant/000000000/materials'),
+    );
+    expect(listCalls).toHaveLength(0);
+  });
+
+  it('plain listing (active/page only) still lists live', async () => {
+    const env = makeEnv(liveOk([{ id: 1 }]));
+    const result: any = await search_materials.handler(env, { active: true }, CTX);
+    expect(result.materials).toEqual([{ id: 1 }]);
+    expect(env.ST_PROXY.fetch).toHaveBeenCalled();
   });
 
   it('result includes _source annotation', async () => {

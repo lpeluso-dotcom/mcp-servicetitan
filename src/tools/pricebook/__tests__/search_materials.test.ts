@@ -66,26 +66,34 @@ describe('search_materials (QUA-267 code param)', () => {
     expect(d1DataCalls(env)).toHaveLength(1);
   });
 
-  it('exact code with no D1 hit: falls through to live ST', async () => {
+  // F-09: a code miss returns a TRUE empty (never an unfiltered live page).
+  // ST's /materials endpoint ignores name/categoryId, so falling through would
+  // present arbitrary rows as matches. (This test previously asserted the bug.)
+  it('exact code with no D1 hit: returns a true empty, never a live page (F-09)', async () => {
     const env = fakeEnv([
       { urlContains: '/api/sql/read', body: { success: true, results: [] } },
-      { urlContains: '/api/st/read', body: { data: [{ id: 7, name: 'New material' }] } },
+      { urlContains: '/api/st/read', body: { data: [{ id: 7, name: 'Unrelated material' }] } },
     ]);
     const out = (await search_materials.handler(env, { code: 'BRAND-NEW' }, ctx)) as any;
-    expect(out._source).toBe('live');
-    expect((out.materials as unknown[]).length).toBeGreaterThanOrEqual(0);
+    expect(out._source).toBe('d1-exact');
+    expect(out._matched_code).toBeNull();
+    expect(out.materials).toEqual([]);
+    // the materials LIST endpoint was never called
+    const listCall = (env.ST_PROXY.fetch as any).mock.calls.find((c: any) =>
+      decodeURIComponent(String(c[0])).includes('/pricebook/v2/tenant/000000000/materials'),
+    );
+    expect(listCall).toBeUndefined();
   });
 
-  it('name only: goes straight to live ST', async () => {
+  // F-09: name is not a supported ST filter — reject rather than forward it.
+  // (This test previously asserted the bug: "goes straight to live ST".)
+  it('name only: rejects the unsupported filter (F-09)', async () => {
     const env = fakeEnv([
       { urlContains: '/api/st/read', body: { data: [{ id: 1, name: 'Copper pipe' }] } },
     ]);
-    const out = (await search_materials.handler(env, { name: 'copper' }, ctx)) as any;
-    expect(out._source).toBe('live');
-    const d1Call = (env.ST_PROXY.fetch as any).mock.calls.find((c: any) =>
-      String(c[0]).includes('/api/sql/read'),
-    );
-    expect(d1Call).toBeUndefined();
+    await expect(search_materials.handler(env, { name: 'copper' }, ctx)).rejects.toMatchObject({
+      code: 'validation_error',
+    });
   });
 
   it('preserves _matched_code on hit', async () => {
