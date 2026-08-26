@@ -111,6 +111,28 @@ function readProxyUrl(path: string): string {
   return `https://servicetitan-proxy/api/st/read?endpoint=${encodeURIComponent(path)}`;
 }
 
+/**
+ * Hard ceiling on any single upstream fetch (POST/poll/cancel) so a request
+ * that never resolves is ABORTED, not parked forever. Without a signal the
+ * wall-clock deadline can only be read between awaits — a hung await never
+ * yields to it (adversarial review, 2026-08-26). Bounded by the remaining
+ * budget to the poll deadline, with a floor so a nearly-expired budget still
+ * gets one honest, quickly-aborting attempt. Mirrors ap-inbox.ts / supabase.ts.
+ */
+const PER_FETCH_TIMEOUT_MS = 30_000;
+function fetchTimeoutSignal(remainingMs: number): AbortSignal {
+  const ms = Math.max(1, Math.min(PER_FETCH_TIMEOUT_MS, remainingMs));
+  return AbortSignal.timeout(ms);
+}
+
+/** True when an error is (or wraps) an AbortSignal.timeout / abort rejection. */
+function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === 'AbortError' || err.name === 'TimeoutError')
+  );
+}
+
 /** Checks the assumed token field, then the two stated aliases, in order. */
 function extractQueryToken(body: unknown): string | null {
   if (!body || typeof body !== 'object') return null;
@@ -140,6 +162,8 @@ async function cancelDataQuery(
       method: 'POST',
       headers: { ...authHeaders(env, ctx.correlation, ctx.actor), 'content-type': 'application/json' },
       body: JSON.stringify({ endpoint, method: 'DELETE', payload: {} }),
+      // Bound cleanup so a hung cancel can't itself park; errors are swallowed.
+      signal: fetchTimeoutSignal(PER_FETCH_TIMEOUT_MS),
     });
   } catch {
     // best-effort — swallow
@@ -172,9 +196,19 @@ async function pollDataQuery(
     if (now() >= deadline) break; // B4: never issue a fetch past the deadline
     attempt++;
 
-    const resp = await env.ST_PROXY.fetch(readProxyUrl(pollPath), {
-      headers: authHeaders(env, ctx.correlation, ctx.actor),
-    });
+    let resp: Response;
+    try {
+      // Bound the fetch itself by the remaining budget — a hung poll GET is
+      // aborted at the deadline instead of parking forever (a wall-clock check
+      // between awaits cannot rescue a non-resolving await). B1.
+      resp = await env.ST_PROXY.fetch(readProxyUrl(pollPath), {
+        headers: authHeaders(env, ctx.correlation, ctx.actor),
+        signal: fetchTimeoutSignal(deadline - now()),
+      });
+    } catch (err) {
+      if (isAbortError(err)) break; // budget exhausted mid-fetch → fall through to timeout
+      throw err;
+    }
 
     if (resp.status === 200) {
       return await resp.json();
@@ -222,17 +256,31 @@ export async function runReportQueryAsync(
     `/reporting/v2/tenant/000000000/report-category/${categoryId}/reports/${reportId}/data/query`,
   );
 
-  const initialResp = await guardedStFetch(
-    env,
-    queryPath,
-    () =>
-      env.ST_PROXY.fetch(readProxyUrl(queryPath), {
-        method: 'POST',
-        headers: { ...authHeaders(env, ctx.correlation, ctx.actor), 'content-type': 'application/json' },
-        body: JSON.stringify(runBody),
-      }),
-    { identity: opts.identity },
-  );
+  let initialResp: Response;
+  try {
+    initialResp = await guardedStFetch(
+      env,
+      queryPath,
+      () =>
+        env.ST_PROXY.fetch(readProxyUrl(queryPath), {
+          method: 'POST',
+          headers: { ...authHeaders(env, ctx.correlation, ctx.actor), 'content-type': 'application/json' },
+          body: JSON.stringify(runBody),
+          // Bound the submit too — a hung POST parks before polling ever starts.
+          signal: fetchTimeoutSignal(pollTimeoutSeconds * 1000),
+        }),
+      { identity: opts.identity },
+    );
+  } catch (err) {
+    if (isAbortError(err)) {
+      throw new McpError(
+        'timeout',
+        `report data/query POST did not respond within ${pollTimeoutSeconds}s (correlation ${ctx.correlation})`,
+        { correlation: ctx.correlation },
+      );
+    }
+    throw err;
+  }
 
   if (initialResp.status === 200) {
     return await initialResp.json();

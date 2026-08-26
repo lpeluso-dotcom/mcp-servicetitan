@@ -99,6 +99,36 @@ describe('F-08 poll deadline (B1/B4)', () => {
     ).toBe(true);
   });
 
+  it('B1b: a poll GET that never resolves is aborted at the deadline (not parked forever)', async () => {
+    // A TRUE hang: the poll GET returns a promise that never settles unless its
+    // AbortSignal fires. If the code does not bound the fetch with a signal,
+    // this test hangs and the runner times out — which is the bug. With the
+    // signal wired to the remaining budget, the abort rejects the fetch and the
+    // tool surfaces a `timeout` McpError.
+    const env = makeEnv((url: string, init?: any) => {
+      const u = decodeURIComponent(String(url));
+      if (u.includes('/data/query')) return Promise.resolve(new Response(JSON.stringify({ token: 'tokH' }), { status: 202 }));
+      if (u.includes('/api/st/write')) return Promise.resolve(new Response('{}', { status: 200 })); // DELETE cancel
+      // poll GET: resolve ONLY when the passed AbortSignal aborts; otherwise never settle.
+      return new Promise<Response>((_resolve, reject) => {
+        const sig: AbortSignal | undefined = init?.signal;
+        if (sig) {
+          if (sig.aborted) return reject(new DOMException('aborted', 'AbortError'));
+          sig.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        }
+        // no signal → never settles (reproduces the un-timed hang)
+      });
+    });
+
+    const err: any = await st_run_report
+      // real timers, tiny ceiling so the abort fires quickly
+      .handler(env, { ...RUN, pollTimeoutSeconds: 1, _pollIntervalMs: 0 } as any, CTX)
+      .catch((e) => e);
+
+    expect(err?.code).toBe('timeout');
+    expect(err?.message).toMatch(/canceled/);
+  }, 5000);
+
   it('B4: issues no poll GET once the deadline has passed', async () => {
     let t = 0;
     const now = () => t;
