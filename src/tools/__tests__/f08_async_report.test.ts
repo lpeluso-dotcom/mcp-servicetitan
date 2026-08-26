@@ -113,8 +113,10 @@ describe('F-08 poll deadline (B1/B4)', () => {
       return new Promise<Response>((_resolve, reject) => {
         const sig: AbortSignal | undefined = init?.signal;
         if (sig) {
-          if (sig.aborted) return reject(new DOMException('aborted', 'AbortError'));
-          sig.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+          // AbortSignal.timeout rejects with a TimeoutError in workerd/undici —
+          // reproduce that exact name so the test exercises the production path.
+          if (sig.aborted) return reject(new DOMException('timed out', 'TimeoutError'));
+          sig.addEventListener('abort', () => reject(new DOMException('timed out', 'TimeoutError')));
         }
         // no signal → never settles (reproduces the un-timed hang)
       });
