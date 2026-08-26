@@ -4,7 +4,7 @@
 // ============================================================
 
 import { describe, it, expect } from 'vitest';
-import { gatherFetches } from '../../composite-helpers';
+import { gatherFetches, gatherFetchesWithTruncation } from '../../composite-helpers';
 
 function ok(payload: unknown): Promise<Response> {
   return Promise.resolve(new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } }));
@@ -103,5 +103,37 @@ describe('gatherFetches', () => {
       { name: 'c', promise: thrown('c fail') },
     ]);
     expect(out.failures.map((f) => f.call)).toEqual(['a', 'c']);
+  });
+});
+
+// ── F-11: truncation disclosure ─────────────────────────────
+describe('gatherFetchesWithTruncation', () => {
+  function resp(body: unknown): Promise<Response> {
+    return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+  }
+
+  it('flags arms whose ST response has hasMore:true, returns .data as results', async () => {
+    const out = await gatherFetchesWithTruncation([
+      { name: 'jobs', promise: resp({ data: [{ id: 1 }], hasMore: true }) },
+      { name: 'invoices', promise: resp({ data: [{ id: 2 }], hasMore: false }) },
+      { name: 'locations', promise: resp({ data: [{ id: 3 }] }) }, // hasMore absent
+    ]);
+    expect(out.results.jobs).toEqual([{ id: 1 }]);
+    expect(out.results.invoices).toEqual([{ id: 2 }]);
+    expect(out.results.locations).toEqual([{ id: 3 }]);
+    expect(out.truncated).toEqual(['jobs']);
+    expect(out.partial).toBe(false);
+    expect(out.failures).toEqual([]);
+  });
+
+  it('a failed arm is not in truncated and is reported in failures', async () => {
+    const out = await gatherFetchesWithTruncation([
+      { name: 'jobs', promise: resp({ data: [], hasMore: true }) },
+      { name: 'invoices', promise: Promise.resolve(new Response('x', { status: 503, statusText: 'Bad Gateway' })) },
+    ]);
+    expect(out.truncated).toEqual(['jobs']);
+    expect(out.partial).toBe(true);
+    expect(out.failures[0]).toMatchObject({ call: 'invoices', error_class: 'HTTPError' });
+    expect(out.results.invoices).toBeNull();
   });
 });

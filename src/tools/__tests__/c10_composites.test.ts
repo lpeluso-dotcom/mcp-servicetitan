@@ -121,6 +121,43 @@ describe('customer_snapshot', () => {
     // Other fields populated normally
     expect(result.customer).toEqual([]);
   });
+
+  // ── F-11: truncation disclosure + no-cache-on-partial ──────
+  function snapshotWrites(env: any): number {
+    return (env.DB.prepare.mock.calls as any[][]).filter((c) =>
+      /INSERT OR REPLACE INTO mv_customer_snapshot/i.test(String(c[0])),
+    ).length;
+  }
+
+  it('discloses _truncated arms and does NOT cache when a sub-call has more pages', async () => {
+    const env = makeEnv(async (url: string) => {
+      if (!url.includes('/api/st/read')) return new Response('{}', { status: 200 });
+      // jobs (jpm) arm truncated; everything else complete
+      if (decodeURIComponent(url).includes('/jpm/v2/')) {
+        return new Response(JSON.stringify({ data: [{ id: 1 }], hasMore: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: [], hasMore: false }), { status: 200 });
+    });
+    const result: any = await customer_snapshot.handler(env, { customerId: 100 }, CTX);
+    expect(result._truncated).toEqual(['jobs']);
+    expect(snapshotWrites(env)).toBe(0); // a truncated snapshot is not cached
+  });
+
+  it('_truncated is empty and the snapshot IS cached when all arms are complete', async () => {
+    const env = makeEnv(liveOk([]));
+    const result: any = await customer_snapshot.handler(env, { customerId: 100 }, CTX);
+    expect(result._truncated).toEqual([]);
+    expect(snapshotWrites(env)).toBeGreaterThan(0);
+  });
+
+  it('routes the fanout through the rate limiter (ST_RATE_LIMITER /check fires)', async () => {
+    const env = makeEnv(liveOk([]));
+    await customer_snapshot.handler(env, { customerId: 100 }, CTX);
+    const rlStub = env.ST_RATE_LIMITER.get.mock.results[0]?.value;
+    // the guarded fanout consulted the limiter DO at least once
+    expect(env.ST_RATE_LIMITER.get).toHaveBeenCalled();
+    expect(rlStub.fetch).toHaveBeenCalled();
+  });
 });
 
 describe('pricebook_health_check_services', () => {
