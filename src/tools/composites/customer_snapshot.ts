@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { authHeaders } from '../../auth';
-import { gatherFetches, stRead } from '../../composite-helpers';
+import { gatherFetchesWithTruncation, stReadGuarded } from '../../composite-helpers';
 import type { ToolDef } from '../index';
 import type { Env } from '../../env';
 import { excludeFields, limitArrays } from '../../response-shape';
@@ -125,13 +125,13 @@ export const customer_snapshot: ToolDef<Args> = {
     const tenant = '000000000';
     const signal = AbortSignal.timeout(15_000);
 
-    const fanout = await gatherFetches([
-      { name: 'customer',    promise: stRead(env, h, `/crm/v2/tenant/${tenant}/customers/${customerId}`, signal) },
-      { name: 'locations',   promise: stRead(env, h, `/crm/v2/tenant/${tenant}/locations?customerId=${customerId}`, signal) },
-      { name: 'jobs',        promise: stRead(env, h, `/jpm/v2/tenant/${tenant}/jobs?customerId=${customerId}`, signal) },
-      { name: 'memberships', promise: stRead(env, h, `/memberships/v2/tenant/${tenant}/memberships?customerId=${customerId}&status=Active`, signal) },
-      { name: 'estimates',   promise: stRead(env, h, `/sales/v2/tenant/${tenant}/estimates?customerId=${customerId}`, signal) },
-      { name: 'invoices',    promise: stRead(env, h, `/accounting/v2/tenant/${tenant}/invoices?customerId=${customerId}`, signal) },
+    const fanout = await gatherFetchesWithTruncation([
+      { name: 'customer',    promise: stReadGuarded(env, h, `/crm/v2/tenant/${tenant}/customers/${customerId}`, signal) },
+      { name: 'locations',   promise: stReadGuarded(env, h, `/crm/v2/tenant/${tenant}/locations?customerId=${customerId}`, signal) },
+      { name: 'jobs',        promise: stReadGuarded(env, h, `/jpm/v2/tenant/${tenant}/jobs?customerId=${customerId}`, signal) },
+      { name: 'memberships', promise: stReadGuarded(env, h, `/memberships/v2/tenant/${tenant}/memberships?customerId=${customerId}&status=Active`, signal) },
+      { name: 'estimates',   promise: stReadGuarded(env, h, `/sales/v2/tenant/${tenant}/estimates?customerId=${customerId}`, signal) },
+      { name: 'invoices',    promise: stReadGuarded(env, h, `/accounting/v2/tenant/${tenant}/invoices?customerId=${customerId}`, signal) },
     ]);
 
     // Memberships needs client-side re-filter — ST status filter is unreliable (verified 2026-04-23).
@@ -150,14 +150,24 @@ export const customer_snapshot: ToolDef<Args> = {
       memberships,
       estimates: fanout.results.estimates,
       invoices: fanout.results.invoices,
+      // F-11: name every list arm ST reported more pages for, so a page-one
+      // answer is DISCLOSED, not served silently as the whole set.
+      _truncated: fanout.truncated,
       _composite: 'customer_snapshot',
       _source: 'mixed',
       correlation,
     };
 
-    // 4. Lock-holder writes D1 cache, then releases so concurrent waiters can read.
+    // 4. Lock-holder writes D1 cache (only a COMPLETE snapshot), then ALWAYS
+    //    releases so concurrent waiters can read / re-fire.
+    //    F-11: never cache a TRUNCATED snapshot — a fast complete re-read next
+    //    call beats serving a cached partial as authoritative for 5 minutes.
+    //    The release must fire regardless of truncation, or the single-flight
+    //    lock leaks and every waiter polls to its deadline.
     if (acquired) {
-      await mvWrite(env, customerId, result, env.MCP_SERVICE_VERSION ?? '0.0.0');
+      if (fanout.truncated.length === 0) {
+        await mvWrite(env, customerId, result, env.MCP_SERVICE_VERSION ?? '0.0.0');
+      }
       doStub
         .fetch('https://do/release', {
           method: 'POST',
