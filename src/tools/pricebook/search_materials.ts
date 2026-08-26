@@ -138,7 +138,8 @@ export const search_materials: ToolDef<Args> = {
         _source: 'd1-exact',
         _matched_code: null,
         _note: `No pricebook material found with code "${args.code}". Tried variants: ${codeVariants(args.code).join(', ')}. For fuzzy matching use search_pricebook_all({query}).`,
-        ...stampMirrorFreshness([], { table: 'pb_materials', tableMax: await fetchTableMax(env, ['pb_materials']) }),
+        // Reuse the freshness probe fired above — no second D1 round-trip.
+        ...stampMirrorFreshness([], { table: 'pb_materials', tableMax: await tableMaxP }),
       };
     }
 
