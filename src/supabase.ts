@@ -221,13 +221,29 @@ export async function sbCount(env: Env, pathAndQuery: string, schema?: string): 
   return Number(total);
 }
 
+/**
+ * Provenance written alongside the vector once migration
+ * supabase/migrations/0016 is applied: the `content_hash` the input text had
+ * when it was embedded, and the model that produced the vector. Omit it
+ * (pre-migration / legacy path) and ONLY `embedding` is named — PostgREST
+ * rejects a PATCH that names a column the table does not have (PGRST204).
+ */
+export interface EmbeddingProvenance { contentHash: string | null; model: string }
+
 export async function sbWriteEmbedding(
-  env: Env, code: string, itemType: string, vector: number[],
+  env: Env, code: string, itemType: string, vector: number[], provenance?: EmbeddingProvenance,
 ): Promise<void> {
   const q = `pricebook_items?code=eq.${encodeURIComponent(code)}&item_type=eq.${encodeURIComponent(itemType)}`;
   // Body computed ONCE, outside sbFetch, so every retry replays byte-identical
   // bytes — the property that makes retrying this PATCH safe (see sbFetch).
-  const body = JSON.stringify({ embedding: `[${vector.join(',')}]` });
+  // The two provenance columns are full-value assignments on the same keyed
+  // filter, so adding them keeps the replay idempotent.
+  const embedding = `[${vector.join(',')}]`;
+  const body = JSON.stringify(
+    provenance
+      ? { embedding, embedding_content_hash: provenance.contentHash, embedding_model: provenance.model }
+      : { embedding },
+  );
   const res = await sbFetch(`${env.SUPABASE_URL}/rest/v1/${q}`, {
     method: 'PATCH', headers: headers(env), body,
   });

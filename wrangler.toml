@@ -170,11 +170,10 @@ service = "your-servicetitan-proxy-dev"
 binding = "MIRROR_HYPERDRIVE"
 id = "2f2e40dee36e4d4ebf88f3f12d707e5a"
 
-# Intentional: dev cron shares the same idempotent backstop target (prod Supabase) as the
-# prod worker's PricebookEmbedWorkflow cron — same predicate/model/projection, first writer
-# wins, safe by design (harmless no-op if dev secrets are unset).
+# Dev runs NO unattended cron: its SUPABASE_URL/SUPABASE_PB_KEY secrets point at an unverified
+# Postgres target (review 2026-09-04 #6/#25). Kick PricebookEmbedWorkflow on dev manually only.
 [env.dev.triggers]
-crons = ["0 10 * * *"]
+crons = []
 
 # Dev secrets (same command, add --env dev):
 # wrangler secret put MCP_SYNC_KEY --env dev
