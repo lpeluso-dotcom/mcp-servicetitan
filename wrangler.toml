@@ -69,7 +69,8 @@ ST_TENANT_ID = "000000000"
 # been identified, audit_log shows no `jwt-client` actor in 30 days, and
 # audit_log does not record authMode - so enabling audience checking here would
 # be a guess that could reject an unidentified live caller. Both are enabled in
-# [env.dev.vars] for verification. Set them in prod once the minter is known;
+# [env.dev.vars]
+READONLY = "1" for verification. Set them in prod once the minter is known;
 # the code enforces them the moment they exist.
 # Phase-2 OAuth (prod). SELF_ORIGIN pins the callback origin; ALLOWED_EMAILS is the in-worker
 # allow-list. ACCESS_CLIENT_ID/ISSUER/SECRET are wrangler SECRETS (not committed — keeps the
@@ -113,6 +114,7 @@ enabled = true
 cpu_ms = 50
 
 [env.dev.vars]
+READONLY = "1"
 MCP_SERVICE_VERSION = "1.7.0-dev"
 # Stamped by deploy.yml from the deployed commit; the deploy fails if this
 # placeholder survives. Never hand-edit.
