@@ -24,6 +24,7 @@ export interface Env {
   MCP_SERVICE_VERSION: string;
   GIT_SHA?: string; // short commit sha, stamped by deploy.yml (never hand-edited)
   ST_TENANT_ID: string;
+  READONLY?: string; // "1" blocks confirmation before token consumption or ST writes
   MCP_LOCKDOWN?: string; // "true" → server enters lockdown / read-only mode (v1.5.2)
   // Post-write verify-read backoff schedule, in ms, for read-after-write lag
   // (see src/tools/invoicing/invoice-verify.ts). Defaults to [2000, 10000].

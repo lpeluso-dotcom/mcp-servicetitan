@@ -134,6 +134,7 @@ export class WriteGate {
     actor: string,
     confirmation_token: string
   ): Promise<void> {
+    if (this.env.READONLY === '1') throw new Error('ST writes are blocked: this environment is read-only');
     const parts = confirmation_token.split('|');
     if (parts.length !== 5) throw new Error('malformed confirmation_token');
     const [tokenTool, argsHash, tokenActor, issuedAtStr, tokenHmac] = parts;
