@@ -8,21 +8,11 @@
 // actually owns (skuId, skuType, quantity, isAddOn, chargeable,
 // allowDiscounts, memo, order).
 //
-// ⚠ KNOWN-BROKEN, live-verified 2026-07-09 (2 real POSTs against prod, both
-// 400'd before any record was created — no orphaned data left behind):
-//   1. `internalName` IS REQUIRED — ST rejects a create without it (the GET
-//      shape's optionality does NOT carry over to create). Fixed here.
-//   2. ST's validation ALSO demands a field literally named "model", SEPARATE
-//      from "mode" — sending `model:"Dynamic"` (a plain string) still failed
-//      with "The model field is required", which is the classic ASP.NET
-//      signature of a type/shape mismatch (bind failure), not a missing
-//      value. The real shape of this field is UNRESOLVED. Root-causing it
-//      needs a live ST UI network capture (Playwright + an authenticated ST
-//      session — see the st-internal-api skill) rather than further blind
-//      guessing against production. Filed as a follow-up (QUA-781).
-// UNTIL QUA-781 RESOLVES THIS: calling this tool with dryRun=false WILL FAIL
-// with a live 400 from ST. dryRun=true (the default) is safe and useful for
-// previewing the request shape; do not attempt a live write yet.
+// The July 9 model-bind failure was resolved in the July 16 live round-trip
+// (QUA-780), with 10/10 further creates recorded August 1 (QUA-1173).
+// `model` is not an extra payload field. Service SKUs must be active: ST can
+// report an inactive SKU as "not found". These are dated observations; this
+// documentation update does not perform or authorize a production write.
 import { z } from 'zod';
 import { defineWriteTool } from '../../write-tool-factory';
 
@@ -82,9 +72,8 @@ export const create_estimate_template = defineWriteTool<Args>({
     'Create a new estimate template. Item input excludes unitPrice/totalPrice/unitCost/description/skuName — ' +
     "those are ST-computed/denormalized from each item's sku, not caller-supplied. allowDiscounts on an item " +
     'defaults to true when omitted (QSC convention). dryRun=true (default) → token → dryRun=false to write. ' +
-    '⚠ KNOWN-BROKEN as of 2026-07-09: live-verified against prod, ST additionally requires a "model" field ' +
-    'whose real shape is unresolved (see QUA-781) — dryRun=false WILL currently fail with a live 400 from ST. ' +
-    'dryRun=true previews are safe; do not attempt a live write until QUA-781 resolves the model-field shape.',
+    'Source: live ST. Referenced service SKUs must be active; an inactive SKU may be reported as not found. ' +
+    'The July 9 model-bind failure was resolved (verified July 16 and August 1, 2026); do not add a model field.',
   zodSchema: {
     name: z.string().min(1).describe('Template display name'),
     internalName: z.string().min(1).describe('Internal-only name (not shown to customers). REQUIRED by ST at create time (live-verified 2026-07-09) despite being optional on GET.'),
