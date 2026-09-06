@@ -65,6 +65,9 @@ import { st_call } from './st_call';
 import { list_memberships_active } from './memberships/list_memberships_active';
 import { list_memberships_expiring } from './memberships/list_memberships_expiring';
 import { create_recurring_service } from './memberships/create_recurring_service';
+import { list_recurring_service_events } from './memberships/list_recurring_service_events';
+import { mark_recurring_service_event } from './memberships/mark_recurring_service_event';
+import { update_recurring_service } from './memberships/update_recurring_service';
 // T8 — Calls & Forms
 import { get_call } from './calls_forms/get_call';
 import { get_form_submission } from './calls_forms/get_form_submission';
@@ -254,6 +257,7 @@ export const TOOLS: readonly ToolDef<any>[] = [
   st_run_report,
   // T8 Memberships
   list_memberships_active, list_memberships_expiring, create_recurring_service,
+  list_recurring_service_events, mark_recurring_service_event, update_recurring_service,
   // T8 Calls & Forms
   get_call, get_form_submission,
   // T8 Tasks
