@@ -312,7 +312,7 @@ export const st_add_invoice_line_item: ToolDef<Args> = {
     'lines. unitPrice is REQUIRED when appending (no `id`): ST does NOT apply dynamic pricing to API-appended items, so ' +
     'an append without it lands at $0.00 (confirmed incident). On an update (`id` present) it may be omitted to leave ' +
     'the price alone, which warns — that binding behavior is unprobed. Unknown fields are rejected, not stripped. After ' +
-    'a live write the tool RE-READS the invoice and asserts the money landed (silent_noop / amount_mismatch / ' +
+    'a live write the tool RE-READS the invoice and asserts the money landed (silent_noop / amount_mismatch / field_mismatch / ' +
     'verify_unavailable) — HTTP 200 is not proof. Exported invoices are NOT blocked (warn only) — no accounting ' +
     'sign-off exists yet for a hard block; review the dryRun warning before confirming. If item k of N fails ' +
     'mid-sequence, prior items are already written and NOT rolled back — the error names their item ids for cleanup. ' +
@@ -564,6 +564,29 @@ export const st_add_invoice_line_item: ToolDef<Args> = {
       }
       updatedItemIds.push(id);
       const before = baseline.get(id);
+
+      // Quantity is not money: use numeric equality, not half-cent tolerance.
+      const expectedQuantity = li.quantity ?? toMoney(before?.quantity);
+      const actualQuantity = toMoney(after.quantity);
+      if (expectedQuantity !== undefined && actualQuantity !== expectedQuantity) {
+        throw new McpError('amount_mismatch',
+          `Invoice ${invoiceId} item ${id}: quantity did not persist. The write already occurred; inspect before retrying.`,
+          { correlation, details: { invoiceId, itemId: id, field: 'quantity', expected: expectedQuantity, actual: actualQuantity } });
+      }
+      for (const field of ['skuId', 'skuName', 'description'] as const) {
+        const expected = li[field] !== undefined ? li[field] : before?.[field];
+        if (expected === undefined) continue; // no observed baseline to compare
+        const actual = after[field];
+        const matches = field === 'skuId'
+          ? (expected == null ? actual == null : toMoney(expected) !== undefined && toMoney(actual) === toMoney(expected))
+          : actual === expected;
+        if (!matches) {
+          throw new McpError('field_mismatch',
+            `Invoice ${invoiceId} item ${id}: ${field} changed or was dropped. The write already occurred; inspect before retrying.`,
+            { correlation, details: { invoiceId, itemId: id, field } });
+        }
+      }
+
 
       if (li.unitPrice !== undefined) {
         const actual = itemPrice(after);

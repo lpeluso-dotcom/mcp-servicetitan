@@ -38,6 +38,7 @@ import type { Env } from '../../env';
 // comparisons must go through toMoney(), never typeof-number checks.
 export interface VerifyInvoiceItem {
   id?: number;
+  skuId?: number | string | null;
   skuName?: string;
   description?: string;
   quantity?: number | string;

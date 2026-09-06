@@ -26,6 +26,7 @@ export type McpErrorCode =
   //                       filter not honored, response carried no id). NEVER
   //                       auto-retry the write on this code.
   | 'silent_noop'
+  | 'field_mismatch' // non-monetary invoice identity/description changed or dropped
   | 'amount_mismatch'
   | 'verify_unavailable';
 
