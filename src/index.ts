@@ -224,7 +224,7 @@ const READONLY_INSTRUCTIONS = [
   '- Estimates: list_estimates_job, get_estimate, assigned_vs_sold_estimate_audit.',
   '- Dispatch & capacity: get_capacity, list_technicians_available, get_technician_shifts,',
   '  dispatch_pro_utilization_list, tech_drive_time_summary.',
-  '- Memberships: list_memberships_active, list_memberships_expiring.',
+  '- Memberships: list_memberships_active, list_memberships_expiring, list_recurring_service_events. Recurring service mutations require dryRun confirmation; marking events also changes job invoice items.',
   '- Job costing & margin: job_cost_actuals, margin_audit, job_closeout_report.',
   '- Payroll/timesheets: payroll_* tools. Opportunities: opportunities_list, opportunity_get.',
   '- Reporting passthrough: st_run_report. Pricebook lookups: search_pricebook_*.',

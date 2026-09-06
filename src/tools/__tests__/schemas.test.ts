@@ -17,8 +17,8 @@ function schemaOf(name: string) {
 // ── Registry sanity ──────────────────────────────────────────
 
 describe('tool registry', () => {
-  it('exports 113 tools (adds the 3 AP-inbox read/verify tools — QUA-1167)', () => {
-    expect(TOOLS.length).toBe(113);
+  it('exports 116 tools (adds 3 recurring service tools — QUA-1452)', () => {
+    expect(TOOLS.length).toBe(116);
   });
 
   it('every tool has name + description + zodSchema', () => {
@@ -46,6 +46,7 @@ describe('tool registry', () => {
       'delete_estimate_template',
       'dismiss_estimate',
       'hold_appointment',
+      'mark_recurring_service_event',
       'reschedule_appointment',
       'save_tech_debrief',
       'sell_estimate',
@@ -59,6 +60,7 @@ describe('tool registry', () => {
       'st_post_marketing_attribution',
       'unsell_estimate',
       'update_estimate_template',
+      'update_recurring_service',
     ]);
   });
 
@@ -68,8 +70,8 @@ describe('tool registry', () => {
   });
 
   it('toolsForRole("default") excludes st_call; admin includes it', () => {
-    expect(toolsForRole('default').length).toBe(112);
-    expect(toolsForRole('admin').length).toBe(113);
+    expect(toolsForRole('default').length).toBe(115);
+    expect(toolsForRole('admin').length).toBe(116);
     expect(toolsForRole('default').find((t) => t.name === 'st_call')).toBeUndefined();
     expect(toolsForRole('admin').find((t) => t.name === 'st_call')).toBeDefined();
   });
