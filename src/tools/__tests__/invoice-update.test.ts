@@ -25,3 +25,16 @@ describe('QUA-1185 invoice update verification', () => {
     expect(proxy).toHaveBeenCalledTimes(1);
   });
 });
+
+it('accepts a correctly persisted update with string-typed ST numeric identity', async () => {
+  const before = { id:7, skuId:8, skuName:'SVC', quantity:'1', price:'10', cost:'2', description:'old' };
+  const after = {...before, skuId:'8', quantity:'2', description:'new'};
+  vi.mocked(readST).mockReset().mockResolvedValueOnce({data:[{id:1,items:[before]}]})
+    .mockResolvedValue({data:[{id:1,items:[after]}]});
+  vi.spyOn(WriteGate.prototype,'verifyToken').mockResolvedValue();
+  const env = {ST_TENANT_ID:'123', MCP_SYNC_KEY:'test', VERIFY_BACKOFF_MS:[0],
+    ST_PROXY:{fetch:vi.fn(async()=>new Response(JSON.stringify({success:true,response:{raw:''}})))}} as never;
+  const result = await st_add_invoice_line_item.handler(env,{invoiceId:1,dryRun:false,confirmation_token:'mocked',
+    lineItems:[{id:7,skuId:8,skuName:'SVC',quantity:2,description:'new'}]}, {actor:'test',correlation:'test'} as never) as any;
+  expect(result.verified).toBe(true);
+});
